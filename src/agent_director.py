@@ -22,6 +22,49 @@ EDIT_DURATION = DURATION - FREEZE
 WIDTH, HEIGHT = 1080, 1920
 CRF = 18
 PRESET = "veryfast"
+BEAT_SYNC = True
+BEAT_FLASH = True
+BASS_BOOST = True
+REFERENCE_PACING = True
+MIN_CLIPS = 8
+MAX_CLIPS = 16
+
+
+def load_settings():
+    """Load optional edit controls from params.json without requiring extra packages."""
+    global DURATION, FPS, WIDTH, HEIGHT, CRF, PRESET, SPEED, FREEZE
+    global BEAT_SYNC, BEAT_FLASH, BASS_BOOST, REFERENCE_PACING, MIN_CLIPS, MAX_CLIPS
+    path = "params.json"
+    if not os.path.isfile(path):
+        print("[settings] params.json not found; using safe defaults.")
+        return
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            config = json.load(handle)
+        video = config.get("video_settings", {})
+        audio = config.get("audio_settings", {})
+        edit = config.get("edit_settings", {})
+        resolution = str(video.get("resolution", "1080x1920")).lower().split("x")
+        if len(resolution) == 2:
+            width, height = int(resolution[0]), int(resolution[1])
+            # This renderer's current layout is designed specifically for 9:16.
+            if width == 1080 and height == 1920:
+                WIDTH, HEIGHT = width, height
+        FPS = max(24, min(60, int(video.get("fps", FPS))))
+        CRF = max(16, min(26, int(video.get("crf", CRF))))
+        PRESET = str(video.get("preset", PRESET))
+        DURATION = max(8.0, min(60.0, float(edit.get("duration_seconds", DURATION))))
+        FREEZE = max(0.35, min(1.2, float(edit.get("freeze_seconds", FREEZE))))
+        SPEED = max(1.0, min(1.35, float(edit.get("speed", SPEED))))
+        MIN_CLIPS = max(6, min(12, int(edit.get("min_clips", MIN_CLIPS))))
+        MAX_CLIPS = max(MIN_CLIPS, min(18, int(edit.get("max_clips", MAX_CLIPS))))
+        BEAT_SYNC = bool(audio.get("beat_sync", BEAT_SYNC))
+        BEAT_FLASH = bool(audio.get("beat_flash", BEAT_FLASH))
+        BASS_BOOST = bool(audio.get("bass_boost", BASS_BOOST))
+        REFERENCE_PACING = bool(edit.get("reference_pacing", REFERENCE_PACING))
+        print(f"[settings] Style={config.get('style', 'phonk_montagem')} | {WIDTH}x{HEIGHT}@{FPS} | {DURATION:.1f}s")
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        print(f"[warn] Invalid params.json ({exc}); using safe defaults.")
 
 
 def run(cmd, capture=False, binary=False):
@@ -150,8 +193,8 @@ def reference_cut_interval(reference_path):
 def choose_clip_count(reference_interval):
     # Bound the workload for mobile rendering while letting the reference affect pacing.
     if reference_interval is None:
-        return 8
-    return max(8, min(16, round(EDIT_DURATION / max(0.75, min(2.4, reference_interval)))))
+        return MIN_CLIPS
+    return max(MIN_CLIPS, min(MAX_CLIPS, round(EDIT_DURATION / max(0.75, min(2.4, reference_interval)))))
 
 
 def make_boundaries(clip_count, beats):
@@ -229,6 +272,8 @@ def make_clip(index, center, output_duration, source_duration):
 
 def make_flash_filter(beats):
     # Brief white impacts on selected bass hits; keep the filter graph bounded.
+    if not BEAT_FLASH:
+        return ""
     filters = []
     for beat in beats[:32]:
         if 0.05 < beat < EDIT_DURATION - 0.05:
@@ -261,6 +306,9 @@ def verify_output(path):
 
 
 def main():
+    load_settings()
+    global EDIT_DURATION
+    EDIT_DURATION = DURATION - FREEZE
     os.makedirs(OUTDIR, exist_ok=True)
     os.makedirs(WORK, exist_ok=True)
     for path in (VIDEO, MUSIC):
@@ -275,8 +323,8 @@ def main():
     print(f"[target] {WIDTH}x{HEIGHT}, {FPS} FPS, {DURATION:.1f}s, Phonk/Montagem")
 
     scenes = detect_scenes(VIDEO, source_duration)
-    beats = detect_music_beats(MUSIC, EDIT_DURATION)
-    ref_interval = reference_cut_interval(REFERENCE)
+    beats = detect_music_beats(MUSIC, EDIT_DURATION) if BEAT_SYNC else []
+    ref_interval = reference_cut_interval(REFERENCE) if REFERENCE_PACING else None
     clip_count = choose_clip_count(ref_interval)
     boundaries = make_boundaries(clip_count, beats)
 
@@ -323,7 +371,8 @@ def main():
         f"enable='gte(t,{EDIT_DURATION:.3f})',"
         f"trim=duration={DURATION:.3f},setsar=1"
     )
-    audio_filter = f"atrim=duration={DURATION:.3f},afade=t=out:st={DURATION - 0.8:.3f}:d=0.8"
+    bass_filter = "bass=g=3:f=90:w=0.5,alimiter=limit=0.95," if BASS_BOOST else ""
+    audio_filter = f"{bass_filter}atrim=duration={DURATION:.3f},afade=t=out:st={DURATION - 0.8:.3f}:d=0.8"
 
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
