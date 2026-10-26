@@ -1,12 +1,25 @@
 {
+  "style": "phonk_montagem",
   "target_viral_score": 85,
   "video_settings": {
     "resolution": "1080x1920",
     "fps": 60,
-    "codec": "libx264"
+    "codec": "libx264",
+    "crf": 18,
+    "preset": "veryfast"
+  },
+  "edit_settings": {
+    "duration_seconds": 20,
+    "speed": 1.1,
+    "freeze_seconds": 0.7,
+    "min_clips": 8,
+    "max_clips": 16,
+    "reference_pacing": true
   },
   "audio_settings": {
     "beat_sync": true,
-    "bass_boost": true
+    "beat_flash": true,
+    "bass_boost": true,
+    "music_loop": true
   }
 }
