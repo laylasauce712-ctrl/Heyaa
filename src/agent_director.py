@@ -26,6 +26,7 @@ BEAT_SYNC = True
 BEAT_FLASH = True
 BASS_BOOST = True
 REFERENCE_PACING = True
+MIRROR_ENABLED = True
 MIN_CLIPS = 8
 MAX_CLIPS = 16
 
@@ -33,7 +34,7 @@ MAX_CLIPS = 16
 def load_settings():
     """Load optional edit controls from params.json without requiring extra packages."""
     global DURATION, FPS, WIDTH, HEIGHT, CRF, PRESET, SPEED, FREEZE
-    global BEAT_SYNC, BEAT_FLASH, BASS_BOOST, REFERENCE_PACING, MIN_CLIPS, MAX_CLIPS
+    global BEAT_SYNC, BEAT_FLASH, BASS_BOOST, REFERENCE_PACING, MIRROR_ENABLED, MIN_CLIPS, MAX_CLIPS
     path = "params.json"
     if not os.path.isfile(path):
         print("[settings] params.json not found; using safe defaults.")
@@ -62,7 +63,8 @@ def load_settings():
         BEAT_FLASH = bool(audio.get("beat_flash", BEAT_FLASH))
         BASS_BOOST = bool(audio.get("bass_boost", BASS_BOOST))
         REFERENCE_PACING = bool(edit.get("reference_pacing", REFERENCE_PACING))
-        print(f"[settings] Style={config.get('style', 'phonk_montagem')} | {WIDTH}x{HEIGHT}@{FPS} | {DURATION:.1f}s")
+        MIRROR_ENABLED = bool(edit.get("mirror_enabled", MIRROR_ENABLED))
+        print(f"[settings] Style={config.get('style', 'phonk_montagem')} | {WIDTH}x{HEIGHT}@{FPS} | {DURATION:.1f}s | speed={SPEED:.2f}x | mirror={MIRROR_ENABLED}")
     except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
         print(f"[warn] Invalid params.json ({exc}); using safe defaults.")
 
@@ -238,7 +240,8 @@ def make_clip(index, center, output_duration, source_duration):
     input_duration = output_duration * SPEED
     start = max(0.0, min(center - input_duration / 2.0, max(0.0, source_duration - input_duration)))
     path = f"{WORK}/clip_{index:02d}.mp4"
-    mirror = ",hflip" if index % 2 == 1 else ""
+    # Horizontal mirror is an explicit transform, independent of visual effects.
+    mirror = ",hflip" if MIRROR_ENABLED else ""
 
     # A blurred 9:16 canvas retains a vertical composition; the foreground has
     # a controlled zoom and restrained shake instead of a crude full-frame crop.

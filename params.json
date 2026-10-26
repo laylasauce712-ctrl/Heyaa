@@ -14,7 +14,8 @@
     "freeze_seconds": 0.7,
     "min_clips": 8,
     "max_clips": 16,
-    "reference_pacing": true
+    "reference_pacing": true,
+    "mirror_enabled": true
   },
   "audio_settings": {
     "beat_sync": true,
