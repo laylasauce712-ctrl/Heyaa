@@ -289,9 +289,16 @@ def reference_analyst(data: dict[str, Any]) -> AgentResult:
                         "does_not_copy_reference_frames": True})
 
 
-def framing_agent(config: dict[str, Any], edl: dict[str, Any]) -> AgentResult:
-    """Check that the EDL framing can be represented by the current renderer."""
+def framing_agent(config: dict[str, Any], edl: dict[str, Any],
+                  media_analysis: dict[str, Any] | None = None) -> AgentResult:
+    """Check actual framing and report whether optional person-track guidance was measured."""
     edit = config.get("edit_settings", {}) if isinstance(config, dict) else {}
+    media_analysis = media_analysis if isinstance(media_analysis, dict) else {}
+    context = media_analysis.get("context_window", {})
+    context = context if isinstance(context, dict) else {}
+    subject_tracking = context.get("subject_tracking", {})
+    subject_tracking = subject_tracking if isinstance(subject_tracking, dict) else {}
+    subject_tracked = subject_tracking.get("detected") is True
     if not isinstance(edl, dict) or not isinstance(edl.get("video"), list):
         return AgentResult("framing_agent", "blocked", None, 0.0,
                            ("EDL video list is missing or invalid.",), ("Build a valid EDL before framing review.",), {})
@@ -322,12 +329,20 @@ def framing_agent(config: dict[str, Any], edl: dict[str, Any]) -> AgentResult:
     findings = ["Every EDL clip uses the framing mode currently implemented by FFmpeg."]
     if mirror is True:
         recs.append("Mirroring is active; inspect any visible text because horizontal flipping reverses writing.")
-    findings.append("Framing mode is centered aspect crop, not face/subject tracking." if smart_crop is True
-                    else "Legacy blurred-background framing is explicitly selected.")
-    return AgentResult("framing_agent", "ok", None, 1.0, tuple(findings), tuple(recs),
-                       {"mode": mode, "mirror_enabled": mirror, "clip_count": len(clips),
-                        "subject_tracking": False, "arbitrary_crop_rectangles_supported": False,
-                        "context_window": edl.get("context_window")})
+    if subject_tracked:
+        findings.append("Optional OpenCV HOG detections guided nearby source-frame selection and horizontal/vertical crop centers.")
+        findings.append("The tracker uses person-shape plus short-term appearance consistency; it does not verify identity or understand story roles.")
+    else:
+        findings.append("Subject tracking was unavailable or no stable person track was found; deterministic center crop remains the fallback.")
+    return AgentResult("framing_agent", "ok", None, 0.7 if subject_tracked else 1.0, tuple(findings), tuple(recs),
+                       {"mode": "subject_aware_crop_proxy" if subject_tracked and smart_crop is True else mode,
+                        "mirror_enabled": mirror, "clip_count": len(clips),
+                        "subject_tracking": subject_tracked,
+                        "subject_tracking_method": subject_tracking.get("method"),
+                        "subject_tracking_quality_proxy": subject_tracking.get("track_quality_proxy"),
+                        "identity_recognition": False,
+                        "arbitrary_crop_rectangles_supported": False,
+                        "context_window": context})
 
 
 def hook_analyst(data: dict[str, Any]) -> AgentResult:
@@ -644,7 +659,7 @@ def run_agent_team(context: dict[str, Any],
     record(beat, "beat_analysis")
     reference = reference_analyst(context.get("reference_analysis", {}))
     record(reference, "reference_analysis")
-    framing = framing_agent(settings, context.get("edl", {}))
+    framing = framing_agent(settings, context.get("edl", {}), context.get("media_analysis", {}))
     record(framing, "framing_review")
     hook = hook_analyst(context.get("hook_analysis", {}))
     record(hook, "opening_hook_review")
