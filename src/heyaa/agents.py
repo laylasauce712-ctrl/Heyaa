@@ -5,6 +5,7 @@ settings, media-analysis outputs, EDL and render-QA data. Missing evidence is
 reported as missing; it is never invented to create a score.
 """
 from dataclasses import asdict, dataclass
+import math
 from typing import Any, Callable
 
 try:
@@ -34,7 +35,7 @@ class AgentResult:
 
 
 def _finite_number(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value))
 
 
 def settings_agent(config: dict[str, Any]) -> AgentResult:
@@ -47,6 +48,8 @@ def settings_agent(config: dict[str, Any]) -> AgentResult:
         return AgentResult("settings_agent", "blocked", None, 0.0,
                            ("video_settings, edit_settings and audio_settings must be objects.",),
                            ("Repair params.json before rendering.",), {})
+    if config.get("style") != "phonk_montagem":
+        findings.append("Only style='phonk_montagem' is implemented.")
     if str(video.get("resolution", "")).lower() != "1080x1920":
         findings.append("This renderer's required output is 1080x1920 (9:16).")
     fps = video.get("fps")
@@ -70,6 +73,11 @@ def settings_agent(config: dict[str, Any]) -> AgentResult:
             findings.append(f"audio_settings.{key} must be an explicit boolean.")
     if edit.get("edl_mode") != "on":
         findings.append("edit_settings.edl_mode must be 'on'.")
+    minimum, maximum = edit.get("min_clips"), edit.get("max_clips")
+    if (not isinstance(minimum, int) or isinstance(minimum, bool) or
+            not isinstance(maximum, int) or isinstance(maximum, bool) or
+            not 6 <= minimum <= 12 or not minimum <= maximum <= 18):
+        findings.append("Clip bounds must satisfy 6 <= min_clips <= 12 and min_clips <= max_clips <= 18.")
     if video.get("codec") != "libx264":
         findings.append("Only video_settings.codec='libx264' is currently implemented.")
     if findings:
@@ -92,6 +100,9 @@ def media_analyst(media: dict[str, Any]) -> AgentResult:
     missing = [key for key in required if key not in media or media[key] is None]
     invalid = [key for key in required if key in media and media[key] is not None and
                (not _finite_number(media[key]) or float(media[key]) < 0)]
+    for key in ("source_width", "source_height", "source_duration_seconds", "music_duration_seconds"):
+        if key in media and _finite_number(media[key]) and float(media[key]) <= 0 and key not in invalid:
+            invalid.append(key)
     if missing or invalid:
         return AgentResult("media_analyst", "insufficient_evidence", None, 0.0,
                            ("Source metadata is incomplete or invalid.",),
@@ -146,10 +157,13 @@ def planner(context: dict[str, Any]) -> AgentResult:
                            {"edl_present": True, "validation_error": str(exc)})
     mismatches: dict[str, Any] = {}
     resolution = str(video.get("resolution", "")).lower().split("x")
-    if len(resolution) != 2:
+    try:
+        if len(resolution) != 2:
+            raise ValueError("expected WIDTHxHEIGHT")
+        expected_size = (int(resolution[0]), int(resolution[1]))
+    except (TypeError, ValueError):
         mismatches["resolution"] = {"actual": video.get("resolution")}
     else:
-        expected_size = (int(resolution[0]), int(resolution[1]))
         if (edl.get("width"), edl.get("height")) != expected_size:
             mismatches["dimensions"] = {"expected": expected_size, "actual": (edl.get("width"), edl.get("height"))}
     fps = video.get("fps")
@@ -160,11 +174,15 @@ def planner(context: dict[str, Any]) -> AgentResult:
         expected_frames = round(float(duration) * fps)
         if edl.get("total_frames") != expected_frames:
             mismatches["total_frames"] = {"expected": expected_frames, "actual": edl.get("total_frames")}
-    bad_speed = [i for i, item in enumerate(edl.get("video", []))
-                 if item.get("type") == "clip" and
-                 abs(float(item.get("speed", 1.0)) - float(edit.get("speed", 1.0))) > 1e-6]
-    if bad_speed:
-        mismatches["clip_speed_indices"] = bad_speed
+    target_speed = edit.get("speed")
+    if not _finite_number(target_speed):
+        mismatches["settings_speed"] = {"actual": target_speed}
+    else:
+        bad_speed = [i for i, item in enumerate(edl.get("video", []))
+                     if item.get("type") == "clip" and
+                     abs(float(item.get("speed")) - float(target_speed)) > 1e-6]
+        if bad_speed:
+            mismatches["clip_speed_indices"] = bad_speed
     if mismatches:
         return AgentResult("planner", "needs_fix", None, 1.0,
                            ("The validated EDL does not match params.json.",),

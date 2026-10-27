@@ -421,7 +421,7 @@ def verify_output(path):
     # A successful probe is not enough: decode the complete streams to catch corrupt packets.
     run(["ffmpeg", "-hide_banner", "-v", "error", "-i", path, "-f", "null", "-"])
     details = {
-        "width": width, "height": height, "fps": float(rate), "expected_fps": FPS, "expected_video_codec": CODEC,
+        "width": width, "height": height, "fps": float(rate), "expected_fps": FPS, "expected_video_codec": ("h264" if CODEC == "libx264" else CODEC),
         "frame_count": frame_count, "expected_frame_count": expected_frames,
         "has_audio": True, "decode_ok": True, "file_exists": True,
         "duration_seconds": actual_duration, "expected_duration_seconds": DURATION,
@@ -492,6 +492,18 @@ def main():
                    "gain_db": 0.0, "fade_out_f": min(total_frames, round(0.8 * FPS))}]
     }
     validate_edl(edl)
+    # From this point on, read final segment boundaries back from the validated EDL,
+    # rather than independently re-deriving the timeline for the FFmpeg stage.
+    total_frames = edl["total_frames"]
+    freeze_item = edl["video"][-1]
+    if freeze_item["type"] != "freeze":
+        raise RuntimeError("The final EDL video item must be the explicit freeze segment.")
+    edit_frames, freeze_frames = freeze_item["start_f"], freeze_item["dur_f"]
+    if edit_frames + freeze_frames != total_frames:
+        raise RuntimeError("EDL freeze segment does not end at total_frames.")
+    FREEZE = freeze_frames / FPS
+    EDIT_DURATION = edit_frames / FPS
+    DURATION = total_frames / FPS
     with open(os.path.join(OUTDIR, "edit_decision_list.json"), "w", encoding="utf-8") as handle:
         json.dump(edl, handle, ensure_ascii=False, indent=2)
     print(f"[edl] Validated {len(edl_video) - 1} clips + freeze; {total_frames} frames, no gaps.")
