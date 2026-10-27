@@ -67,8 +67,11 @@ def settings_agent(config: dict[str, Any]) -> AgentResult:
         findings.append("edit_settings.speed must be between 1.0x and 1.35x.")
     freeze = edit.get("freeze_duration")
     if (not _finite_number(freeze) or not _finite_number(duration) or
-            not 0.35 <= float(freeze) <= 1.2 or float(freeze) >= float(duration)):
-        findings.append("freeze_duration must be 0.35–1.2 seconds and shorter than the edit.")
+            not 1.7 <= float(freeze) <= 3.0 or float(freeze) >= float(duration)):
+        findings.append("freeze_duration must be 1.7–3.0 seconds and shorter than the edit.")
+    drop_freeze = edit.get("drop_freeze_duration", 0.25)
+    if not _finite_number(drop_freeze) or not 0.1 <= float(drop_freeze) <= 0.6:
+        findings.append("drop_freeze_duration must be between 0.1 and 0.6 seconds.")
     for key in ("mirror_enabled", "smart_crop", "reference_pacing"):
         if not isinstance(edit.get(key), bool):
             findings.append(f"edit_settings.{key} must be an explicit boolean.")
@@ -208,10 +211,13 @@ def planner(context: dict[str, Any]) -> AgentResult:
             mismatches["clip_speed_indices"] = bad_speed
     clip_items = [item for item in edl.get("video", []) if item.get("type") == "clip"]
     freeze_indices = [i for i, item in enumerate(edl.get("video", [])) if item.get("type") == "freeze"]
+    freeze_items = [edl["video"][index] for index in freeze_indices]
     if (not edl.get("video") or edl["video"][-1].get("type") != "freeze" or
-            len(freeze_indices) != 1):
+            len(freeze_indices) not in (1, 2) or
+            not freeze_items or freeze_items[-1].get("effect") != "phonk-freeze" or
+            any(item.get("effect") != "drop-impact-freeze" for item in freeze_items[:-1])):
         mismatches["freeze_structure"] = {
-            "expected": "exactly one final freeze segment",
+            "expected": "one final freeze and optionally one internal drop-impact freeze",
             "freeze_indices": freeze_indices,
         }
     minimum, maximum = edit.get("min_clips"), edit.get("max_clips")
@@ -307,7 +313,8 @@ def framing_agent(config: dict[str, Any], edl: dict[str, Any]) -> AgentResult:
                     else "Legacy blurred-background framing is explicitly selected.")
     return AgentResult("framing_agent", "ok", None, 1.0, tuple(findings), tuple(recs),
                        {"mode": mode, "mirror_enabled": mirror, "clip_count": len(clips),
-                        "subject_tracking": False, "arbitrary_crop_rectangles_supported": False})
+                        "subject_tracking": False, "arbitrary_crop_rectangles_supported": False,
+                        "context_window": edl.get("context_window")})
 
 
 def hook_analyst(data: dict[str, Any]) -> AgentResult:
@@ -578,7 +585,10 @@ def export_storage_agent(temporary_path: str, final_path: str,
 
 def run_agent_team(context: dict[str, Any],
                    emit: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
-    """Run each deterministic agent against the same real render context."""
+    """Run deterministic evidence agents, then record an auditable review conference.
+
+    The conference is structured rule-based cross-review, not a fabricated LLM chat.
+    """
     if not isinstance(context, dict):
         context = {}
     events: list[AgentEvent] = []
@@ -615,6 +625,77 @@ def run_agent_team(context: dict[str, Any],
     record(qa, "render_qa")
     critic = render_critic(context.get("render_critique", {}))
     record(critic, "render_critique")
+
+    media_payload = context.get("media_analysis", {}) if isinstance(context.get("media_analysis"), dict) else {}
+    beat_payload = context.get("beat_analysis", {}) if isinstance(context.get("beat_analysis"), dict) else {}
+    reference_payload = context.get("reference_analysis", {}) if isinstance(context.get("reference_analysis"), dict) else {}
+    hook_payload = context.get("hook_analysis", {}) if isinstance(context.get("hook_analysis"), dict) else {}
+    niche_missing = list(niche.evidence.get("missing_metrics", []))
+    dialogue = [
+        {
+            "turn": 1, "speaker": "Beat Sync Agent", "to": "Planner",
+            "message": (
+                f"Measured {beat_payload.get('candidate_count', 0)} beat/onset candidates; "
+                f"drop-freeze proxy={beat_payload.get('drop_beat_time_seconds')}s. "
+                "Use the beat evidence for timing; do not call it a semantic music-drop detector."
+            ),
+            "evidence": {"candidate_count": beat_payload.get("candidate_count"),
+                        "drop_beat_time_seconds": beat_payload.get("drop_beat_time_seconds"),
+                        "method": beat_payload.get("method")}
+        },
+        {
+            "turn": 2, "speaker": "Reference Analyst", "to": "Planner",
+            "message": (
+                f"Reference pacing available={reference_payload.get('available')}; "
+                f"median cut interval={reference_payload.get('median_cut_interval_seconds')}s. "
+                "I can support rhythm matching only; reference meaning/effects are not semantically recognized yet."
+            ),
+            "evidence": {"source": reference_payload.get("source"),
+                        "available": reference_payload.get("available"),
+                        "median_cut_interval_seconds": reference_payload.get("median_cut_interval_seconds")}
+        },
+        {
+            "turn": 3, "speaker": "Hook Analyst", "to": "Niche Analyst",
+            "message": (
+                f"Opening window={hook_payload.get('window_seconds')}s with "
+                f"{hook_payload.get('opening_scene_change_count')} measured scene changes. "
+                "This is an activity proxy, not proof that the opening is semantically compelling."
+            ),
+            "evidence": {"window_seconds": hook_payload.get("window_seconds"),
+                        "opening_scene_change_count": hook_payload.get("opening_scene_change_count"),
+                        "semantic_hook_assessed": False}
+        },
+        {
+            "turn": 4, "speaker": "Niche Analyst", "to": "Director",
+            "message": (
+                "Craft review will expose missing measurements instead of inventing a score. "
+                + ("Still missing: " + ", ".join(niche_missing) + "." if niche_missing
+                   else "All configured craft proxies were supplied, but they remain heuristic.")
+            ),
+            "evidence": {"missing_metrics": niche_missing,
+                        "status": niche.status, "score": niche.score}
+        },
+        {
+            "turn": 5, "speaker": "Inspector", "to": "Director",
+            "message": (
+                f"Technical output: {context.get('render_report', {}).get('width')}x"
+                f"{context.get('render_report', {}).get('height')}, "
+                f"{context.get('render_report', {}).get('frame_count')} frames; "
+                "this confirms file integrity, not creative quality or subject continuity."
+            ),
+            "evidence": {"render_report": context.get("render_report", {})}
+        },
+        {
+            "turn": 6, "speaker": "Media Analyst", "to": "Director",
+            "message": (
+                f"Source duration={media_payload.get('source_duration_seconds')}s; "
+                f"context strategy={media_payload.get('context_window', {}).get('method', 'not available')}. "
+                "Current context selection is temporal and does not identify the same person across shots."
+            ),
+            "evidence": {"context_window": media_payload.get("context_window"),
+                        "context_caveat": media_payload.get("context_caveat")}
+        },
+    ]
     director = director_agent({
         "settings_agent": setting_result, "media_analyst": media, "beat_sync_agent": beat,
         "reference_analyst": reference, "framing_agent": framing, "hook_analyst": hook,
@@ -639,4 +720,5 @@ def run_agent_team(context: dict[str, Any],
         "hook_analysis": dict(context.get("hook_analysis", {})),
         "render_critique": dict(context.get("render_critique", {})),
         "events": [asdict(event) for event in events],
+        "agent_dialogue": dialogue,
     }
