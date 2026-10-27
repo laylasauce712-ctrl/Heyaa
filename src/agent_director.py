@@ -1029,6 +1029,261 @@ def enforce_source_progression(candidate_start_f, source_dur_f, previous_source_
     return selected
 
 
+def _source_has_audio(path):
+    """Return whether ffprobe can identify a source audio stream."""
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "a:0",
+             "-show_entries", "stream=codec_type", "-of", "csv=p=0", path],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False,
+        )
+    except OSError:
+        return False
+    return result.returncode == 0 and bool(result.stdout.strip())
+
+
+def build_source_scene_segments(start_seconds, end_seconds, scene_cuts):
+    """Split a source context into chronological, non-overlapping scene intervals."""
+    start, end = float(start_seconds), float(end_seconds)
+    if not math.isfinite(start) or not math.isfinite(end) or start < 0 or end <= start:
+        raise ValueError("Source context must have finite non-negative start and end > start.")
+    cuts = sorted({
+        float(value) for value in scene_cuts
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+        and math.isfinite(float(value)) and start + 1e-6 < float(value) < end - 1e-6
+    })
+    positions = [start] + cuts + [end]
+    return [
+        {"start_seconds": left, "end_seconds": right,
+         "audio_loudness_db": None, "motion_score": None}
+        for left, right in zip(positions, positions[1:])
+        if right - left >= 0.25
+    ]
+
+
+def measure_source_scene_features(path, scene_segments):
+    """Measure per-scene RMS loudness (astats) and low-resolution frame-difference motion."""
+    measured = []
+    for index, segment in enumerate(scene_segments):
+        start = float(segment["start_seconds"])
+        duration = float(segment["end_seconds"]) - start
+        if duration <= 0:
+            continue
+        command = [
+            "ffmpeg", "-hide_banner", "-nostats", "-loglevel", "info",
+            "-ss", f"{start:.6f}", "-t", f"{duration:.6f}", "-i", path,
+            "-map", "0:v:0", "-map", "0:a:0?",
+            "-vf", "fps=4,scale=160:-2:flags=fast_bilinear,tblend=all_mode=difference,signalstats,metadata=print:key=lavfi.signalstats.YAVG",
+            "-af", "astats=metadata=1:reset=0",
+            "-f", "null", "-",
+        ]
+        try:
+            result = subprocess.run(
+                command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, check=False,
+            )
+        except OSError as exc:
+            raise RuntimeError(f"Could not measure source scene segment {index}: {exc}") from exc
+        output = (result.stdout or "") + "\n" + (result.stderr or "")
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"FFmpeg scene-feature analysis failed for segment {index}: {output[-800:]}"
+            )
+        loudness = re.findall(
+            r"RMS level dB:\s*(-?inf|-?(?:\\d+(?:\\.\\d*)?|\\.\\d+))",
+            output, re.IGNORECASE,
+        )
+        motion = re.findall(
+            r"lavfi\\.signalstats\\.YAVG\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)",
+            output,
+        )
+        if not loudness:
+            raise RuntimeError(f"FFmpeg astats returned no RMS loudness for source scene segment {index}.")
+        raw_rms = loudness[-1].lower()
+        try:
+            rms_db = float(raw_rms)
+            if not math.isfinite(rms_db):
+                rms_db = -120.0
+        except ValueError:
+            rms_db = -120.0
+        motion_values = [float(value) for value in motion if math.isfinite(float(value))]
+        measured.append({
+            **segment,
+            "audio_loudness_db": max(-120.0, min(0.0, rms_db)),
+            "motion_score": statistics.fmean(motion_values) if motion_values else 0.0,
+        })
+    if not measured or not any(
+        isinstance(item.get("audio_loudness_db"), (int, float))
+        and math.isfinite(float(item["audio_loudness_db"]))
+        for item in measured
+    ):
+        raise RuntimeError("No usable scene-level audio loudness measurements were produced.")
+    return measured
+
+
+def _percentile_ranks(values):
+    """Normalize numeric values to [0, 1], assigning tied values their mid-rank."""
+    count = len(values)
+    if count <= 1:
+        return [0.5] * count
+    result = [0.0] * count
+    order = sorted(range(count), key=lambda index: values[index])
+    cursor = 0
+    while cursor < count:
+        end = cursor + 1
+        while end < count and values[order[end]] == values[order[cursor]]:
+            end += 1
+        rank = ((cursor + end - 1) / 2.0) / (count - 1)
+        for position in range(cursor, end):
+            result[order[position]] = rank
+        cursor = end
+    return result
+
+
+def rank_source_scene_segments(scene_segments):
+    """Rank scene intervals by measured source loudness (60%) and motion (40%)."""
+    if not scene_segments:
+        return []
+    prepared = [dict(segment) for segment in scene_segments]
+    audio_values = []
+    motion_values = []
+    for segment in prepared:
+        try:
+            audio_value = float(segment.get("audio_loudness_db", -120.0))
+        except (TypeError, ValueError):
+            audio_value = -120.0
+        try:
+            motion_value = float(segment.get("motion_score", 0.0))
+        except (TypeError, ValueError):
+            motion_value = 0.0
+        audio_values.append(audio_value if math.isfinite(audio_value) else -120.0)
+        motion_values.append(motion_value if math.isfinite(motion_value) else 0.0)
+    audio_ranks = _percentile_ranks(audio_values)
+    motion_ranks = _percentile_ranks(motion_values)
+    for index, segment in enumerate(prepared):
+        segment["audio_rank"] = round(audio_ranks[index], 4)
+        segment["motion_rank"] = round(motion_ranks[index], 4)
+        segment["selection_score"] = round(0.6 * audio_ranks[index] + 0.4 * motion_ranks[index], 4)
+    return prepared
+
+
+def plan_ranked_disjoint_source_ranges(source_durations_frames, scene_segments, fps, minimum_gap_frames):
+    """Assign consecutive output clips to ranked scene intervals without overlaps or source-order jumps.
+
+    Scene intervals remain in source-time order because the EDL validator requires
+    monotonically increasing source ranges. A small dynamic program chooses how many
+    consecutive output clips each scene can host, maximizing loudness/motion score
+    while preferring coverage across multiple scene intervals.
+    """
+    if isinstance(fps, bool) or not isinstance(fps, (int, float)) or not math.isfinite(float(fps)) or fps <= 0:
+        raise ValueError("fps must be a positive finite number.")
+    if (isinstance(minimum_gap_frames, bool) or not isinstance(minimum_gap_frames, int)
+            or minimum_gap_frames < 0):
+        raise ValueError("minimum_gap_frames must be a non-negative integer.")
+    durations = []
+    for value in source_durations_frames:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError("Each source clip duration must be a positive integer frame count.")
+        durations.append(value)
+    if not durations:
+        return []
+    ranked = rank_source_scene_segments(scene_segments)
+    if not ranked:
+        raise RuntimeError("No measured source scene intervals are available.")
+
+    usable = []
+    for index, segment in enumerate(ranked):
+        start_seconds, end_seconds = segment.get("start_seconds"), segment.get("end_seconds")
+        if (not isinstance(start_seconds, (int, float)) or
+                not isinstance(end_seconds, (int, float)) or
+                not math.isfinite(float(start_seconds)) or
+                not math.isfinite(float(end_seconds)) or end_seconds <= start_seconds):
+            raise ValueError(f"Scene segment {index} has invalid boundaries.")
+        start_frame = math.ceil(float(start_seconds) * fps - 1e-8)
+        end_frame = math.floor(float(end_seconds) * fps + 1e-8)
+        # Leave room around interior scene cuts, and the configured source gap
+        # between clips within a scene, so the EDL contract needs no correction.
+        if index > 0:
+            start_frame += minimum_gap_frames
+        if index < len(ranked) - 1:
+            end_frame -= minimum_gap_frames
+        usable.append({
+            **segment, "scene_segment_index": index,
+            "start_frame": start_frame, "end_frame": end_frame,
+            "cursor": start_frame, "uses": 0,
+        })
+
+    clip_count = len(durations)
+    scene_count = len(usable)
+    prefix = [0]
+    for duration in durations:
+        prefix.append(prefix[-1] + duration)
+    max_per_scene = max(1, math.ceil(clip_count / scene_count) + 1)
+    negative = float("-inf")
+    dp = [[negative] * (clip_count + 1) for _ in range(scene_count + 1)]
+    back = [[None] * (clip_count + 1) for _ in range(scene_count + 1)]
+    dp[0][0] = 0.0
+    for scene_index, segment in enumerate(usable, start=1):
+        capacity = segment["end_frame"] - segment["start_frame"]
+        for assigned in range(clip_count + 1):
+            if dp[scene_index - 1][assigned] > dp[scene_index][assigned]:
+                dp[scene_index][assigned] = dp[scene_index - 1][assigned]
+                back[scene_index][assigned] = (assigned, 0)
+            lower_count = max(1, assigned - max_per_scene)
+            for count in range(lower_count, assigned + 1):
+                previous_assigned = assigned - count
+                if dp[scene_index - 1][previous_assigned] == negative:
+                    continue
+                required = prefix[assigned] - prefix[previous_assigned] + minimum_gap_frames * (count - 1)
+                if required > capacity:
+                    continue
+                value = dp[scene_index - 1][previous_assigned] + count * float(segment["selection_score"]) + 0.2
+                if value > dp[scene_index][assigned] + 1e-12:
+                    dp[scene_index][assigned] = value
+                    back[scene_index][assigned] = (previous_assigned, count)
+    if dp[scene_count][clip_count] == negative:
+        raise RuntimeError(
+            "Ranked scene intervals cannot fit every source clip without overlap; "
+            "use fewer clips, a longer source/context, or the legacy selection fallback."
+        )
+
+    allocations = [0] * scene_count
+    assigned = clip_count
+    for scene_index in range(scene_count, 0, -1):
+        parent = back[scene_index][assigned]
+        if parent is None:
+            raise RuntimeError("Could not reconstruct the ranked source-segment allocation.")
+        previous_assigned, count = parent
+        allocations[scene_index - 1] = count
+        assigned = previous_assigned
+    assignments = []
+    for scene, count in zip(usable, allocations):
+        cursor = scene["start_frame"]
+        for _ in range(count):
+            clip_index = len(assignments)
+            duration = durations[clip_index]
+            start_frame = cursor
+            if start_frame + duration > scene["end_frame"]:
+                raise RuntimeError("Ranked source-segment allocation crossed a scene boundary.")
+            assignments.append({
+                "source_start_f": start_frame,
+                "source_dur_f": duration,
+                "scene_segment_index": scene["scene_segment_index"],
+                "selection_score": scene["selection_score"],
+                "forced_shift_frames": 0,
+            })
+            cursor += duration + minimum_gap_frames
+    if len(assignments) != clip_count:
+        raise RuntimeError("Ranked source-segment allocation did not assign every clip.")
+    for previous, current in zip(
+        sorted(assignments, key=lambda item: item["source_start_f"]),
+        sorted(assignments, key=lambda item: item["source_start_f"])[1:],
+    ):
+        if current["source_start_f"] < previous["source_start_f"] + previous["source_dur_f"] + minimum_gap_frames:
+            raise RuntimeError("Ranked source-segment plan violates non-overlap/source-gap constraints.")
+    return assignments
+
+
 def make_clip(index, item, source_duration):
     """Render exactly the source range and output frame count declared by one EDL clip."""
     start = item["source_start_f"] / FPS
@@ -1736,46 +1991,109 @@ def main(argv=None):
         )
     context_duration = max(0.1, context_end - context_start)
     context_scenes = sorted(cut - context_start for cut in scenes if context_start <= cut <= context_end)
+    source_gap_frames = round(MIN_SOURCE_GAP_SECONDS * FPS)
+    clip_source_durations = [
+        max(1, round((end_f - start_f) * SPEED))
+        for start_f, end_f in zip(frame_boundaries, frame_boundaries[1:])
+    ]
+    planned_source_ranges = None
+    source_selection_report = {
+        "method": "legacy_snap_then_progression",
+        "source_audio_available": False,
+        "measured_scene_segment_count": 0,
+        "unique_scene_segments_used": 0,
+        "forced_progression_shift_count": 0,
+        "fallback_reason": "source_has_no_audio_or_feature_measurement_unavailable",
+    }
+    source_audio_available = _source_has_audio(VIDEO)
+    if source_audio_available:
+        try:
+            scene_segments = build_source_scene_segments(context_start, context_end, scenes)
+            measured_segments = measure_source_scene_features(VIDEO, scene_segments)
+            planned_source_ranges = plan_ranked_disjoint_source_ranges(
+                clip_source_durations, measured_segments, FPS, source_gap_frames
+            )
+            used_segment_counts = {}
+            for assignment in planned_source_ranges:
+                key = assignment["scene_segment_index"]
+                used_segment_counts[key] = used_segment_counts.get(key, 0) + 1
+            source_selection_report = {
+                "method": "ranked_disjoint_scene_segments",
+                "source_audio_available": True,
+                "measured_scene_segment_count": len(measured_segments),
+                "unique_scene_segments_used": len(used_segment_counts),
+                "scene_segments_reused_for_multiple_clips": sum(1 for count in used_segment_counts.values() if count > 1),
+                "forced_progression_shift_count": 0,
+                "audio_score_weight": 0.6,
+                "motion_score_weight": 0.4,
+                "fallback_reason": None,
+            }
+            print(
+                f"[source] Ranked {len(measured_segments)} scene segments by source RMS loudness "
+                f"and motion; assigned {len(planned_source_ranges)} chronological, disjoint clip ranges."
+            )
+        except (RuntimeError, ValueError, OSError) as exc:
+            planned_source_ranges = None
+            source_selection_report = {
+                "method": "legacy_snap_then_progression",
+                "source_audio_available": True,
+                "measured_scene_segment_count": len(scene_segments) if "scene_segments" in locals() else 0,
+                "unique_scene_segments_used": 0,
+                "forced_progression_shift_count": 0,
+                "fallback_reason": str(exc),
+            }
+            print(f"[warn] Ranked scene selection unavailable ({exc}); using legacy source progression.", flush=True)
+    else:
+        print("[source] No audio stream in source video; using legacy scene-center selection.")
+    context["source_selection"] = source_selection_report
     edl_video = []
     output_cursor = 0
-    source_gap_frames = round(MIN_SOURCE_GAP_SECONDS * FPS)
     previous_source_end_f = None
+    forced_source_shift_count = 0
+    clip_plan_index = 0
     for start_f, end_f in zip(frame_boundaries, frame_boundaries[1:]):
         dur_f = end_f - start_f
         if dur_f <= 0:
             raise RuntimeError("EDL contains a zero-length clip after frame quantization.")
-        timeline_center = (start_f + dur_f / 2) / FPS
-        progress = max(0.0, min(1.0, timeline_center / max(EDIT_DURATION, 1 / FPS)))
-        source_power = 1.0 if args.same_source_progression else VARIANT_SOURCE_POWERS.get(VARIANT_INDEX, 1.0)
-        # Keep the reference-derived output cut times identical across variants;
-        # vary only which point in the same coherent source window each shot samples.
-        local_target = (progress ** source_power) * context_duration
-        local_center = choose_source_center(local_target, context_scenes, context_duration)
-        source_center = context_start + local_center
-        track_observation = subject_observation_near(
-            SUBJECT_OBSERVATIONS, source_center,
-            max_distance_seconds=max(1.5, dur_f / FPS)
-        )
-        if track_observation is not None:
-            source_center = float(track_observation["time_seconds"])
-        source_dur_f = max(1, round(dur_f * SPEED))
-        source_start_seconds = max(0.0, min(
-            source_center - (source_dur_f / FPS) / 2,
-            max(0.0, source_duration - source_dur_f / FPS)
-        ))
-        candidate_source_start_f = round(source_start_seconds * FPS)
-        max_source_start_f = round(source_duration * FPS) - source_dur_f
-        source_start_f = enforce_source_progression(
-            candidate_source_start_f, source_dur_f, previous_source_end_f,
-            source_gap_frames, max_source_start_f,
-        )
-        if source_start_f != candidate_source_start_f:
-            clip_number = sum(1 for x in edl_video if x["type"] == "clip") + 1
-            print(
-                f"[edit] Shifted source start for clip {clip_number} from frame "
-                f"{candidate_source_start_f} to {source_start_f} to prevent source overlap.", flush=True
+        source_dur_f = clip_source_durations[clip_plan_index]
+        if planned_source_ranges is not None:
+            assignment = planned_source_ranges[clip_plan_index]
+            source_start_f = assignment["source_start_f"]
+            candidate_source_start_f = source_start_f
+        else:
+            timeline_center = (start_f + dur_f / 2) / FPS
+            progress = max(0.0, min(1.0, timeline_center / max(EDIT_DURATION, 1 / FPS)))
+            source_power = 1.0 if args.same_source_progression else VARIANT_SOURCE_POWERS.get(VARIANT_INDEX, 1.0)
+            # Legacy fallback: snap a target to nearby scene cuts, then enforce
+            # the EDL's chronological source progression constraint.
+            local_target = (progress ** source_power) * context_duration
+            local_center = choose_source_center(local_target, context_scenes, context_duration)
+            source_center = context_start + local_center
+            track_observation = subject_observation_near(
+                SUBJECT_OBSERVATIONS, source_center,
+                max_distance_seconds=max(1.5, dur_f / FPS)
             )
+            if track_observation is not None:
+                source_center = float(track_observation["time_seconds"])
+            source_start_seconds = max(0.0, min(
+                source_center - (source_dur_f / FPS) / 2,
+                max(0.0, source_duration - source_dur_f / FPS)
+            ))
+            candidate_source_start_f = round(source_start_seconds * FPS)
+            max_source_start_f = round(source_duration * FPS) - source_dur_f
+            source_start_f = enforce_source_progression(
+                candidate_source_start_f, source_dur_f, previous_source_end_f,
+                source_gap_frames, max_source_start_f,
+            )
+            if source_start_f != candidate_source_start_f:
+                forced_source_shift_count += 1
+                clip_number = sum(1 for x in edl_video if x["type"] == "clip") + 1
+                print(
+                    f"[edit] Shifted source start for clip {clip_number} from frame "
+                    f"{candidate_source_start_f} to {source_start_f} to prevent source overlap.", flush=True
+                )
         previous_source_end_f = source_start_f + source_dur_f
+        clip_plan_index += 1
         edl_video.append({
             "type": "clip", "source": VIDEO,
             "source_start_f": source_start_f,
@@ -1983,6 +2301,7 @@ def main(argv=None):
                     "duration_seconds": render_report.get("duration_seconds")})
     source_streams = probe(VIDEO).get("streams", [])
     source_video = next((stream for stream in source_streams if stream.get("codec_type") == "video"), {})
+    source_selection_report["forced_progression_shift_count"] = forced_source_shift_count
     media_analysis = {
         "source_duration_seconds": source_duration,
         "source_width": int(source_video.get("width", 0)),
@@ -1990,6 +2309,7 @@ def main(argv=None):
         "scene_cut_count": len(scenes),
         "music_duration_seconds": music_duration,
         "context_window": context,
+        "source_selection": source_selection_report,
         "context_caveat": "Temporal scene-cut-density proxy only; no semantic person identification in this build.",
     }
     beat_analysis = {

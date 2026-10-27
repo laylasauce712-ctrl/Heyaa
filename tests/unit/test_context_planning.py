@@ -1,3 +1,4 @@
+import math
 import statistics
 import unittest
 
@@ -160,6 +161,38 @@ class ContextPlanningTests(unittest.TestCase):
         cfg["edit_settings"]["min_shot_seconds"] = 0.75
         cfg["edit_settings"]["max_clips"] = 41
         self.assertEqual(settings_agent(cfg).status, "blocked")
+
+    def test_ranked_multiscene_assignment_is_chronological_disjoint_and_has_no_forced_shift(self):
+        fps = 10
+        gap = 1
+        segments = [
+            {"start_seconds": 0.0, "end_seconds": 3.0, "audio_loudness_db": -18.0, "motion_score": 8.0},
+            {"start_seconds": 3.0, "end_seconds": 6.0, "audio_loudness_db": -8.0, "motion_score": 12.0},
+            {"start_seconds": 6.0, "end_seconds": 9.0, "audio_loudness_db": -25.0, "motion_score": 4.0},
+        ]
+        ranked = renderer.rank_source_scene_segments(segments)
+        self.assertEqual(
+            max(ranked, key=lambda item: item["selection_score"])["start_seconds"], 3.0
+        )
+        assignments = renderer.plan_ranked_disjoint_source_ranges([8, 8, 8, 8], ranked, fps, gap)
+        self.assertEqual(len(assignments), 4)
+        self.assertTrue(all(item["forced_shift_frames"] == 0 for item in assignments))
+        self.assertEqual(assignments, sorted(assignments, key=lambda item: item["source_start_f"]))
+        for left, right in zip(assignments, assignments[1:]):
+            self.assertGreaterEqual(
+                right["source_start_f"],
+                left["source_start_f"] + left["source_dur_f"] + gap,
+            )
+        self.assertGreaterEqual(len({item["scene_segment_index"] for item in assignments}), 2)
+        for item in assignments:
+            scene = ranked[item["scene_segment_index"]]
+            self.assertGreaterEqual(item["source_start_f"], math.ceil(scene["start_seconds"] * fps) -
+                                    (gap if item["scene_segment_index"] == 0 else 0))
+            self.assertLessEqual(
+                item["source_start_f"] + item["source_dur_f"],
+                math.floor(scene["end_seconds"] * fps) +
+                (gap if item["scene_segment_index"] == len(ranked) - 1 else 0),
+            )
 
     def test_source_progression_moves_overlapping_candidate_forward_by_minimum_gap(self):
         selected = renderer.enforce_source_progression(
