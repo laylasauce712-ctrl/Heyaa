@@ -285,6 +285,10 @@ def parse_media_source_args(argv=None):
         help="Render one candidate per exact clip count, e.g. --variants 3 --clip-count-options 8,12,16."
     )
     parser.add_argument(
+        "--same-source-progression", action="store_true", default=False,
+        help=argparse.SUPPRESS
+    )
+    parser.add_argument(
         "--variant-index", type=int, choices=(1, 2, 3, 4, 5), default=None,
         help=argparse.SUPPRESS
     )
