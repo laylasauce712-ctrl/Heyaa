@@ -74,6 +74,20 @@ class ContextPlanningTests(unittest.TestCase):
         self.assertGreaterEqual(min(lengths), 0.75)
         self.assertLessEqual(max(lengths), 3.3)
 
+    def test_source_progression_moves_overlapping_candidate_forward_by_minimum_gap(self):
+        selected = renderer.enforce_source_progression(
+            candidate_start_f=28, source_dur_f=30, previous_source_end_f=30,
+            minimum_gap_f=3, maximum_source_start_f=200,
+        )
+        self.assertEqual(selected, 33)
+
+    def test_source_progression_fails_if_no_non_overlapping_range_remains(self):
+        with self.assertRaisesRegex(RuntimeError, "Not enough unused source footage"):
+            renderer.enforce_source_progression(
+                candidate_start_f=40, source_dur_f=30, previous_source_end_f=100,
+                minimum_gap_f=3, maximum_source_start_f=105,
+            )
+
     def test_long_source_selects_one_moderately_active_contiguous_context(self):
         cuts = [20.0, 100.0]
         cuts.extend(100.0 + 2.5 * i for i in range(1, 16))

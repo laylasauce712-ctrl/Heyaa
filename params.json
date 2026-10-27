@@ -22,6 +22,7 @@
     "smart_crop": true,
     "freeze_duration": 2,
     "drop_freeze_duration": 0.25,
+    "source_min_gap_seconds": 0.05,
     "edl_mode": "on"
   },
   "audio_settings": {

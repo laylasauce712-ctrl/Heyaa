@@ -62,6 +62,7 @@ MIRROR_ENABLED = None
 SMART_CROP_ENABLED = None
 MIN_CLIPS = None
 MAX_CLIPS = None
+MIN_SOURCE_GAP_SECONDS = 0.05
 MUSIC_LOOP = None
 CODEC = None
 CONFIG = None
@@ -118,7 +119,7 @@ def load_settings():
     """Load and strictly validate params.json; unsupported values fail fast."""
     global DURATION, FPS, WIDTH, HEIGHT, CRF, PRESET, SPEED, FREEZE, EDIT_DURATION
     global BEAT_SYNC, BEAT_FLASH, BASS_BOOST, REFERENCE_PACING, MIRROR_ENABLED, SMART_CROP_ENABLED
-    global MIN_CLIPS, MAX_CLIPS, MUSIC_LOOP, CODEC, CONFIG, DROP_FREEZE_DURATION
+    global MIN_CLIPS, MAX_CLIPS, MUSIC_LOOP, CODEC, CONFIG, DROP_FREEZE_DURATION, MIN_SOURCE_GAP_SECONDS
     global AI_UPSCALE_ENABLED, AI_UPSCALE_MODEL, AI_UPSCALE_SCALE
     global AI_UPSCALE_BINARY, AI_UPSCALE_MODEL_DIR
     path = "params.json"
@@ -195,6 +196,11 @@ def load_settings():
     MIN_CLIPS, MAX_CLIPS = minimum_value, maximum_value
     if not 6 <= MIN_CLIPS <= 12 or not MIN_CLIPS <= MAX_CLIPS <= 18:
         raise ValueError("Clip bounds must satisfy 6 <= min_clips <= 12 and min_clips <= max_clips <= 18.")
+    source_gap_value = edit.get("source_min_gap_seconds", 0.05)
+    if (isinstance(source_gap_value, bool) or not isinstance(source_gap_value, (int, float)) or
+            not math.isfinite(float(source_gap_value)) or not 0.0 <= float(source_gap_value) <= 1.0):
+        raise ValueError("edit_settings.source_min_gap_seconds must be between 0 and 1 second.")
+    MIN_SOURCE_GAP_SECONDS = float(source_gap_value)
     for key in ("reference_pacing", "mirror_enabled", "smart_crop"):
         if not isinstance(edit.get(key), bool):
             raise ValueError(f"edit_settings.{key} must be an explicit boolean.")
@@ -214,7 +220,7 @@ def load_settings():
     DURATION = total_frames / FPS
     EDIT_DURATION = (total_frames - freeze_frames) / FPS
     CONFIG = config
-    print(f"[settings] {WIDTH}x{HEIGHT}@{FPS} | {DURATION:.3f}s | speed={SPEED:.2f}x | final_freeze={FREEZE:.3f}s (minimum 1.7s) | drop_freeze={DROP_FREEZE_DURATION:.3f}s | mirror={MIRROR_ENABLED} | smart_crop={SMART_CROP_ENABLED} | ai_upscale={AI_UPSCALE_ENABLED} ({AI_UPSCALE_MODEL} x{AI_UPSCALE_SCALE}) | music_loop={MUSIC_LOOP} | EDL=on")
+    print(f"[settings] {WIDTH}x{HEIGHT}@{FPS} | {DURATION:.3f}s | speed={SPEED:.2f}x | final_freeze={FREEZE:.3f}s (minimum 1.7s) | drop_freeze={DROP_FREEZE_DURATION:.3f}s | mirror={MIRROR_ENABLED} | smart_crop={SMART_CROP_ENABLED} | ai_upscale={AI_UPSCALE_ENABLED} ({AI_UPSCALE_MODEL} x{AI_UPSCALE_SCALE}) | music_loop={MUSIC_LOOP} | source_min_gap={MIN_SOURCE_GAP_SECONDS:.3f}s | EDL=on")
     return config
 
 
@@ -792,6 +798,33 @@ def choose_source_center(target, scenes, source_duration):
     nearby = [time for time in scenes if abs(time - target) <= window]
     center = min(nearby, key=lambda time: abs(time - target)) if nearby else target
     return max(0.0, min(center, max(0.0, source_duration - 0.2)))
+
+
+def enforce_source_progression(candidate_start_f, source_dur_f, previous_source_end_f,
+                               minimum_gap_f, maximum_source_start_f):
+    """Move a candidate forward when needed so source footage is never reused."""
+    for name, value, minimum in (
+        ("candidate_start_f", candidate_start_f, 0),
+        ("source_dur_f", source_dur_f, 1),
+        ("minimum_gap_f", minimum_gap_f, 0),
+        ("maximum_source_start_f", maximum_source_start_f, 0),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+            raise ValueError(f"{name} must be an integer >= {minimum}.")
+    if previous_source_end_f is not None and (
+        isinstance(previous_source_end_f, bool) or not isinstance(previous_source_end_f, int) or previous_source_end_f < 0
+    ):
+        raise ValueError("previous_source_end_f must be None or a non-negative integer.")
+    if maximum_source_start_f < 0:
+        raise RuntimeError("A planned clip is longer than the available source video.")
+    earliest_allowed = 0 if previous_source_end_f is None else previous_source_end_f + minimum_gap_f
+    selected = max(candidate_start_f, earliest_allowed)
+    if selected > maximum_source_start_f:
+        raise RuntimeError(
+            "Not enough unused source footage remains to keep clips non-overlapping; "
+            "reduce clip count/duration or use a longer source video."
+        )
+    return selected
 
 
 def make_clip(index, item, source_duration):
@@ -1402,6 +1435,8 @@ def main(argv=None):
     context_scenes = sorted(cut - context_start for cut in scenes if context_start <= cut <= context_end)
     edl_video = []
     output_cursor = 0
+    source_gap_frames = round(MIN_SOURCE_GAP_SECONDS * FPS)
+    previous_source_end_f = None
     for start_f, end_f in zip(frame_boundaries, frame_boundaries[1:]):
         dur_f = end_f - start_f
         if dur_f <= 0:
@@ -1425,9 +1460,22 @@ def main(argv=None):
             source_center - (source_dur_f / FPS) / 2,
             max(0.0, source_duration - source_dur_f / FPS)
         ))
+        candidate_source_start_f = round(source_start_seconds * FPS)
+        max_source_start_f = round(source_duration * FPS) - source_dur_f
+        source_start_f = enforce_source_progression(
+            candidate_source_start_f, source_dur_f, previous_source_end_f,
+            source_gap_frames, max_source_start_f,
+        )
+        if source_start_f != candidate_source_start_f:
+            clip_number = sum(1 for x in edl_video if x["type"] == "clip") + 1
+            print(
+                f"[edit] Shifted source start for clip {clip_number} from frame "
+                f"{candidate_source_start_f} to {source_start_f} to prevent source overlap.", flush=True
+            )
+        previous_source_end_f = source_start_f + source_dur_f
         edl_video.append({
             "type": "clip", "source": VIDEO,
-            "source_start_f": round(source_start_seconds * FPS),
+            "source_start_f": source_start_f,
             "source_dur_f": source_dur_f,
             "start_f": output_cursor, "dur_f": dur_f, "speed": SPEED,
             "crop": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}
@@ -1456,7 +1504,7 @@ def main(argv=None):
         "audio": [{"source": MUSIC, "source_start_f": 0, "start_f": 0, "dur_f": total_frames,
                    "gain_db": 0.0, "fade_out_f": min(total_frames, round(0.8 * FPS))}]
     }
-    validate_edl(edl)
+    validate_edl(edl, min_source_gap_f=source_gap_frames)
     # Fail before expensive clip rendering if the contract contains features the
     # current FFmpeg renderer explicitly does not implement.
     freeze_items = [item for item in edl["video"] if item["type"] == "freeze"]

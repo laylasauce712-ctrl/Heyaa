@@ -84,9 +84,12 @@ def settings_agent(config: dict[str, Any]) -> AgentResult:
     drop_freeze = edit.get("drop_freeze_duration", 0.25)
     if not _finite_number(drop_freeze) or not 0.1 <= float(drop_freeze) <= 0.6:
         findings.append("drop_freeze_duration must be between 0.1 and 0.6 seconds.")
-    for key in ("mirror_enabled", "smart_crop", "reference_pacing"):
+    for key in ("mirror_enabled", "reference_pacing"):
         if not isinstance(edit.get(key), bool):
             findings.append(f"edit_settings.{key} must be an explicit boolean.")
+    source_gap = edit.get("source_min_gap_seconds", 0.05)
+    if (not _finite_number(source_gap) or not 0.0 <= float(source_gap) <= 1.0):
+        findings.append("edit_settings.source_min_gap_seconds must be between 0 and 1 second.")
     for key in ("beat_sync", "beat_flash", "bass_boost", "music_loop"):
         if not isinstance(audio.get(key), bool):
             findings.append(f"audio_settings.{key} must be an explicit boolean.")
@@ -188,7 +191,11 @@ def planner(context: dict[str, Any]) -> AgentResult:
                            ("The renderer did not provide an EDL.",),
                            ("Build and validate the EDL before rendering.",), {"edl_present": False})
     try:
-        validate_edl(edl)
+        gap_seconds = edit.get("source_min_gap_seconds", 0.05)
+        fps_num = edl.get("fps_num", 1)
+        fps_den = edl.get("fps_den", 1)
+        minimum_source_gap_f = round(float(gap_seconds) * float(fps_num) / float(fps_den))
+        validate_edl(edl, min_source_gap_f=minimum_source_gap_f)
     except (TypeError, ValueError, KeyError) as exc:
         return AgentResult("planner", "blocked", None, 1.0,
                            (f"EDL validation failed: {exc}",), ("Repair the EDL before export.",),
