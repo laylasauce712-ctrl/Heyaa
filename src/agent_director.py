@@ -123,9 +123,9 @@ def load_settings():
     global MIN_CLIPS, MAX_CLIPS, MUSIC_LOOP, CODEC, CONFIG, DROP_FREEZE_DURATION, MIN_SOURCE_GAP_SECONDS
     global AI_UPSCALE_ENABLED, AI_UPSCALE_MODEL, AI_UPSCALE_SCALE
     global AI_UPSCALE_BINARY, AI_UPSCALE_MODEL_DIR
-    path = "params.json"
+    path = os.environ.get("HEYAA_PARAMS_PATH", "params.json")
     if not os.path.isfile(path):
-        raise FileNotFoundError("params.json is required; renderer defaults are disabled.")
+        raise FileNotFoundError(f"Settings file {path!r} is required; renderer defaults are disabled.")
     with open(path, "r", encoding="utf-8") as handle:
         config = json.load(handle)
     video, audio, edit = config["video_settings"], config["audio_settings"], config["edit_settings"]
