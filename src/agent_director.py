@@ -121,7 +121,7 @@ def detect_scenes(path, duration):
     return sorted(set(times))
 
 
-def _estimate_period_frames(envelope, min_lag=25, max_lag=100):
+def _estimate_period_frames(envelope, min_lag=15, max_lag=60):
     """Estimate a plausible beat period from onset-envelope autocorrelation."""
     if len(envelope) < min_lag * 3:
         return None
