@@ -5,7 +5,12 @@ import re
 import statistics
 import struct
 import subprocess
-from pathlib import Path\n\ntry:\n    from src.heyaa.edl.validate import validate_edl\nexcept ModuleNotFoundError:\n    from heyaa.edl.validate import validate_edl
+from pathlib import Path
+
+try:
+    from src.heyaa.edl.validate import validate_edl
+except ModuleNotFoundError:
+    from heyaa.edl.validate import validate_edl
 
 try:
     from src.heyaa.agents import run_agent_team
