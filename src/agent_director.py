@@ -642,7 +642,10 @@ def choose_clip_count(reference_interval, requested_count=None):
     # Bound the workload for mobile rendering while letting the reference affect pacing.
     if reference_interval is None:
         return MIN_CLIPS
-    return max(MIN_CLIPS, min(MAX_CLIPS, round(EDIT_DURATION / max(MIN_SHOT_SECONDS, min(2.4, reference_interval)))))
+    # Floor instead of round: rounding up can violate the configured minimum shot duration.
+    cadence_target = max(MIN_SHOT_SECONDS, min(2.4, reference_interval))
+    cadence_count = math.floor(EDIT_DURATION / cadence_target + 1e-9)
+    return max(MIN_CLIPS, min(MAX_CLIPS, cadence_count))
 
 
 def choose_drop_beat(music_duration, available_edit_duration, loop_enabled):

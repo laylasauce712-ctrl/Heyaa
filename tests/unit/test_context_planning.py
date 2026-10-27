@@ -83,7 +83,7 @@ class ContextPlanningTests(unittest.TestCase):
         self.assertLessEqual(max(lengths), 3.3)
 
     def test_short_reference_auto_derives_clip_count_to_match_fast_pacing(self):
-        renderer.EDIT_DURATION = 18.0
+        renderer.EDIT_DURATION = 17.75
         renderer.MIN_CLIPS = 8
         renderer.MAX_CLIPS = 40
         renderer.MIN_SHOT_SECONDS = 0.75
@@ -94,7 +94,7 @@ class ContextPlanningTests(unittest.TestCase):
         }
 
         clip_count = renderer.choose_clip_count(0.55)
-        self.assertEqual(clip_count, 24)
+        self.assertEqual(clip_count, 23)
         boundaries = renderer.make_boundaries(clip_count, [], profile)
         lengths = [right - left for left, right in zip(boundaries, boundaries[1:])]
         self.assertLessEqual(statistics.median(lengths), 0.9)
