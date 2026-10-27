@@ -111,4 +111,3 @@ set -e
 test "$blocked_status" -ne 0
 grep -q "outside params.json bounds" output/blocked-render.log
 echo "Blocked-render exit-code test passed (exit=$blocked_status)."
-PY
