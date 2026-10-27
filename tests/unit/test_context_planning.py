@@ -30,6 +30,37 @@ class ContextPlanningTests(unittest.TestCase):
         self.assertGreaterEqual(min(lengths), 0.75)
         self.assertLessEqual(max(lengths), 3.3)
 
+    def test_invalid_reference_cut_timestamps_fall_back_to_variable_interval_pattern(self):
+        renderer.EDIT_DURATION = 16.0
+        profile = {
+            "duration_seconds": 10.0,
+            # These cuts create one oversized gap after scaling to 16s, so the
+            # exact-timestamp path must reject them and use measured shot intervals.
+            "cut_timestamps_seconds": [1.0, 1.1, 1.2, 1.3, 1.4, 6.5, 8.0],
+            "shot_intervals_seconds": [0.8, 2.7, 0.9, 2.4, 1.0, 2.8, 1.1, 1.9],
+        }
+        boundaries = renderer._reference_boundaries(8, renderer.EDIT_DURATION, profile)
+        lengths = [b - a for a, b in zip(boundaries, boundaries[1:])]
+        self.assertFalse(renderer.REFERENCE_CUT_TIMESTAMPS_USED)
+        self.assertAlmostEqual(sum(lengths), 16.0)
+        self.assertGreater(max(lengths) - min(lengths), 0.5)
+        self.assertGreaterEqual(min(lengths), 0.75)
+        self.assertLessEqual(max(lengths), 3.3)
+
+    def test_extreme_reference_intervals_are_constrained_without_losing_total_duration(self):
+        renderer.EDIT_DURATION = 16.0
+        profile = {
+            "shot_intervals_seconds": [0.25, 0.26, 0.27, 0.29, 3.9, 3.8, 3.7, 3.6],
+        }
+        boundaries = renderer._reference_boundaries(8, renderer.EDIT_DURATION, profile)
+        lengths = [b - a for a, b in zip(boundaries, boundaries[1:])]
+        self.assertAlmostEqual(boundaries[0], 0.0)
+        self.assertAlmostEqual(boundaries[-1], 16.0)
+        self.assertAlmostEqual(sum(lengths), 16.0)
+        self.assertGreaterEqual(min(lengths), 0.75)
+        self.assertLessEqual(max(lengths), 3.3)
+        self.assertGreater(max(lengths) - min(lengths), 0.5)
+
     def test_music_beat_snap_does_not_break_reference_boundaries(self):
         renderer.EDIT_DURATION = 16.0
         profile = {
