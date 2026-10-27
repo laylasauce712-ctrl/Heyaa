@@ -19,13 +19,25 @@ The current repository runs deterministic Python modules—not an independent LL
 
 ## Not implemented yet
 
-- No independent LLM agents, online trend research agent, semantic vision-model reviewer, identity/action recognition, frontend/Agent Room, publish agent or autonomous publishing.
+- No independent LLM agents, online trend research agent, semantic vision-model reviewer, identity/action recognition, frontend/Agent Room, publish agent or autonomous publishing. Live progress is currently exposed through terminal events plus an append-only `progress.jsonl` trace; this is telemetry for a future interface, not a GUI or independent LLM conversation.
 - Real-ESRGAN AI restoration is integrated behind `video_settings.ai_upscale_enabled`; the current Phonk profile sets it to `true`. The executable and weights must be installed separately or the renderer fails fast. A successful run reports which model/scale was used. It may synthesize plausible texture and cannot guarantee source-truth detail. It does not recognize the person or action in the footage. The renderer has an **optional OpenCV HOG appearance-track proxy** for framing/cut selection; it can be absent if OpenCV is not installed and it cannot identify Messi or verify that the same person continues across shots.
 - To enable that lightweight local detector in a Python environment, install the optional extra with `python3 -m pip install -r requirements-vision.txt`. This improves person-shaped detection/crop centering where HOG sees the subject; it is not a replacement for semantic video understanding.
 - No semantic hook score or complete aesthetic craft score. Technical metrics cannot determine whether framing, timing or style feels right for a human viewer.
 - No automatic retry loop yet. A failed technical gate blocks promotion and records findings for diagnosis.
 - EDL v1 supports one audio segment spanning the full timeline and the full-source crop rectangle; unsupported schedules/rectangles fail fast.
 - Termux render performance has not been benchmarked on the user's Android device.
+
+## Live progress and clip-count comparisons
+
+Each render writes `output/progress.jsonl` (or `output/variants/variant_NN/progress.jsonl` for comparison renders). Each JSONL row has a UTC timestamp, stage, status, summary and structured details. It records source/settings preflight, analysis, selected clip count, per-clip render completion, EDL validation, Inspector, the structured agent results, Director decision and Export Storage result. The terminal remains the live stream; `progress.jsonl` is the durable machine-readable trace. The existing `agent_report.json`, `pre_render_review.json` and `edit_decision_list.json` remain in place.
+
+The renderer can compare exact motion-clip counts while retaining the same selected source, music, edit style and configured effects. For the current 8–16 clip bounds, use:
+
+```bash
+python3 src/agent_director.py --variants 3 --clip-count-options 8,12,16
+```
+
+The CLI validates every requested count against `params.json` before downloading source media. The resulting videos and their chosen counts are listed in `output/variants/index.json`; inspect `variant_01/final_phonk.mp4`, `variant_02/final_phonk.mp4` and `variant_03/final_phonk.mp4` to choose the pacing you prefer. To render one exact count only, use `--variants 1 --clip-count 12` (the value must remain within `min_clips` and `max_clips`).
 
 ## Workflow and safeguards
 
