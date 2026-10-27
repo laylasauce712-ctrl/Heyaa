@@ -1239,13 +1239,16 @@ def main(argv=None):
     if abs(gain_db) > 1e-9:
         audio_filters.append(f"volume={gain_db:.4f}dB")
     if BASS_BOOST:
-        audio_filters.extend(["bass=g=3:f=90:w=0.5", "alimiter=limit=0.95"])
+        audio_filters.append("bass=g=3:f=90:w=0.5")
     if fade_in_seconds > 0:
         audio_filters.append(f"afade=t=in:st=0:d={fade_in_seconds:.6f}")
     audio_filters.extend([f"apad=whole_dur={DURATION:.6f}", f"atrim=duration={DURATION:.6f}"])
     if fade_out_seconds > 0:
         fade_start = max(0.0, DURATION - fade_out_seconds)
         audio_filters.append(f"afade=t=out:st={fade_start:.6f}:d={fade_out_seconds:.6f}")
+    # Keep a final ceiling even when bass boost is disabled; audio transients
+    # otherwise can leave the exported encode at/near 0 dBFS.
+    audio_filters.append("alimiter=limit=0.90")
     audio_filter = ",".join(audio_filters)
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", joined]
     if MUSIC_LOOP:
