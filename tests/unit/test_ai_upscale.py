@@ -119,12 +119,13 @@ class AIUpscaleTests(unittest.TestCase):
             renderer.AI_UPSCALE_MODEL = "realesrgan-x4plus"
             renderer.AI_UPSCALE_SCALE = 2
 
-            def fake_run(command, check=False, capture_output=False, text=False):
+            def fake_run(command, check=False, capture_output=False, text=False, timeout=None):
                 if command[0] == "ffmpeg":
                     pattern = Path(command[-1])
                     for frame in range(1, 4):
                         (pattern.parent / f"frame_{frame:08d}.png").write_bytes(b"input-frame")
                 else:
+                    self.assertEqual(timeout, 600)
                     input_dir = Path(command[command.index("-i") + 1])
                     output_dir = Path(command[command.index("-o") + 1])
                     for item in sorted(input_dir.glob("frame_*.png")):
