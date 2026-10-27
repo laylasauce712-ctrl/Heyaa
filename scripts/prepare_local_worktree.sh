@@ -64,6 +64,12 @@ for file in params.json input/test_video.mp4 input/phonk.mp3; do
     fi
 done
 
+# Refuse to repair or replace an unexpected existing .venv automatically.
+if [[ -e "$ROOT/.venv" && ! -x "$ROOT/.venv/bin/python" ]]; then
+    echo "[setup] Existing .venv is incomplete; it was not changed. Repair or rename it, then rerun." >&2
+    exit 4
+fi
+
 # Check venv support before changing local paths. A pre-existing but incomplete venv is not auto-deleted.
 if [[ ! -x "$ROOT/.venv/bin/python" ]]; then
     VENV_PROBE="$(mktemp -d)"
@@ -101,6 +107,30 @@ PY
         echo "[setup] Back it up or remove it deliberately before rerunning setup." >&2
         exit 3
     fi
+fi
+
+# Preflight all symlink targets so an unexpected tools path cannot leave a partial setup.
+check_directory_link() {
+    local source_dir="$1"
+    local target="$2"
+    local label="$3"
+    if [[ ! -d "$source_dir" ]]; then
+        return 0
+    fi
+    if [[ -L "$target" ]]; then
+        if [[ "$(readlink -f "$target")" != "$(readlink -f "$source_dir")" ]]; then
+            echo "[setup] Refusing to replace existing $label symlink: $target" >&2
+            exit 3
+        fi
+    elif [[ -e "$target" ]]; then
+        echo "[setup] Refusing to replace existing $label path: $target" >&2
+        exit 3
+    fi
+}
+
+check_directory_link "$SOURCE/input" "$ROOT/input" "input media"
+if [[ -d "$SOURCE/tools/realesrgan" ]]; then
+    check_directory_link "$SOURCE/tools/realesrgan" "$ROOT/tools/realesrgan" "Real-ESRGAN executable and models"
 fi
 
 # A symlink keeps the large media files in one place. Existing paths are never replaced.
@@ -147,7 +177,7 @@ source_path, target_path, disable = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
 data = json.loads(pathlib.Path(source_path).read_text(encoding="utf-8"))
 if disable:
     data.setdefault("video_settings", {})["ai_upscale_enabled"] = False
-pathlib.Path(target_path).write_text(json.dumps(data, indent=2) + "\\n", encoding="utf-8")
+pathlib.Path(target_path).write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 PY
     if [[ "$DISABLE_AI_UPSCALE" -eq 1 ]]; then
         echo "[setup] Created params.local.json with AI upscaling disabled for this worktree only."
