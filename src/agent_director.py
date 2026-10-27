@@ -34,6 +34,7 @@ OUTDIR = "output"
 WORK = "output/work"
 FINAL = "output/final_phonk_20s.mp4"
 VARIANT_INDEX = None
+REFERENCE_CUT_TIMESTAMPS_USED = False
 VARIANT_SOURCE_POWERS = {1: 1.0, 2: 1.16, 3: 0.84, 4: 1.08, 5: 0.92}
 VARIANT_LABELS = {
     1: "Reference-timed / balanced source progression",
@@ -471,6 +472,8 @@ def choose_context_window(source_duration, scene_cuts, target_duration):
 
 def _reference_boundaries(clip_count, total_duration, profile):
     """Prefer measured reference cut timestamps, with a bounded interval-resampling fallback."""
+    global REFERENCE_CUT_TIMESTAMPS_USED
+    REFERENCE_CUT_TIMESTAMPS_USED = False
     intervals = profile.get("shot_intervals_seconds") if isinstance(profile, dict) else None
     if not isinstance(intervals, list) or len(intervals) < 2 or clip_count < 1:
         return [total_duration * index / clip_count for index in range(clip_count + 1)]
@@ -501,6 +504,7 @@ def _reference_boundaries(clip_count, total_duration, profile):
             if (len(exactish) == clip_count + 1 and
                     all(0.75 <= length <= 3.3 for length in shot_lengths) and
                     all(b > a for a, b in zip(exactish, exactish[1:]))):
+                REFERENCE_CUT_TIMESTAMPS_USED = True
                 print("[edit] Using the reference's measured cut timestamps, scaled to the requested edit duration.")
                 return exactish
     valid = [float(value) for value in intervals
@@ -1281,6 +1285,7 @@ def main(argv=None):
         "source": REFERENCE if os.path.isfile(REFERENCE) else None,
         "shot_intervals_seconds": ref_profile.get("shot_intervals_seconds", []) if ref_profile else [],
         "cut_timestamps_seconds": ref_profile.get("cut_timestamps_seconds", []) if ref_profile else [],
+        "used_absolute_cut_timestamps": REFERENCE_CUT_TIMESTAMPS_USED,
         "scene_cut_count": ref_profile.get("scene_cut_count") if ref_profile else None,
         "used_for_planning": bool(ref_profile),
         "method": ref_profile.get("method") if ref_profile else None,
