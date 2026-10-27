@@ -1172,7 +1172,11 @@ def _run_variant_batch(args):
         )
         variant_label = VARIANT_LABELS.get(index, "Reference-timed source variation")
         if selected_clip_count is not None:
-            variant_label = f"{selected_clip_count} clips | {variant_label}"
+            if args.clip_count_options:
+                variant_label = f"{selected_clip_count} clips | same source progression"
+                command.append("--same-source-progression")
+            else:
+                variant_label = f"{selected_clip_count} clips | {variant_label}"
             command.extend(["--clip-count", str(selected_clip_count)])
         progress_event(
             "variant_start", "running", f"Rendering candidate {index}/{args.variants}: {variant_label}",
@@ -1226,7 +1230,7 @@ def _run_variant_batch(args):
         "clip_count": args.clip_count,
         "clip_count_options": list(args.clip_count_options) if args.clip_count_options else None,
         "differences": (
-            "Motion clip count and source-time progression vary; effects, reference pacing and soundtrack remain shared."
+            "Only motion clip count varies; balanced source-time progression, reference shot-length pacing, configured effects and soundtrack are held constant."
             if args.clip_count_options else
             f"All candidates use {args.clip_count} motion clips and vary source-time progression; effects, reference pacing and soundtrack remain shared."
             if args.clip_count is not None else
@@ -1398,7 +1402,7 @@ def main(argv=None):
             raise RuntimeError("EDL contains a zero-length clip after frame quantization.")
         timeline_center = (start_f + dur_f / 2) / FPS
         progress = max(0.0, min(1.0, timeline_center / max(EDIT_DURATION, 1 / FPS)))
-        source_power = VARIANT_SOURCE_POWERS.get(VARIANT_INDEX, 1.0)
+        source_power = 1.0 if args.same_source_progression else VARIANT_SOURCE_POWERS.get(VARIANT_INDEX, 1.0)
         # Keep the reference-derived output cut times identical across variants;
         # vary only which point in the same coherent source window each shot samples.
         local_target = (progress ** source_power) * context_duration
