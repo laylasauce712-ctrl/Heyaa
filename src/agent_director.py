@@ -443,7 +443,9 @@ def main():
     filter_graph = (
         f"[0:v]{base_chain},split[base][impact_src];"
         "[base]setsar=1[baseout];"
-        f"[impact_src]{impact_chain}[impact];"
+        f"[impact_src]{impact_chain}[impact_raw];"
+        "[2:v]scale=300:-1[skull];"
+        f"[impact_raw][skull]overlay=(W-w)/2:(H-h)/2:enable='gte(t,{EDIT_DURATION:.5f})'[impact];"
         f"[baseout][impact]overlay=0:0:enable='gte(t,{EDIT_DURATION:.5f})',"
         f"trim=duration={DURATION:.3f},setsar=1[outv]"
     )
