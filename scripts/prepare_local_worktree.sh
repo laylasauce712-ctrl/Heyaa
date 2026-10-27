@@ -154,7 +154,7 @@ import json, pathlib, sys
 path = pathlib.Path(sys.argv[1])
 data = json.loads(path.read_text(encoding="utf-8"))
 data.setdefault("video_settings", {})["ai_upscale_enabled"] = False
-path.write_text(json.dumps(data, indent=2) + "\\n", encoding="utf-8")
+path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 PY
         echo "[setup] Copied local settings and disabled AI upscaling in this worktree only."
     else
