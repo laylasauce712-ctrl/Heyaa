@@ -1,6 +1,6 @@
 # Heyaa EDL v1 — M1a contract
 
-The Edit Decision List (EDL) is a versioned JSON plan for a future frame-accurate renderer. M1a adds the contract only: the current renderer and src/agent_director.py remain untouched, and no EDL mode invokes rendering yet.
+The Edit Decision List (EDL) is a versioned JSON plan for a future frame-accurate renderer. The renderer now builds and validates a frame-contiguous EDL from params.json and uses its clip entries to drive segment rendering. The freeze entry is represented explicitly in the EDL; the existing FFmpeg impact filter implements its visual treatment.
 
 ## Top-level fields
 
@@ -33,7 +33,7 @@ Audio items use source, source_start_f, start_f, dur_f, and optional gain_db, fa
 
 - validate_edl(edl) returns the same object or raises EDLValidationError.
 - frames_to_seconds and seconds_to_frames support rational FPS.
-- edl_mode(params) recognizes off, shadow, and on; absent/invalid values resolve to off. M1a does not connect these modes to a renderer.
+- edl_mode(params) recognizes off, shadow, and on; absent/invalid values resolve to off. The integrated renderer requires edl_mode=on; off/shadow are not supported by the current render path.
 - No third-party dependencies are added.
 
 ## Checks
