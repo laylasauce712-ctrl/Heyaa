@@ -21,13 +21,30 @@ cat > params.json <<'JSON'
 JSON
 ffmpeg -hide_banner -loglevel error -y -f lavfi -i "testsrc2=size=640x360:rate=24:duration=10" -an -c:v libx264 -pix_fmt yuv420p input/test_video.mp4
 ffmpeg -hide_banner -loglevel error -y -f lavfi -i "sine=frequency=70:sample_rate=44100:duration=9" -c:a libmp3lame input/phonk.mp3
+# Exercise reference-audio extraction independently from the renderer's local-music path.
+ffmpeg -hide_banner -loglevel error -y \
+  -f lavfi -i "testsrc2=size=640x360:rate=24:duration=4" \
+  -f lavfi -i "sine=frequency=440:sample_rate=44100:duration=4" \
+  -map 0:v:0 -map 1:a:0 -shortest -c:v libx264 -pix_fmt yuv420p -c:a aac input/reference.mp4
+python - <<'PY'
+from pathlib import Path
+from src.heyaa.media_sources import extract_reference_audio, parse_media_source_args, validate_media_file
+
+args = parse_media_source_args([])
+assert args.variants == 3, args
+assert parse_media_source_args(["--variants", "1"]).variants == 1
+music = extract_reference_audio("input/reference.mp4", "input/reference-extracted.mp3")
+assert music == Path("input/reference-extracted.mp3") and music.is_file()
+validate_media_file(music, "music")
+print("Reference soundtrack extraction and three-variant defaults passed.")
+PY
 # Exercise the exact subject-aware 9:16 crop expression used when the optional
 # HOG tracker supplies a normalized center; no OpenCV/person model is needed here.
 ffmpeg -hide_banner -loglevel error -y -i input/test_video.mp4 \
   -vf "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920:x='max(0,min(iw-ow,0.65000*iw-ow/2))':y='max(0,min(ih-oh,0.55000*ih-oh/2))',setsar=1" \
   -frames:v 1 output/subject_crop_smoke.png
 test -s output/subject_crop_smoke.png
-python src/agent_director.py
+python src/agent_director.py --variants 1
 python - <<'PY'
 import json
 import subprocess
