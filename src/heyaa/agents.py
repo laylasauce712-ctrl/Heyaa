@@ -144,13 +144,17 @@ def beat_sync_agent(analysis: dict[str, Any]) -> AgentResult:
                            ("No stable beat sequence was available; even pacing fallback was used.",),
                            ("Keep fallback timing and expose low beat confidence; do not claim beat-accurate cuts.",),
                            {"enabled": True, "candidate_count": count, "fallback": "even_pacing",
-                            "method": analysis.get("method", "unknown")})
+                            "method": analysis.get("method", "unknown"),
+                        "loop_expanded": bool(analysis.get("loop_expanded", False)),
+                        "source_candidate_count": analysis.get("source_candidate_count", count)})
     return AgentResult("beat_sync_agent", "ok", None, 0.45,
                        ("Bass-onset candidates were detected by a lightweight heuristic.",),
                        ("Review beat alignment visually; candidates are not guaranteed downbeats.",),
                        {"enabled": True, "candidate_count": count, "fallback": None,
                         "method": analysis.get("method", "unknown"),
-                        "tempo_bpm": analysis.get("tempo_bpm")})
+                        "tempo_bpm": analysis.get("tempo_bpm"),
+                        "loop_expanded": bool(analysis.get("loop_expanded", False)),
+                        "source_candidate_count": analysis.get("source_candidate_count", count)})
 
 
 def planner(context: dict[str, Any]) -> AgentResult:

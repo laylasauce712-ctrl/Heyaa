@@ -195,6 +195,30 @@ def _estimate_period_frames(envelope, min_lag=15, max_lag=60):
     return best_lag if best_score >= 0.12 else None
 
 
+def extend_looped_beats(beats, music_duration, limit, loop_enabled):
+    """Map measured beat candidates into repeated music cycles when the soundtrack loops."""
+    if not beats:
+        return []
+    try:
+        duration = float(music_duration)
+        end = float(limit)
+    except (TypeError, ValueError):
+        return sorted(set(float(beat) for beat in beats))
+    if not math.isfinite(duration) or not math.isfinite(end) or duration <= 0 or end <= 0:
+        return sorted(set(float(beat) for beat in beats))
+    original = [float(beat) for beat in beats if 0.0 <= float(beat) < end]
+    if not loop_enabled or duration >= end:
+        return sorted(set(original))
+    expanded = []
+    for cycle in range(math.ceil(end / duration)):
+        offset = cycle * duration
+        for beat in original:
+            timestamp = beat + offset
+            if timestamp < end:
+                expanded.append(round(timestamp, 6))
+    return sorted(set(expanded))
+
+
 def detect_music_beats(path, limit):
     """Estimate beat candidates from bass transients plus an autocorrelation tempo prior.
 
@@ -466,7 +490,8 @@ def main():
     print(f"[target] {WIDTH}x{HEIGHT}, {FPS} FPS, {DURATION:.1f}s, Phonk/Montagem")
 
     scenes = detect_scenes(VIDEO, source_duration)
-    beats = detect_music_beats(MUSIC, EDIT_DURATION) if BEAT_SYNC else []
+    raw_beats = detect_music_beats(MUSIC, EDIT_DURATION) if BEAT_SYNC else []
+    beats = extend_looped_beats(raw_beats, music_duration, EDIT_DURATION, MUSIC_LOOP)
     ref_interval = reference_cut_interval(REFERENCE) if REFERENCE_PACING else None
     clip_count = choose_clip_count(ref_interval)
     boundaries_seconds = make_boundaries(clip_count, beats)
@@ -644,6 +669,8 @@ def main():
     beat_analysis = {
         "enabled": BEAT_SYNC,
         "candidate_count": len(beats),
+        "source_candidate_count": len(raw_beats),
+        "loop_expanded": len(beats) > len(raw_beats),
         "fallback": "even_pacing" if BEAT_SYNC and len(beats) < 3 else None,
         "method": "bass-lowpass-rms-novelty-autocorrelation-heuristic" if BEAT_SYNC else "disabled",
     }
