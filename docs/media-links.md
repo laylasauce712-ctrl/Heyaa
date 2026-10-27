@@ -9,10 +9,21 @@ Use media you own or have permission to download and reuse. Platform restriction
 - Python 3.10+
 - FFmpeg and ffprobe available on PATH
 - yt-dlp for YouTube page URLs
+- Optional: OpenCV for a lightweight person-shape / appearance-consistency tracking proxy
 
 Install yt-dlp in WSL:
 
-    python3 -m pip install --user -U yt-dlp
+    python3 -m pip install --user -U "yt-dlp[default]"
+
+Optional person tracking:
+
+    python3 -m pip install --user opencv-python-headless
+
+OpenCV is optional. If it is missing or cannot find a stable person-shaped track,
+Heyaa falls back to scene-cut-density context selection and the centered 9:16 crop.
+The HOG detector is a visual-consistency proxy, not face recognition or reliable
+identity/story understanding; it can miss people, especially in close-up, occlusion,
+low light, or unusual camera angles.
 
 ## Run from WSL
 
