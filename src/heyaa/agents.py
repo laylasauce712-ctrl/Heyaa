@@ -329,13 +329,20 @@ def hook_analyst(data: dict[str, Any]) -> AgentResult:
                            ("No valid opening-window analysis was supplied.",),
                            ("Run the opening-window scene-change probe before review.",),
                            {"semantic_hook_assessed": False})
-    return AgentResult("hook_analyst", "insufficient_evidence", None, 0.0,
-                       ("Opening scene changes were measured, but semantic hook strength was not assessed.",),
+    expected_changes = max(1.0, float(window))
+    activity_proxy = max(
+        0.0,
+        min(1.0, 1.0 - abs(float(count) - expected_changes) / max(2.0, expected_changes * 1.5))
+    )
+    return AgentResult("hook_analyst", "needs_review", round(activity_proxy, 4), 0.25,
+                       ("Opening cut-activity proxy was measured; semantic hook strength was not assessed.",),
                        ("Human-review the first seconds for a clear subject, readable action and immediate reason to keep watching.",
-                        "Do not use scene-change count alone as a hook score."),
+                        "The proxy rewards moderate opening change cadence only; it cannot identify the subject or judge meaning."),
                        {"measurement": data.get("measurement", "ffmpeg_scene_change"),
                         "window_seconds": float(window), "opening_scene_change_count": count,
-                        "semantic_hook_assessed": False, "hook_strength_score": None})
+                        "hook_activity_proxy": round(activity_proxy, 4),
+                        "proxy_formula": "distance of opening cut count from roughly one cut per second",
+                        "semantic_hook_assessed": False})
 
 
 def niche_analyst(metrics: dict[str, Any], tags: list[str] | None = None) -> AgentResult:
@@ -385,10 +392,21 @@ def niche_analyst(metrics: dict[str, Any], tags: list[str] | None = None) -> Age
         recs.append("Improve contrast into the drop/freeze without stacking effects blindly.")
     if parsed["motion_energy"] < 0.7:
         recs.append("Review clip pacing and motion changes.")
-    return AgentResult("niche_analyst", "ok", score, 0.6,
-                       ("This weighted craft score is heuristic and is not a virality prediction.",),
-                       tuple(recs), {"metrics": parsed, "weights": weights, "matched_tags": matching,
-                                     "viral_prediction": "not_guaranteed"})
+    proxy_based = isinstance(metrics.get("metric_methods"), dict) and bool(metrics.get("metric_methods"))
+    status = "needs_review" if proxy_based else "ok"
+    findings = (
+        ("A proxy-based craft score was calculated from measured render/media signals; creative meaning remains for human review.",
+         "This score is not a virality prediction.")
+        if proxy_based else
+        ("This weighted craft score is heuristic and is not a virality prediction.",)
+    )
+    evidence = {"metrics": parsed, "weights": weights, "matched_tags": matching,
+                "viral_prediction": "not_guaranteed",
+                "score_kind": "measured_proxy_composite" if proxy_based else "user_supplied_metric_composite"}
+    if proxy_based:
+        evidence["metric_methods"] = metrics.get("metric_methods")
+    return AgentResult("niche_analyst", status, score, 0.3 if proxy_based else 0.6,
+                       findings, tuple(recs), evidence)
 
 
 def inspector(report: dict[str, Any]) -> AgentResult:
