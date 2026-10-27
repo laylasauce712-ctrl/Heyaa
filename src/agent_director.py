@@ -375,22 +375,38 @@ def main():
     print("[render 3/4] Adding bass-hit flashes, cinematic skull freeze, and Phonk audio...")
     final_video = f"{WORK}/final_render.mp4"
     flash_filter = make_flash_filter(beats)
-    base_filter = (
+    # Pad first, then split: the impact branch reads the cloned tail frames.
+    # Only the freeze branch is enlarged/shaken, so normal footage stays stable.
+    base_chain = (
         f"tpad=stop_mode=clone:stop_duration={FREEZE:.3f},"
         f"eq=contrast=1.32:saturation=0:enable='gte(t,{EDIT_DURATION:.3f})'"
     )
     if flash_filter:
-        base_filter += "," + flash_filter
-    base_filter += (
+        base_chain += "," + flash_filter
+    base_chain += (
         f",drawbox=x=0:y=0:w=iw:h=ih:color=white@0.78:t=fill:"
         f"enable='between(t,{EDIT_DURATION - 0.10:.3f},{EDIT_DURATION - 0.055:.3f})'"
     )
-    skull_filter = (
-        base_filter
-        + ",drawtext=text='☠':fontcolor=white:fontsize=150:borderw=7:"
-        "bordercolor=black:x=(w-text_w)/2:y=(h-text_h)/2:"
-        f"enable='gte(t,{EDIT_DURATION:.3f})',"
-        f"trim=duration={DURATION:.3f},setsar=1"
+    impact_chain = (
+        f"trim=start={EDIT_DURATION:.5f}:duration={FREEZE:.5f},"
+        "setpts=PTS-STARTPTS,"
+        "scale=1188:2112:flags=lanczos,"
+        "crop=1080:1920:"
+        "x='(iw-ow)/2+18*sin(t*70)':"
+        "y='(ih-oh)/2+18*cos(t*57)',"
+        "eq=contrast=1.48:saturation=0:brightness=0.015,"
+        "drawbox=x=0:y=0:w=iw:h=ih:color=white@0.55:t=fill:"
+        "enable='lt(t,0.055)',"
+        "drawtext=text='☠':fontcolor=white:fontsize=170:borderw=8:"
+        "bordercolor=black:x=(w-text_w)/2:y=(h-text_h)/2,"
+        f"setpts=PTS+{EDIT_DURATION:.5f}/TB"
+    )
+    filter_graph = (
+        f"[0:v]{base_chain},split[base][impact_src];"
+        "[base]setsar=1[baseout];"
+        f"[impact_src]{impact_chain}[impact];"
+        f"[baseout][impact]overlay=0:0:enable='gte(t,{EDIT_DURATION:.5f})',"
+        f"trim=duration={DURATION:.3f},setsar=1[outv]"
     )
     bass_filter = "bass=g=3:f=90:w=0.5,alimiter=limit=0.95," if BASS_BOOST else ""
     audio_filter = f"{bass_filter}atrim=duration={DURATION:.3f},afade=t=out:st={DURATION - 0.8:.3f}:d=0.8"
@@ -398,7 +414,7 @@ def main():
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
         "-i", joined, "-stream_loop", "-1", "-i", MUSIC,
-        "-vf", skull_filter, "-map", "0:v:0", "-map", "1:a:0",
+        "-filter_complex", filter_graph, "-map", "[outv]", "-map", "1:a:0",
         "-af", audio_filter, "-t", f"{DURATION:.3f}",
         "-c:v", "libx264", "-preset", PRESET, "-crf", str(CRF),
         "-pix_fmt", "yuv420p", "-r", str(FPS),
@@ -409,14 +425,13 @@ def main():
         run(cmd)
     except subprocess.CalledProcessError:
         print("[warn] Skull glyph/font unavailable; retrying with FREEZE text.")
-        fallback_filter = (
-            base_filter
-            + ",drawtext=text='FREEZE':fontcolor=white:fontsize=88:borderw=6:"
-            "bordercolor=black:x=(w-text_w)/2:y=(h-text_h)/2:"
-            f"enable='gte(t,{EDIT_DURATION:.3f})',"
-            f"trim=duration={DURATION:.3f},setsar=1"
+        fallback_graph = filter_graph.replace(
+            "drawtext=text='☠':fontcolor=white:fontsize=170:borderw=8:"
+            "bordercolor=black:x=(w-text_w)/2:y=(h-text_h)/2",
+            "drawtext=text='FREEZE':fontcolor=white:fontsize=88:borderw=6:"
+            "bordercolor=black:x=(w-text_w)/2:y=(h-text_h)/2"
         )
-        cmd[cmd.index("-vf") + 1] = fallback_filter
+        cmd[cmd.index("-filter_complex") + 1] = fallback_graph
         run(cmd)
 
     print("[render 4/4] Verifying the rendered file...")
