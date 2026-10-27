@@ -9,7 +9,7 @@
 - The synthetic CI render checks EDL continuity, exact decoded frame count, output dimensions/FPS/duration, audio and full-file decoding.
 - Deterministic Python agents now run real settings, media, beat, reference, framing, opening-scene-change, planning, niche-evidence, Inspector and Render Critic stages. The Critic checks FFmpeg black intervals and audio volume; the Director records an explicit allow/block decision; Export Storage performs atomic promotion only after that decision.
 - Missing evidence remains visible. Scene-change counts are not semantic scene understanding; beat timing is a bass-onset/autocorrelation heuristic; the hook agent does not assign semantic hook strength; niche craft scoring remains unavailable until all required metrics are measured.
-- The current CI run on commit 418ebd5 passed 38 unit tests and the synthetic render, including the explicit Director decision, Export Storage operation, and an 8-second 1080x1920, 24-FPS output with 192 decoded frames and audio. The current commit is adding measurable Render Critic checks and needs its own CI result.
+- CI on code commit d2ab640 passed 41 unit tests and the synthetic render, including measured Render Critic output, the explicit Director decision, Export Storage operation, and an 8-second 1080x1920, 24-FPS output with exactly 192 decoded frames and audio.
 - No real user footage has been visually reviewed in this repository's CI.
 
 ## Remaining stages
