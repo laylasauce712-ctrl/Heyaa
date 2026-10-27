@@ -100,7 +100,10 @@ assert edl["video"][-1]["type"] == "freeze"
 assert edl["video"][-1]["dur_f"] >= round(1.7 * edl["fps_num"] / edl["fps_den"])
 assert edl["fps_num"] == 24
 assert len(report["events"]) == 12
-print("Render smoke test passed: exact frame count, continuous EDL, audio, full decode, render Critic, Director decision and atomic export.") must propagate a non-zero process exit code.
+print("Render smoke test passed: exact frame count, continuous EDL, audio, full decode, render Critic, Director decision and atomic export.")
+PY
+
+# A rejected render invocation must propagate a non-zero process exit code.
 set +e
 python3 src/agent_director.py --variants 1 --clip-count 99 > output/blocked-render.log 2>&1
 blocked_status=$?
