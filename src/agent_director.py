@@ -420,7 +420,7 @@ def main():
             "crop": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}
         })
     edl_video.append({
-        "type": "freeze", "source": VIDEO, "source_frame_f": max(0, round(source_duration * FPS) - 1),
+        "type": "freeze", "source": "timeline:last_frame", "source_frame_f": max(0, edit_frames - 1),
         "start_f": edit_frames, "dur_f": freeze_frames, "effect": "phonk-freeze"
     })
     edl = {
@@ -491,12 +491,16 @@ def main():
         f"[baseout][impact]overlay=0:0:enable='gte(t,{EDIT_DURATION:.5f})',"
         f"trim=duration={DURATION:.3f},setsar=1[outv]"
     )
+    edl_audio = edl["audio"][0]
+    audio_source = edl_audio["source"]
+    fade_out_seconds = edl_audio.get("fade_out_f", 0) / FPS
     bass_filter = "bass=g=3:f=90:w=0.5,alimiter=limit=0.95," if BASS_BOOST else ""
-    audio_filter = f"{bass_filter}atrim=duration={DURATION:.3f},afade=t=out:st={DURATION - 0.8:.3f}:d=0.8"
+    fade_start = max(0.0, DURATION - fade_out_seconds)
+    audio_filter = f"{bass_filter}atrim=duration={DURATION:.3f},afade=t=out:st={fade_start:.3f}:d={fade_out_seconds:.3f}"
 
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-        "-i", joined, "-stream_loop", "-1", "-i", MUSIC,
+        "-i", joined, "-stream_loop", "-1", "-i", audio_source,
         "-loop", "1", "-framerate", str(FPS), "-i", SKULL_ASSET,
         "-filter_complex", filter_graph, "-map", "[outv]", "-map", "1:a:0",
         "-af", audio_filter, "-t", f"{DURATION:.3f}",
