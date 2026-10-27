@@ -86,10 +86,12 @@ class YouTubeUrlTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "clip.mp4"
             path.write_bytes(b"fixture")
-            probe = {"streams": [{"codec_type": "audio"}], "format": {"duration": "12.5"}}
-            with patch("src.heyaa.media_sources._ffprobe", return_value=probe):
+            audio_only = {"streams": [{"codec_type": "audio"}], "format": {"duration": "12.5"}}
+            video_only = {"streams": [{"codec_type": "video"}], "format": {"duration": "12.5"}}
+            with patch("src.heyaa.media_sources._ffprobe", return_value=audio_only):
                 with self.assertRaisesRegex(MediaSourceError, "no video stream"):
                     validate_media_file(path, "video")
+            with patch("src.heyaa.media_sources._ffprobe", return_value=video_only):
                 with self.assertRaisesRegex(MediaSourceError, "no audio stream"):
                     validate_media_file(path, "music")
 
