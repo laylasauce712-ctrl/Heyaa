@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
@@ -27,6 +28,44 @@ class ProgressTraceTests(unittest.TestCase):
             self.assertEqual(rows[0]["details"]["clip_number"], 1)
             self.assertEqual(event["summary"], "Motion clip 1/8 rendered.")
             self.assertTrue(rows[0]["timestamp"].endswith("Z"))
+
+    def test_ai_upscaling_emits_extract_and_batch_progress(self):
+        events = []
+        with tempfile.TemporaryDirectory() as temporary:
+            def fake_run(command, **kwargs):
+                if command[0] == "ffmpeg":
+                    pattern = Path(command[-1])
+                    for frame in range(1, 3):
+                        Path(str(pattern).replace("%08d", f"{frame:08d}")).write_bytes(b"fake-png")
+                else:
+                    output_dir = Path(command[command.index("-o") + 1])
+                    for frame in range(1, 3):
+                        (output_dir / f"frame_{frame:08d}.png").write_bytes(b"fake-upscaled-png")
+                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+            def record(stage, status, summary, details=None, **kwargs):
+                events.append((stage, status, summary, details or {}))
+
+            with patch.object(renderer, "WORK", temporary), \
+                 patch.object(renderer, "VIDEO", "input/test_video.mp4"), \
+                 patch.object(renderer, "FPS", 24), \
+                 patch.object(renderer, "AI_UPSCALE_ENABLED", True), \
+                 patch.object(renderer, "AI_UPSCALER_EXECUTABLE", "fake-realesrgan"), \
+                 patch.object(renderer, "AI_UPSCALER_MODEL_DIR", "fake-models"), \
+                 patch.object(renderer, "AI_UPSCALE_MODEL", "realesrgan-x4plus"), \
+                 patch.object(renderer, "AI_UPSCALE_SCALE", 2), \
+                 patch.object(renderer, "progress_event", side_effect=record), \
+                 patch("src.agent_director.subprocess.run", side_effect=fake_run):
+                output_pattern, root = renderer.prepare_ai_upscaled_frames(0, 0.0, 1.0, 2)
+
+            self.assertTrue((root / "upscaled" / "frame_00000001.png").is_file())
+            self.assertEqual(output_pattern.parent, root / "upscaled")
+            self.assertEqual([(stage, status) for stage, status, _, _ in events], [
+                ("upscale_extract", "running"),
+                ("upscale_extract", "completed"),
+                ("upscale_batch", "running"),
+                ("upscale_batch", "completed"),
+            ])
 
     def test_exact_clip_count_override_respects_settings_bounds(self):
         with patch.object(renderer, "MIN_CLIPS", 8), patch.object(renderer, "MAX_CLIPS", 16):

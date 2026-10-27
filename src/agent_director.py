@@ -308,6 +308,11 @@ def prepare_ai_upscaled_frames(clip_index, source_start_seconds, source_duration
     input_pattern = input_dir / "frame_%08d.png"
     output_pattern = output_dir / "frame_%08d.png"
 
+    progress_event(
+        "upscale_extract", "running",
+        f"Extracting {source_frame_count} lossless source frames for clip {clip_index + 1}.",
+        {"clip_index": clip_index, "frame_count": source_frame_count, "fps": FPS},
+    )
     extract = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
         "-ss", f"{source_start_seconds:.6f}",
@@ -317,31 +322,54 @@ def prepare_ai_upscaled_frames(clip_index, source_start_seconds, source_duration
     ]
     result = subprocess.run(extract, check=False, capture_output=True, text=True)
     if result.returncode != 0:
+        progress_event("upscale_extract", "error", f"Frame extraction failed for clip {clip_index + 1}.",
+                       {"clip_index": clip_index, "returncode": result.returncode})
         raise RuntimeError(f"Could not extract frames for AI upscaling: {result.stderr[-2000:]}")
     expected_names = [f"frame_{frame:08d}.png" for frame in range(1, source_frame_count + 1)]
     missing_input = [name for name in expected_names if not (input_dir / name).is_file()]
     if missing_input:
+        progress_event("upscale_extract", "error", f"Frame extraction was incomplete for clip {clip_index + 1}.",
+                       {"clip_index": clip_index, "expected_frames": source_frame_count,
+                        "available_frames": source_frame_count - len(missing_input)})
         raise RuntimeError(
             f"AI upscale extraction produced {source_frame_count - len(missing_input)}/{source_frame_count} frames; "
             f"first missing: {missing_input[0]}"
         )
+    progress_event("upscale_extract", "completed",
+                   f"Extracted all {source_frame_count} lossless frames for clip {clip_index + 1}.",
+                   {"clip_index": clip_index, "frame_count": source_frame_count})
 
     upscale = build_ai_upscale_command(
         AI_UPSCALER_EXECUTABLE, input_dir, output_dir,
         AI_UPSCALE_MODEL, AI_UPSCALE_SCALE, AI_UPSCALER_MODEL_DIR,
     )
+    progress_event(
+        "upscale_batch", "running",
+        f"Real-ESRGAN is processing {source_frame_count} frames for clip {clip_index + 1}; this batch can take time.",
+        {"clip_index": clip_index, "frame_count": source_frame_count,
+         "model": AI_UPSCALE_MODEL, "scale": AI_UPSCALE_SCALE},
+    )
     result = subprocess.run(upscale, check=False, capture_output=True, text=True)
     if result.returncode != 0:
+        progress_event("upscale_batch", "error", f"Real-ESRGAN failed for clip {clip_index + 1}.",
+                       {"clip_index": clip_index, "returncode": result.returncode})
         raise RuntimeError(f"Real-ESRGAN failed for clip {clip_index}: {result.stderr[-2000:]}")
     missing_output = [
         name for name in expected_names
         if not (output_dir / name).is_file() or (output_dir / name).stat().st_size <= 0
     ]
     if missing_output:
+        progress_event("upscale_batch", "error", f"Real-ESRGAN returned incomplete output for clip {clip_index + 1}.",
+                       {"clip_index": clip_index, "expected_frames": source_frame_count,
+                        "usable_frames": source_frame_count - len(missing_output)})
         raise RuntimeError(
             f"Real-ESRGAN returned only {source_frame_count - len(missing_output)}/{source_frame_count} usable frames; "
             f"first missing: {missing_output[0]}"
         )
+    progress_event("upscale_batch", "completed",
+                   f"Real-ESRGAN completed all {source_frame_count} frames for clip {clip_index + 1}.",
+                   {"clip_index": clip_index, "frame_count": source_frame_count,
+                    "model": AI_UPSCALE_MODEL, "scale": AI_UPSCALE_SCALE})
     print(
         f"  [upscale] AI-restored {source_frame_count} source frames with "
         f"{AI_UPSCALE_MODEL} at {AI_UPSCALE_SCALE}x; detail is model-generated, not verified source truth."
