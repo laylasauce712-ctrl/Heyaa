@@ -953,18 +953,50 @@ def main(argv=None):
     }
     hook_window = min(2.0, actual)
     final_scenes = detect_scenes(final_video, actual, scan_duration=hook_window)
+    opening_cut_count = sum(1 for time in final_scenes if 0.0 < time <= hook_window)
+    expected_opening_cuts = max(1.0, hook_window)
+    opening_activity_proxy = max(
+        0.0,
+        min(1.0, 1.0 - abs(float(opening_cut_count) - expected_opening_cuts) /
+            max(2.0, expected_opening_cuts * 1.5))
+    )
     hook_analysis = {
         "window_seconds": hook_window,
-        "opening_scene_change_count": sum(1 for time in final_scenes if 0.0 < time <= hook_window),
+        "opening_scene_change_count": opening_cut_count,
+        "opening_activity_proxy": round(opening_activity_proxy, 4),
         "measurement": "ffmpeg_scene_change",
+        "semantic_hook_assessed": False,
     }
-    cut_times = [item["start_f"] / FPS for item in edl_video[:-1] if item["start_f"] > 0]
+    cut_times = [
+        item["start_f"] / FPS for item in edl_video[:-1]
+        if item["type"] == "clip" and item["start_f"] > 0
+    ]
     niche_metrics = {}
     if cut_times and beats:
         tolerance = 0.12
         alignment = [max(0.0, 1.0 - min(abs(cut - beat) for beat in beats) / tolerance)
                      for cut in cut_times]
         niche_metrics["beat_alignment"] = round(sum(alignment) / len(alignment), 4)
+    source_width = int(source_video.get("width", 0))
+    source_height = int(source_video.get("height", 0))
+    if source_width > 0 and source_height > 0:
+        niche_metrics["visual_clarity"] = round(max(
+            0.0, min(1.0, source_width / WIDTH, source_height / HEIGHT)
+        ), 4)
+    niche_metrics["hook_strength"] = round(opening_activity_proxy, 4)
+    context_window_seconds = max(0.1, float(context.get("window_seconds", 0.1)))
+    niche_metrics["motion_energy"] = round(max(
+        0.0, min(1.0, float(context.get("scene_cuts", 0)) / max(1.0, context_window_seconds / 2.0))
+    ), 4)
+    if DROP_BEAT_STRENGTH is not None and drop_beat_time is not None:
+        niche_metrics["drop_impact"] = round(float(DROP_BEAT_STRENGTH), 4)
+    niche_metrics["metric_methods"] = {
+        "beat_alignment": "EDL cut distance from bass-onset candidates within 120ms",
+        "visual_clarity": "source pixel support ratio versus 1080x1920 output (not a sharpness/subject-visibility model)",
+        "hook_strength": "opening scene-change cadence proxy only; no semantic hook understanding",
+        "motion_energy": "scene cuts per two seconds inside selected temporal context window",
+        "drop_impact": "relative strongest bass-onset novelty proxy; not a true musical drop classifier",
+    }
     render_critique = analyze_render_critique(final_video, actual)
     agent_report = run_agent_team({
         "settings": CONFIG, "edl": edl,
@@ -975,6 +1007,9 @@ def main(argv=None):
     })
     for event in agent_report["events"]:
         print(f"[agent:{event['agent']}] {event['status']}: {event['summary']}")
+    print("[agent conference] Evidence-linked rule review (not independent LLM chat):")
+    for turn in agent_report.get("agent_dialogue", []):
+        print(f"[conference {turn['turn']}] {turn['speaker']} -> {turn['to']}: {turn['message']}")
     report_path = os.path.join(OUTDIR, "agent_report.json")
     if agent_report["status"] == "blocked":
         storage_result = export_storage_agent(final_video, FINAL, technical_qa_passed=False)
