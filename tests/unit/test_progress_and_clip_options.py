@@ -8,10 +8,16 @@ from unittest.mock import patch
 from src import agent_director as renderer
 from src.heyaa import agents as agent_modules
 from src.heyaa.agents import AgentResult, run_agent_team
-from src.heyaa.media_sources import parse_media_source_args
+from src.heyaa.media_sources import parse_clip_count_options, parse_media_source_args
 
 
 class ProgressTraceTests(unittest.TestCase):
+    def test_clip_count_options_accept_configured_maximum_of_40(self):
+        self.assertEqual(parse_clip_count_options("24,32,40"), (24, 32, 40))
+        with self.assertRaises(Exception) as raised:
+            parse_clip_count_options("40,41")
+        self.assertIsInstance(raised.exception, __import__("argparse").ArgumentTypeError)
+
     def test_local_settings_path_can_be_selected_without_editing_params_json(self):
         with patch.dict("os.environ", {"HEYAA_PARAMS_PATH": "params.local.json"}):
             self.assertEqual(renderer._settings_path(), "params.local.json")

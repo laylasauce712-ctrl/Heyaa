@@ -32,7 +32,7 @@ The current repository runs deterministic Python modules—not an independent LL
 
 Each render writes `output/progress.jsonl` (or `output/variants/variant_NN/progress.jsonl` for comparison renders). Each JSONL row has a UTC timestamp, stage, status, summary and structured details. It records source/settings preflight, analysis, selected clip count, per-clip render completion, EDL validation, Inspector, the structured agent results, Director decision and Export Storage result. The terminal remains the live stream; `progress.jsonl` is the durable machine-readable trace. The existing `agent_report.json`, `pre_render_review.json` and `edit_decision_list.json` remain in place.
 
-The renderer can compare exact motion-clip counts while retaining the same selected source, music, edit style and configured effects. In count-comparison mode, source-time progression is held to the same balanced profile so the primary planned difference is the number of clips. For the configured 8–40 clip bounds, use:
+The renderer can compare exact motion-clip counts while retaining the same selected source, music, edit style and configured effects. The `--clip-count-options` parser accepts counts from 6 through 40, matching `edit_settings.max_clips`; it does not impose a separate 18-clip ceiling. In count-comparison mode, source-time progression is held to the same balanced profile so the primary planned difference is the number of clips. For the configured 8–40 clip bounds, use:
 
 ```bash
 python3 src/agent_director.py --variants 3 --clip-count-options 8,12,16

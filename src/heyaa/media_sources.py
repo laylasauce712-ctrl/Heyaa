@@ -260,8 +260,8 @@ def parse_clip_count_options(value: str) -> tuple[int, ...]:
         raise argparse.ArgumentTypeError("At most five clip-count alternatives are supported.")
     if len(set(values)) != len(values):
         raise argparse.ArgumentTypeError("Clip-count alternatives must be distinct.")
-    if any(count < 6 or count > 18 for count in values):
-        raise argparse.ArgumentTypeError("Every clip count must be between 6 and 18.")
+    if any(count < 6 or count > 40 for count in values):
+        raise argparse.ArgumentTypeError("Every clip count must be between 6 and 40.")
     return values
 
 
