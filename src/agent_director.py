@@ -18,6 +18,7 @@ REFERENCE = "input/reference.mp4"
 OUTDIR = "output"
 WORK = "output/work"
 FINAL = "output/final_phonk_20s.mp4"
+SKULL_ASSET = str(Path(__file__).parent / "heyaa" / "assets" / "skull_freeze.svg")
 
 DURATION = 20.0
 FPS = 60
