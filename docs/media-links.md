@@ -39,13 +39,19 @@ The reference is optional; omit --reference-url if you do not have one. You may
 mix URLs with local files: if --video-url is omitted, input/test_video.mp4 must
 already exist; if --music-url is omitted, input/phonk.mp3 must already exist.
 
-YouTube downloads have a hard 180-second timeout, a 20-second socket timeout,
-and limited retries. The renderer shows live yt-dlp progress and streams network /
-extractor errors into the terminal log rather than buffering them invisibly. If
-YouTube blocks the request or the connection stalls, Heyaa exits with a clear
-error instead of waiting forever; switching tools cannot guarantee bypassing
-platform restrictions. Use a direct media URL or a local file when permitted and
-available.
+YouTube downloads show live yt-dlp progress and use IPv4 to avoid networks
+where the IPv6 route to media/CDN hosts is broken. Source footage is capped at
+1080p landscape or 1080x1920 portrait (matching the 1080x1920 output); the optional
+pacing reference is capped at 720p landscape or 720x1280 portrait. This helps
+avoid downloading unnecessarily large 1440p/4K files while retaining enough
+resolution for a vertical edit.
+
+Timeouts are bounded by source type: 45 minutes for source video and 15 minutes
+for music/reference, with a 20-second socket timeout and limited retries. Network
+and extractor errors stream directly into the terminal and log instead of being
+hidden. If YouTube blocks the request or the connection stalls, Heyaa exits with
+a clear error; switching tools cannot guarantee bypassing platform restrictions.
+Use a direct media URL or a local file when permitted and available.
 
 Before rendering, Heyaa validates downloaded files with ffprobe to ensure each
 required file exists, has a positive duration, and contains the expected stream.
