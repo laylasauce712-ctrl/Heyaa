@@ -13,7 +13,7 @@ def config():
     return {
         "style": "phonk_montagem",
         "video_settings": {"resolution": "1080x1920", "fps": 24, "codec": "libx264", "crf": 26, "preset": "ultrafast"},
-        "edit_settings": {"duration_seconds": 8, "speed": 1.1, "freeze_duration": 0.35, "edl_mode": "on",
+        "edit_settings": {"duration_seconds": 8, "speed": 1.1, "freeze_duration": 1.7, "drop_freeze_duration": 0.25, "edl_mode": "on",
                           "min_clips": 6, "max_clips": 6, "reference_pacing": False,
                           "mirror_enabled": False, "smart_crop": True},
         "audio_settings": {"beat_sync": False, "beat_flash": False, "bass_boost": False, "music_loop": True},
@@ -23,7 +23,7 @@ def config():
 def sample_edl():
     clips = []
     cursor = 0
-    durations = [26, 25, 25, 26, 25, 25]
+    durations = [26, 25, 25, 25, 25, 25]
     for i, duration in enumerate(durations):
         source_duration = round(duration * 1.1)
         clips.append({
