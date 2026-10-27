@@ -15,7 +15,8 @@
     "min_clips": 8,
     "max_clips": 16,
     "reference_pacing": true,
-    "mirror_enabled": true
+    "mirror_enabled": true,
+    "smart_crop": true
   },
   "audio_settings": {
     "beat_sync": true,

@@ -27,6 +27,7 @@ BEAT_FLASH = True
 BASS_BOOST = True
 REFERENCE_PACING = True
 MIRROR_ENABLED = True
+SMART_CROP_ENABLED = True
 MIN_CLIPS = 8
 MAX_CLIPS = 16
 
@@ -34,7 +35,7 @@ MAX_CLIPS = 16
 def load_settings():
     """Load optional edit controls from params.json without requiring extra packages."""
     global DURATION, FPS, WIDTH, HEIGHT, CRF, PRESET, SPEED, FREEZE
-    global BEAT_SYNC, BEAT_FLASH, BASS_BOOST, REFERENCE_PACING, MIRROR_ENABLED, MIN_CLIPS, MAX_CLIPS
+    global BEAT_SYNC, BEAT_FLASH, BASS_BOOST, REFERENCE_PACING, MIRROR_ENABLED, SMART_CROP_ENABLED, MIN_CLIPS, MAX_CLIPS
     path = "params.json"
     if not os.path.isfile(path):
         print("[settings] params.json not found; using safe defaults.")
@@ -64,7 +65,8 @@ def load_settings():
         BASS_BOOST = bool(audio.get("bass_boost", BASS_BOOST))
         REFERENCE_PACING = bool(edit.get("reference_pacing", REFERENCE_PACING))
         MIRROR_ENABLED = bool(edit.get("mirror_enabled", MIRROR_ENABLED))
-        print(f"[settings] Style={config.get('style', 'phonk_montagem')} | {WIDTH}x{HEIGHT}@{FPS} | {DURATION:.1f}s | speed={SPEED:.2f}x | mirror={MIRROR_ENABLED}")
+        SMART_CROP_ENABLED = bool(edit.get("smart_crop", SMART_CROP_ENABLED))
+        print(f"[settings] Style={config.get('style', 'phonk_montagem')} | {WIDTH}x{HEIGHT}@{FPS} | {DURATION:.1f}s | speed={SPEED:.2f}x | mirror={MIRROR_ENABLED} | smart_crop={SMART_CROP_ENABLED}")
     except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
         print(f"[warn] Invalid params.json ({exc}); using safe defaults.")
 
@@ -243,21 +245,32 @@ def make_clip(index, center, output_duration, source_duration):
     # Horizontal mirror is an explicit transform, independent of visual effects.
     mirror = ",hflip" if MIRROR_ENABLED else ""
 
-    # A blurred 9:16 canvas retains a vertical composition; the foreground has
-    # a controlled zoom and restrained shake instead of a crude full-frame crop.
-    vf = (
-        "[0:v]split=2[bg][fg];"
-        "[bg]scale=1080:1920:force_original_aspect_ratio=increase,"
-        "crop=1080:1920,boxblur=20:2,eq=brightness=-0.08:saturation=0.78[back];"
-        "[fg]scale=1188:1188:force_original_aspect_ratio=increase,"
-        "crop=1080:1080:x='(iw-1080)/2+5*sin(t*10)':y='(ih-1080)/2+4*cos(t*8)'"
-        f"{mirror},"
-        "eq=contrast=1.16:saturation=1.30:gamma=1.02,"
-        "unsharp=5:5:0.72:3:3:0.0[front];"
-        "[back][front]overlay=0:420,setsar=1,"
-        f"fps={FPS},setpts=PTS/{SPEED},"
-        f"trim=duration={output_duration:.5f},setpts=PTS-STARTPTS[v]"
-    )
+    # Smart crop means full-frame 9:16 center crop; it is not face tracking.
+    # The legacy blurred-background layout remains available when disabled.
+    if SMART_CROP_ENABLED:
+        vf = (
+            "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,"
+            "crop=1080:1920,"
+            f"{'hflip,' if MIRROR_ENABLED else ''}"
+            "eq=contrast=1.16:saturation=1.30:gamma=1.02,"
+            "unsharp=5:5:0.72:3:3:0.0,setsar=1,"
+            f"fps={FPS},setpts=PTS/{SPEED},"
+            f"trim=duration={output_duration:.5f},setpts=PTS-STARTPTS[v]"
+        )
+    else:
+        vf = (
+            "[0:v]split=2[bg][fg];"
+            "[bg]scale=1080:1920:force_original_aspect_ratio=increase,"
+            "crop=1080:1920,boxblur=20:2,eq=brightness=-0.08:saturation=0.78[back];"
+            "[fg]scale=1188:1188:force_original_aspect_ratio=increase,"
+            "crop=1080:1080:x='(iw-1080)/2+5*sin(t*10)':y='(ih-1080)/2+4*cos(t*8)'"
+            f"{mirror},"
+            "eq=contrast=1.16:saturation=1.30:gamma=1.02,"
+            "unsharp=5:5:0.72:3:3:0.0[front];"
+            "[back][front]overlay=0:420,setsar=1,"
+            f"fps={FPS},setpts=PTS/{SPEED},"
+            f"trim=duration={output_duration:.5f},setpts=PTS-STARTPTS[v]"
+        )
 
     # Loop only for unusually short source videos so every segment reaches its duration.
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
