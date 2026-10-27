@@ -1146,11 +1146,11 @@ def analyze_render_critique(path, duration):
         true_peak_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True, check=False,
     )
-    true_peak_log = (true_peak_result.stderr or "") + "\\n" + (true_peak_result.stdout or "")
+    true_peak_log = (true_peak_result.stderr or "") + "\n" + (true_peak_result.stdout or "")
     if true_peak_result.returncode != 0:
         errors.append("true_peak_measurement_failed")
     match = re.search(
-        r"True peak:\\s*Peak:\\s*(-?inf|-?\\d+(?:\\.\\d+)?)\\s*dBFS",
+        r"True peak:\s*Peak:\s*(-?inf|-?\d+(?:\.\d+)?)\s*dBFS",
         true_peak_log, re.IGNORECASE | re.DOTALL,
     )
     true_peak_dbfs = None

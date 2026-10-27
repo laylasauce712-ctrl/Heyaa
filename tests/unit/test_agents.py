@@ -219,7 +219,7 @@ class AgentTests(unittest.TestCase):
 
     def test_render_critic_rejects_silence_and_flags_black_clipping_risks(self):
         silent = render_critic({"black_segments": [], "duration_seconds": 8.0,
-                                "mean_volume_db": None, "max_volume_db": None, "audio_silent": True})
+                                "mean_volume_db": None, "max_volume_db": None, "true_peak_dbfs": None, "audio_silent": True})
         self.assertEqual(silent.status, "reject")
         risky = render_critic({"black_segments": [{"start_seconds": 1.0, "duration_seconds": 2.0}],
                                "duration_seconds": 8.0, "mean_volume_db": -38.0,
@@ -263,7 +263,7 @@ class AgentTests(unittest.TestCase):
             "inspector": AgentResult("inspector", "ok", None, 1.0, (), (), {}),
             "framing_agent": AgentResult("framing_agent", "ok", None, 1.0, (), (), {}),
             "render_critic": render_critic({"black_segments": [], "duration_seconds": 8.0,
-                                             "mean_volume_db": None, "max_volume_db": None, "audio_silent": True}),
+                                             "mean_volume_db": None, "max_volume_db": None, "true_peak_dbfs": None, "audio_silent": True}),
         })
         self.assertEqual(blocked.status, "blocked")
         self.assertTrue(any(item["agent"] == "render_critic" for item in blocked.evidence["blockers"]))
