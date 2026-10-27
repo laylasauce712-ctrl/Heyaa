@@ -55,6 +55,36 @@ ffmpeg -hide_banner -loglevel error -y -i input/test_video.mp4 \
   -frames:v 1 output/subject_crop_smoke.png
 test -s output/subject_crop_smoke.png
 python src/agent_director.py --variants 1
+
+# Synthetic pixel-statistics fixture: the transparent skull must alter the freeze's
+# otherwise uniform background, not just exist as a file or metadata flag.
+ffmpeg -hide_banner -loglevel error -y \
+  -f lavfi -i "color=c=gray:s=270x480:r=24:d=0.25" \
+  -loop 1 -framerate 24 -i src/heyaa/assets/skull_freeze.svg \
+  -filter_complex "[1:v]scale=w='if(lt(n,4),105*(0.62+0.38*n/4),105)':h=-1:eval=frame[skull];[0:v][skull]overlay=(W-w)/2:(H-h)/2:shortest=1,format=rgb24[out]" \
+  -map "[out]" -frames:v 6 -f rawvideo output/skull-overlay.rgb
+python - <<'PY'
+from pathlib import Path
+raw = Path("output/skull-overlay.rgb").read_bytes()
+width, height, channels = 270, 480, 3
+frame_bytes = width * height * channels
+assert len(raw) >= frame_bytes, len(raw)
+frame = raw[:frame_bytes]
+# Sample the expected centered skull region and a corner that should stay gray.
+region = []
+for y in range(190, 290):
+    for x in range(85, 185):
+        i = (y * width + x) * channels
+        region.extend(frame[i:i + 3])
+center_mean = sum(region) / len(region)
+corner_i = (20 * width + 20) * channels
+corner = raw[corner_i:corner_i + 3]
+corner_mean = sum(corner) / len(corner)
+changed = sum(1 for i in range(0, len(region), 3)
+              if max(region[i:i + 3]) - min(region[i:i + 3]) > 12 or abs(sum(region[i:i + 3]) / 3 - corner_mean) > 20)
+assert changed > 500, {"changed_center_pixels": changed, "center_mean": center_mean, "background_mean": corner_mean}
+print(f"Ending skull alpha overlay pixel test passed: {changed} visibly changed center pixels.")
+PY
 python - <<'PY'
 import json
 import subprocess

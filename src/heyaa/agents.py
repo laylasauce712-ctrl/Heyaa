@@ -97,6 +97,18 @@ def settings_agent(config: dict[str, Any]) -> AgentResult:
     source_gap = edit.get("source_min_gap_seconds", 0.05)
     if (not _finite_number(source_gap) or not 0.0 <= float(source_gap) <= 1.0):
         findings.append("edit_settings.source_min_gap_seconds must be between 0 and 1 second.")
+    skull_size = edit.get("skull_size_px", 420)
+    if isinstance(skull_size, bool) or not isinstance(skull_size, int) or not 160 <= skull_size <= 960:
+        findings.append("edit_settings.skull_size_px must be an integer from 160 to 960.")
+    for key in ("skull_position_x", "skull_position_y"):
+        value = edit.get(key, 0.5)
+        if not _finite_number(value) or not 0.0 <= float(value) <= 1.0:
+            findings.append(f"edit_settings.{key} must be between 0 and 1.")
+    pop_seconds = edit.get("skull_pop_seconds", 0.18)
+    if not _finite_number(pop_seconds) or not 0.08 <= float(pop_seconds) <= 0.6:
+        findings.append("edit_settings.skull_pop_seconds must be between 0.08 and 0.6 seconds.")
+    if not isinstance(edit.get("impact_sfx_enabled", True), bool):
+        findings.append("edit_settings.impact_sfx_enabled must be an explicit boolean.")
     if layout_mode not in {"fill", "blur_fit"}:
         findings.append("edit_settings.layout_mode must be either 'fill' or 'blur_fit'.")
     for key in ("beat_sync", "beat_flash", "bass_boost", "music_loop"):

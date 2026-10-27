@@ -1,8 +1,62 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
- <g stroke="#050505" stroke-width="10" stroke-linejoin="round" stroke-linecap="round">
-  <path fill="#fff" d="M128 18C75 18 39 56 39 105c0 29 13 50 32 64v35h114v-35c19-14 32-35 32-64 0-49-36-87-89-87Z"/>
-  <path fill="#050505" d="M69 86c0-17 12-29 27-29s27 12 27 29v14c0 14-12 26-27 26S69 114 69 100Zm64 0c0-17 12-29 27-29s27 12 27 29v14c0 14-12 26-27 26s-27-12-27-26Z"/>
-  <path fill="#050505" d="m128 115-18 34h36Z"/>
-  <path fill="none" d="M72 174h112M91 174v29m25-29v29m25-29v29m25-29v29"/>
- </g>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bone" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fffef5"/><stop offset=".48" stop-color="#d9d7cb"/><stop offset="1" stop-color="#8f9298"/>
+    </linearGradient>
+    <linearGradient id="metal" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fafafa"/><stop offset=".46" stop-color="#8d929c"/><stop offset="1" stop-color="#333846"/>
+    </linearGradient>
+    <linearGradient id="red" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff4b39"/><stop offset="1" stop-color="#790b23"/>
+    </linearGradient>
+    <radialGradient id="socket">
+      <stop offset="0" stop-color="#050609"/><stop offset=".78" stop-color="#11131a"/><stop offset="1" stop-color="#5b202b"/>
+    </radialGradient>
+    <filter id="shadow" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur stdDeviation="9"/>
+    </filter>
+  </defs>
+  <!-- Transparent canvas; all visible geometry is original vector artwork. -->
+  <ellipse cx="256" cy="434" rx="145" ry="20" fill="#000" opacity=".36" filter="url(#shadow)"/>
+  <path d="M256 35C165 35 94 104 87 194c-5 62 20 111 58 145l4 60c1 19 17 33 36 33h142c19 0 35-14 36-33l4-60c38-34 63-83 58-145C418 104 347 35 256 35Z"
+        fill="#08090d" stroke="#05060a" stroke-width="20" stroke-linejoin="round"/>
+  <path d="M256 48C174 48 112 109 106 193c-4 57 20 103 57 133l9 64c1 10 8 18 18 18h132c10 0 17-8 18-18l9-64c37-30 61-76 57-133C400 109 338 48 256 48Z"
+        fill="url(#bone)" stroke="#fffdf1" stroke-width="4"/>
+  <path d="M126 163c21-57 68-92 130-97-34 19-52 40-62 65-18 44-19 82-6 122-31-19-48-48-62-90Z" fill="#fff" opacity=".46"/>
+  <path d="M130 221c16 17 35 24 57 24l-13 67c-25-19-40-48-44-91Z" fill="#6d737e" opacity=".5"/>
+  <path d="M382 219c-16 17-35 24-57 24l13 67c25-19 40-48 44-91Z" fill="#4f5661" opacity=".48"/>
+  <path d="M124 172c20-38 54-59 97-60-22 15-37 35-46 61" fill="none" stroke="#fff" stroke-width="9" stroke-linecap="round" opacity=".42"/>
+  <!-- Deep eye sockets with ember-red inner edges. -->
+  <path d="M124 197c13-38 38-58 72-57 33 1 54 27 56 58 2 35-21 71-57 81-44 12-82-32-71-82Z" fill="url(#socket)" stroke="#11131a" stroke-width="12"/>
+  <path d="M260 198c2-31 23-57 56-58 34-1 59 19 72 57 11 50-27 94-71 82-36-10-59-46-57-81Z" fill="url(#socket)" stroke="#11131a" stroke-width="12"/>
+  <path d="M137 196c13-27 31-39 52-38" fill="none" stroke="url(#red)" stroke-width="7" stroke-linecap="round"/>
+  <path d="M323 158c21-1 39 11 52 38" fill="none" stroke="url(#red)" stroke-width="7" stroke-linecap="round"/>
+  <path d="M152 207c12-18 27-29 45-29" fill="none" stroke="#a9b1be" stroke-width="3" opacity=".8"/>
+  <path d="M315 178c18 0 33 11 45 29" fill="none" stroke="#a9b1be" stroke-width="3" opacity=".8"/>
+  <!-- Nose, cheek plates and fracture marks. -->
+  <path d="M256 242l-29 48 29 20 29-20Z" fill="#161922" stroke="#8f9298" stroke-width="6" stroke-linejoin="round"/>
+  <path d="M119 291l48-16 24 25-21 42-35-15Z" fill="url(#metal)" stroke="#343944" stroke-width="7"/>
+  <path d="M393 291l-48-16-24 25 21 42 35-15Z" fill="url(#metal)" stroke="#343944" stroke-width="7"/>
+  <path d="M153 292l28 8m-18 8 22 3m147-11-28 8m18 8-22 3" stroke="#262932" stroke-width="5" stroke-linecap="round"/>
+  <path d="M207 83l-15 24 13 16-23 25m119-61 15 24-13 16 23 25" fill="none" stroke="#747985" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M256 68v28m0 18-16 18 15 14-10 20" fill="none" stroke="#bd2437" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Jaw guard and individually separated teeth. -->
+  <path d="M171 319c24 13 50 19 85 19s61-6 85-19l-11 75c-2 14-13 24-27 24h-94c-14 0-25-10-27-24Z" fill="url(#bone)" stroke="#242630" stroke-width="10" stroke-linejoin="round"/>
+  <path d="M177 330c22 9 48 14 79 14s57-5 79-14" fill="none" stroke="#858b95" stroke-width="7" stroke-linecap="round"/>
+  <g fill="#171922" stroke="#656b76" stroke-width="4">
+    <path d="M191 338l23 5-2 29-21-3Z"/><path d="M218 344l23 2-1 30-23-3Z"/>
+    <path d="M245 346h22v30h-22Z"/><path d="M272 346l22-2 1 29-23 3Z"/>
+    <path d="M299 343l23-5 0 31-21 3Z"/>
+  </g>
+  <path d="M200 381l15 6m82-6-15 6" stroke="#f4f0df" stroke-width="5" stroke-linecap="round"/>
+  <!-- Bolts and red accent fins. -->
+  <g fill="url(#metal)" stroke="#171922" stroke-width="6">
+    <circle cx="128" cy="304" r="13"/><circle cx="384" cy="304" r="13"/>
+    <circle cx="170" cy="381" r="11"/><circle cx="342" cy="381" r="11"/>
+  </g>
+  <g fill="none" stroke="#c8243b" stroke-width="9" stroke-linecap="round">
+    <path d="M91 254l-18 22m30-4-17 22"/><path d="M421 254l18 22m-30-4 17 22"/>
+    <path d="M205 414l-5 24m107-24 5 24"/>
+  </g>
+  <path d="M256 55l-7 24 11 15-8 17" fill="none" stroke="#f0e9da" stroke-width="4" opacity=".8"/>
 </svg>

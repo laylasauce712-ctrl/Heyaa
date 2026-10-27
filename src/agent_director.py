@@ -65,6 +65,11 @@ MIN_CLIPS = None
 MAX_CLIPS = None
 MIN_SHOT_SECONDS = 0.75
 MIN_SOURCE_GAP_SECONDS = 0.05
+ENDING_SKULL_SIZE_PX = 420
+ENDING_SKULL_POSITION_X = 0.5
+ENDING_SKULL_POSITION_Y = 0.5
+ENDING_SKULL_POP_SECONDS = 0.18
+ENDING_IMPACT_SFX_ENABLED = True
 MUSIC_LOOP = None
 CODEC = None
 CONFIG = None
@@ -135,6 +140,8 @@ def load_settings():
     global DURATION, FPS, WIDTH, HEIGHT, CRF, PRESET, SPEED, FREEZE, EDIT_DURATION
     global BEAT_SYNC, BEAT_FLASH, BASS_BOOST, REFERENCE_PACING, MIRROR_ENABLED, LAYOUT_MODE
     global MIN_CLIPS, MAX_CLIPS, MIN_SHOT_SECONDS, MUSIC_LOOP, CODEC, CONFIG, DROP_FREEZE_DURATION, MIN_SOURCE_GAP_SECONDS
+    global ENDING_SKULL_SIZE_PX, ENDING_SKULL_POSITION_X, ENDING_SKULL_POSITION_Y
+    global ENDING_SKULL_POP_SECONDS, ENDING_IMPACT_SFX_ENABLED
     global AI_UPSCALE_ENABLED, AI_UPSCALE_MODEL, AI_UPSCALE_SCALE
     global AI_UPSCALE_BINARY, AI_UPSCALE_MODEL_DIR
     path = _settings_path()
@@ -223,6 +230,24 @@ def load_settings():
             not math.isfinite(float(source_gap_value)) or not 0.0 <= float(source_gap_value) <= 1.0):
         raise ValueError("edit_settings.source_min_gap_seconds must be between 0 and 1 second.")
     MIN_SOURCE_GAP_SECONDS = float(source_gap_value)
+    skull_size = edit.get("skull_size_px", 420)
+    if isinstance(skull_size, bool) or not isinstance(skull_size, int) or not 160 <= skull_size <= 960:
+        raise ValueError("edit_settings.skull_size_px must be an integer from 160 to 960.")
+    skull_x, skull_y = edit.get("skull_position_x", 0.5), edit.get("skull_position_y", 0.5)
+    for key, value in (("skull_position_x", skull_x), ("skull_position_y", skull_y)):
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) or not 0.0 <= float(value) <= 1.0:
+            raise ValueError(f"edit_settings.{key} must be between 0 and 1.")
+    skull_pop = edit.get("skull_pop_seconds", 0.18)
+    if isinstance(skull_pop, bool) or not isinstance(skull_pop, (int, float)) or not math.isfinite(float(skull_pop)) or not 0.08 <= float(skull_pop) <= 0.6:
+        raise ValueError("edit_settings.skull_pop_seconds must be between 0.08 and 0.6 seconds.")
+    sfx_enabled = edit.get("impact_sfx_enabled", True)
+    if not isinstance(sfx_enabled, bool):
+        raise ValueError("edit_settings.impact_sfx_enabled must be an explicit boolean.")
+    ENDING_SKULL_SIZE_PX = skull_size
+    ENDING_SKULL_POSITION_X = float(skull_x)
+    ENDING_SKULL_POSITION_Y = float(skull_y)
+    ENDING_SKULL_POP_SECONDS = float(skull_pop)
+    ENDING_IMPACT_SFX_ENABLED = sfx_enabled
     for key in ("reference_pacing", "mirror_enabled"):
         if not isinstance(edit.get(key), bool):
             raise ValueError(f"edit_settings.{key} must be an explicit boolean.")
@@ -2392,8 +2417,8 @@ def main(argv=None):
         f"[0:v]{base_chain},split[base][impact_src];"
         "[base]setsar=1[baseout];"
         f"[impact_src]{impact_chain}[impact_raw];"
-        "[2:v]scale=420:-1[skull];"
-        f"[impact_raw][skull]overlay=(W-w)/2:(H-h)/2:enable='gte(t,{EDIT_DURATION:.5f})'[impact];"
+        f"[2:v]scale=w='if(lt(n,{max(1, round(ENDING_SKULL_POP_SECONDS * FPS))}),{ENDING_SKULL_SIZE_PX}*(0.62+0.38*n/{max(1, round(ENDING_SKULL_POP_SECONDS * FPS))}),{ENDING_SKULL_SIZE_PX})':h=-1:eval=frame,setpts=PTS+{EDIT_DURATION:.6f}/TB[skull];"
+        f"[impact_raw][skull]overlay=x='(W-w)*{ENDING_SKULL_POSITION_X:.5f}':y='(H-h)*{ENDING_SKULL_POSITION_Y:.5f}':enable='gte(t,{EDIT_DURATION:.5f})'[impact];"
         f"[baseout][impact]overlay=0:0:enable='gte(t,{EDIT_DURATION:.5f})',"
         f"trim=end_frame={total_frames},setsar=1[outv]"
     )
@@ -2414,18 +2439,28 @@ def main(argv=None):
     if fade_out_seconds > 0:
         fade_start = max(0.0, DURATION - fade_out_seconds)
         audio_filters.append(f"afade=t=out:st={fade_start:.6f}:d={fade_out_seconds:.6f}")
-    # Keep a final ceiling even when bass boost is disabled; audio transients
-    # otherwise can leave the exported encode at/near 0 dBFS.
-    audio_filters.append("alimiter=limit=0.85:level=0")
     audio_filter = ",".join(audio_filters)
+    audio_graph = f"[1:a:0]{audio_filter},alimiter=limit=0.85:level=0[aout]"
+    # Original procedural lavfi impact: no external sound file or third-party audio asset.
+    if ENDING_IMPACT_SFX_ENABLED:
+        impact_delay_ms = round(EDIT_DURATION * 1000)
+        audio_graph = (
+            f"[1:a:0]{audio_filter}[musicout];"
+            f"[3:a]adelay={impact_delay_ms}:all=1,apad=whole_dur={DURATION:.6f},"
+            f"atrim=duration={DURATION:.6f},volume=0.55[impact_sfx];"
+            "[musicout][impact_sfx]amix=inputs=2:duration=first:dropout_transition=0,"
+            "alimiter=limit=0.85:level=0[aout]"
+        )
+    filter_graph += ";" + audio_graph
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", joined]
     if MUSIC_LOOP:
         cmd += ["-stream_loop", "-1"]
     if audio_start_seconds > 0:
         cmd += ["-ss", f"{audio_start_seconds:.6f}"]
     cmd += ["-i", audio_source, "-loop", "1", "-framerate", str(FPS), "-i", SKULL_ASSET,
-            "-filter_complex", filter_graph, "-map", "[outv]", "-map", "1:a:0",
-            "-af", audio_filter, "-t", f"{DURATION:.6f}", "-frames:v", str(total_frames),
+            "-f", "lavfi", "-i", "aevalsrc=0.32*sin(2*PI*(90*t-55*t*t))*exp(-12*t):s=48000:d=0.45",
+            "-filter_complex", filter_graph, "-map", "[outv]", "-map", "[aout]",
+            "-t", f"{DURATION:.6f}", "-frames:v", str(total_frames),
             "-c:v", CODEC, "-preset", PRESET, "-crf", str(CRF),
             "-pix_fmt", "yuv420p", "-r", str(FPS),
             "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",

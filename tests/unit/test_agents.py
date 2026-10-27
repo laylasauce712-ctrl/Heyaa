@@ -94,6 +94,19 @@ class AgentTests(unittest.TestCase):
         cfg["edit_settings"]["duration_seconds"] = True
         self.assertEqual(settings_agent(cfg).status, "blocked")
 
+    def test_settings_agent_validates_configurable_skull_and_impact_effects(self):
+        cfg = config()
+        cfg["edit_settings"].update({
+            "skull_size_px": 520, "skull_position_x": 0.4,
+            "skull_position_y": 0.6, "skull_pop_seconds": 0.2,
+            "impact_sfx_enabled": True,
+        })
+        self.assertEqual(settings_agent(cfg).status, "ok")
+        cfg["edit_settings"]["skull_size_px"] = 1000
+        result = settings_agent(cfg)
+        self.assertEqual(result.status, "blocked")
+        self.assertTrue(any("skull_size_px" in finding for finding in result.findings))
+
     def test_settings_agent_blocks_unsupported_settings(self):
         cfg = config()
         cfg["video_settings"]["fps"] = 120
