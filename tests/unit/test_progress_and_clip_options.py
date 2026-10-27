@@ -18,6 +18,24 @@ class ProgressTraceTests(unittest.TestCase):
         with patch.dict("os.environ", {}, clear=True):
             self.assertEqual(renderer._settings_path(), "params.json")
 
+    def test_drop_boundary_falls_back_instead_of_exceeding_max_shot_length(self):
+        boundaries = [0.0, 1.74, 3.48, 5.57, 7.66, 9.40, 11.14, 14.44, 17.74]
+        updated, freeze_time = renderer.insert_drop_boundary(boundaries, 10.74)
+
+        # Snapping to 10.74s would make the following shot 3.70s (> 3.3s).
+        # Keep the validated boundaries and move the freeze to the nearest cut.
+        self.assertEqual(updated, boundaries)
+        self.assertAlmostEqual(freeze_time, 11.14)
+        durations = [right - left for left, right in zip(updated, updated[1:])]
+        self.assertTrue(all(0.75 <= duration <= 3.3 for duration in durations))
+
+    def test_drop_boundary_snaps_when_both_adjacent_shots_remain_bounded(self):
+        updated, freeze_time = renderer.insert_drop_boundary([0.0, 2.0, 4.0, 6.0], 3.0)
+        self.assertEqual(updated, [0.0, 3.0, 4.0, 6.0])
+        self.assertAlmostEqual(freeze_time, 3.0)
+        durations = [right - left for left, right in zip(updated, updated[1:])]
+        self.assertTrue(all(0.75 <= duration <= 3.3 for duration in durations))
+
     def test_reference_pacing_reports_when_clip_count_stretches_cadence(self):
         diagnostics = renderer._reference_pacing_diagnostics(
             {
