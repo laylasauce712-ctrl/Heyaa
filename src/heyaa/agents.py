@@ -56,6 +56,18 @@ def settings_agent(config: dict[str, Any]) -> AgentResult:
         findings.append("Only style='phonk_montagem' is implemented.")
     if str(video.get("resolution", "")).lower() != "1080x1920":
         findings.append("This renderer's required output is 1080x1920 (9:16).")
+    ai_upscale_enabled = video.get("ai_upscale_enabled", False)
+    if not isinstance(ai_upscale_enabled, bool):
+        findings.append("video_settings.ai_upscale_enabled must be an explicit boolean.")
+    ai_upscale_model = video.get("ai_upscale_model", "realesrgan-x4plus")
+    if ai_upscale_model not in {"realesrgan-x4plus", "realesrgan-x4plus-anime", "realesrnet-x4plus", "realesr-animevideov3"}:
+        findings.append("video_settings.ai_upscale_model is not a supported Real-ESRGAN ncnn-vulkan model.")
+    ai_upscale_scale = video.get("ai_upscale_scale", 2)
+    if isinstance(ai_upscale_scale, bool) or not isinstance(ai_upscale_scale, int) or ai_upscale_scale not in (2, 3, 4):
+        findings.append("video_settings.ai_upscale_scale must be 2, 3 or 4.")
+    for path_key in ("ai_upscale_binary", "ai_upscale_model_dir"):
+        if path_key in video and not isinstance(video[path_key], str):
+            findings.append(f"video_settings.{path_key} must be a path string.")
     fps = video.get("fps")
     if not isinstance(fps, int) or isinstance(fps, bool) or not 24 <= fps <= 60:
         findings.append("video_settings.fps must be an integer from 24 to 60.")
@@ -103,6 +115,9 @@ def settings_agent(config: dict[str, Any]) -> AgentResult:
                        {"resolution": video["resolution"], "fps": fps, "duration_seconds": duration,
                         "speed": speed, "freeze_duration": freeze,
                         "mirror_enabled": edit["mirror_enabled"], "smart_crop": edit["smart_crop"],
+                        "ai_upscale_enabled": ai_upscale_enabled,
+                        "ai_upscale_model": ai_upscale_model,
+                        "ai_upscale_scale": ai_upscale_scale,
                         "music_loop": audio["music_loop"], "edl_mode": edit["edl_mode"]})
 
 
