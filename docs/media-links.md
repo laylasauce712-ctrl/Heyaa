@@ -40,10 +40,12 @@ mix URLs with local files: if --video-url is omitted, input/test_video.mp4 must
 already exist; if --music-url is omitted, input/phonk.mp3 must already exist.
 
 YouTube downloads have a hard 180-second timeout, a 20-second socket timeout,
-and limited retries. If YouTube blocks the request or the connection stalls,
-Heyaa now exits with a clear error instead of waiting forever; switching tools
-cannot guarantee bypassing platform restrictions. Use a direct media URL or a
-local file when permitted and available.
+and limited retries. The renderer shows live yt-dlp progress and streams network /
+extractor errors into the terminal log rather than buffering them invisibly. If
+YouTube blocks the request or the connection stalls, Heyaa exits with a clear
+error instead of waiting forever; switching tools cannot guarantee bypassing
+platform restrictions. Use a direct media URL or a local file when permitted and
+available.
 
 Before rendering, Heyaa validates downloaded files with ffprobe to ensure each
 required file exists, has a positive duration, and contains the expected stream.
