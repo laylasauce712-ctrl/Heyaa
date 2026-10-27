@@ -813,6 +813,26 @@ def _reference_boundaries(clip_count, total_duration, profile):
     return boundaries
 
 
+def _reference_pacing_diagnostics(reference_profile, planned_lengths):
+    """Compare the measured reference cadence with the intervals this render can actually fit."""
+    if not isinstance(reference_profile, dict) or not planned_lengths:
+        return None
+    reference_median = reference_profile.get("median_cut_interval_seconds")
+    if (isinstance(reference_median, bool) or not isinstance(reference_median, (int, float))
+            or not math.isfinite(float(reference_median)) or reference_median <= 0):
+        return None
+    if any(not math.isfinite(float(length)) or float(length) <= 0 for length in planned_lengths):
+        return None
+    planned_median = float(statistics.median(planned_lengths))
+    ratio = planned_median / float(reference_median)
+    return {
+        "reference_median_seconds": round(float(reference_median), 4),
+        "planned_median_seconds": round(planned_median, 4),
+        "cadence_stretch_ratio": round(ratio, 4),
+        "planned_clip_count": len(planned_lengths),
+    }
+
+
 def make_boundaries(clip_count, beats, reference_profile=None):
     """Keep reference-derived shot lengths and accept only beat snaps that stay render-safe."""
     reference_boundaries = _reference_boundaries(clip_count, EDIT_DURATION, reference_profile)
@@ -841,7 +861,25 @@ def make_boundaries(clip_count, beats, reference_profile=None):
     if reference_profile:
         variation = max(lengths) - min(lengths)
         print("[edit] Reference-derived shot lengths: " + ", ".join(f"{x:.2f}" for x in lengths) + " seconds")
-        print(f"[edit] Reference pacing retained: range={min(lengths):.2f}–{max(lengths):.2f}s; variation={variation:.2f}s.")
+        diagnostics = _reference_pacing_diagnostics(reference_profile, lengths)
+        if diagnostics:
+            print(
+                f"[edit] Reference cadence: source median={diagnostics['reference_median_seconds']:.2f}s; "
+                f"planned median={diagnostics['planned_median_seconds']:.2f}s "
+                f"({diagnostics['cadence_stretch_ratio']:.2f}x slower); "
+                f"{diagnostics['planned_clip_count']} motion clips."
+            )
+            if diagnostics["cadence_stretch_ratio"] >= 1.75:
+                message = (
+                    "The requested motion-clip count forces slower cuts than the reference: "
+                    f"reference median {diagnostics['reference_median_seconds']:.2f}s, "
+                    f"planned median {diagnostics['planned_median_seconds']:.2f}s "
+                    f"({diagnostics['cadence_stretch_ratio']:.2f}x slower). "
+                    "Increase the clip count within configured limits to get closer to the reference cadence."
+                )
+                print("[warn] " + message, flush=True)
+                progress_event("reference_pacing_fit", "needs_review", message, diagnostics)
+        print(f"[edit] Planned range={min(lengths):.2f}–{max(lengths):.2f}s; variation={variation:.2f}s.")
     else:
         print("[edit] Segment lengths: " + ", ".join(f"{x:.2f}" for x in lengths) + " seconds")
     return boundaries
