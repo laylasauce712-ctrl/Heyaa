@@ -7,6 +7,8 @@ import struct
 import subprocess
 from pathlib import Path
 
+from src.heyaa.agents import run_agent_team
+
 VIDEO = "input/test_video.mp4"
 MUSIC = "input/phonk.mp3"
 REFERENCE = "input/reference.mp4"
@@ -420,6 +422,22 @@ def main():
     print(f"[OK] Final video: {FINAL}")
     print(f"[OK] Duration: {actual:.2f}s | Resolution: {WIDTH}x{HEIGHT} | FPS: {FPS}")
     print(f"[OK] Video codec: {video_codec} | Audio codec: {audio_codec}")
+    settings = {"resolution": f"{WIDTH}x{HEIGHT}", "speed": SPEED, "smart_crop": SMART_CROP_ENABLED}
+    render_report = {
+        "width": WIDTH, "height": HEIGHT, "duration_seconds": actual,
+        "has_audio": True, "video_codec": video_codec, "audio_codec": audio_codec,
+        "file": FINAL,
+    }
+    agent_report = run_agent_team({
+        "settings": settings, "niche_metrics": {}, "niche_tags": ["phonk", "montagem"],
+        "render_report": render_report,
+    })
+    report_path = os.path.join(OUTDIR, "agent_report.json")
+    with open(report_path, "w", encoding="utf-8") as handle:
+        json.dump(agent_report, handle, ensure_ascii=False, indent=2)
+    print(f"[agents] Status: {agent_report['status']} | report: {report_path}")
+    if agent_report["status"] == "blocked":
+        raise RuntimeError("Agent Inspector blocked this render; see output/agent_report.json.")
     print("[NOTE] Reference mode learns rough cut pacing; it does not copy copyrighted frames/effects.")
     print("[NOTE] Upscaling improves presentation but cannot restore detail absent from the source.")
 

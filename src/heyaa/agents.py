@@ -137,12 +137,13 @@ def run_agent_team(context: dict[str, Any],
     record("niche_analyst", "niche_review", niche)
     qa = inspector(context.get("render_report", {}))
     record("inspector", "render_qa", qa)
-    blocked = plan.status != "ok" or qa.status != "ok" or niche.status != "ok"
+    blocked = plan.status != "ok" or qa.status != "ok"
     status = "blocked" if blocked else "ready_for_human_review"
     summary = {
         "status": status,
         "viral_guarantee": False,
         "human_review_required": True,
+        "niche_review_note": "Missing niche metrics are disclosed and do not invalidate technical render QA.",
         "results": {"planner": asdict(plan), "niche_analyst": asdict(niche),
                     "inspector": asdict(qa)},
         "events": [asdict(event) for event in events],

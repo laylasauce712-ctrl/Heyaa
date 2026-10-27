@@ -30,10 +30,11 @@ class AgentTests(unittest.TestCase):
             "niche_metrics": {},
             "render_report": {"width": 1080, "height": 1920, "duration_seconds": 20, "has_audio": True},
         }, emit=emitted.append)
-        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["status"], "ready_for_human_review")
         self.assertEqual(len(emitted), 3)
         self.assertEqual(emitted, result["events"])
         self.assertFalse(result["viral_guarantee"])
+        self.assertEqual(result["results"]["niche_analyst"]["status"], "insufficient_evidence")
 
 
 if __name__ == "__main__":
