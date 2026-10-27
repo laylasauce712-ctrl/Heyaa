@@ -78,18 +78,34 @@ def load_settings():
     PRESET = str(video["preset"])
     if PRESET not in {"ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow"}:
         raise ValueError("Unsupported x264 preset.")
-    DURATION = float(edit["duration_seconds"])
+    duration_value = edit["duration_seconds"]
+    if (isinstance(duration_value, bool) or not isinstance(duration_value, (int, float)) or
+            not math.isfinite(float(duration_value))):
+        raise ValueError("edit_settings.duration_seconds must be a finite number.")
+    DURATION = float(duration_value)
     if not 8.0 <= DURATION <= 60.0:
         raise ValueError("edit_settings.duration_seconds must be between 8 and 60.")
-    FREEZE = float(edit["freeze_duration"])
+    freeze_value = edit["freeze_duration"]
+    if (isinstance(freeze_value, bool) or not isinstance(freeze_value, (int, float)) or
+            not math.isfinite(float(freeze_value))):
+        raise ValueError("edit_settings.freeze_duration must be a finite number.")
+    FREEZE = float(freeze_value)
     if not 0.35 <= FREEZE <= 1.2 or FREEZE >= DURATION:
         raise ValueError("freeze_duration must be 0.35–1.2 seconds and shorter than duration.")
-    SPEED = float(edit["speed"])
+    speed_value = edit["speed"]
+    if (isinstance(speed_value, bool) or not isinstance(speed_value, (int, float)) or
+            not math.isfinite(float(speed_value))):
+        raise ValueError("edit_settings.speed must be a finite number.")
+    SPEED = float(speed_value)
     if not 1.0 <= SPEED <= 1.35:
         raise ValueError("edit_settings.speed must be between 1.0x and 1.35x.")
-    MIN_CLIPS, MAX_CLIPS = int(edit["min_clips"]), int(edit["max_clips"])
+    minimum_value, maximum_value = edit["min_clips"], edit["max_clips"]
+    if (isinstance(minimum_value, bool) or not isinstance(minimum_value, int) or
+            isinstance(maximum_value, bool) or not isinstance(maximum_value, int)):
+        raise ValueError("min_clips and max_clips must be integers.")
+    MIN_CLIPS, MAX_CLIPS = minimum_value, maximum_value
     if not 6 <= MIN_CLIPS <= 12 or not MIN_CLIPS <= MAX_CLIPS <= 18:
-        raise ValueError("Clip bounds must satisfy 6 <= min_clips <= 12 <= max_clips <= 18.")
+        raise ValueError("Clip bounds must satisfy 6 <= min_clips <= 12 and min_clips <= max_clips <= 18.")
     for key in ("reference_pacing", "mirror_enabled", "smart_crop"):
         if not isinstance(edit.get(key), bool):
             raise ValueError(f"edit_settings.{key} must be an explicit boolean.")
@@ -702,7 +718,7 @@ def main():
     print(f"[agents] Status: {agent_report['status']} | report: {report_path}")
     print(f"[agents] Niche result: {agent_report['results']['niche_analyst']['status']} (no unsupported virality score)")
     print("[NOTE] Reference mode learns rough cut pacing; it does not copy copyrighted frames/effects.")
-    print("[NOTE] Upscaling improves presentation but cannot restore detail absent from the source.")
+    print("[NOTE] Standard FFmpeg scaling only; no AI upscaling or new source detail is generated.")
 
 
 if __name__ == "__main__":

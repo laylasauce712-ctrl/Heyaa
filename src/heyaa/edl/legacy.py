@@ -1,4 +1,8 @@
-"""Legacy mode gate. M1a intentionally does not connect the EDL to rendering."""
+"""Compatibility helper for old callers with top-level `edl_mode`.
+
+The active renderer uses `edit_settings.edl_mode` in params.json and consumes
+EDL directly. This helper is retained only for callers/tests of the old shape.
+"""
 VALID_MODES = {"off", "shadow", "on"}
 
 def edl_mode(params):
@@ -7,5 +11,5 @@ def edl_mode(params):
     return value if isinstance(value, str) and value in VALID_MODES else "off"
 
 def should_render_edl(params):
-    """Only an explicit on value opts in; this module does not render anything."""
+    """Legacy predicate only; this helper does not perform rendering."""
     return edl_mode(params) == "on"

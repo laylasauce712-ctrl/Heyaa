@@ -55,6 +55,16 @@ class AgentTests(unittest.TestCase):
         cfg["edit_settings"]["smart_crop"] = False
         self.assertEqual(settings_agent(cfg).status, "ok")
 
+    def test_settings_agent_rejects_boolean_numeric_settings(self):
+        cfg = config()
+        cfg["edit_settings"]["speed"] = True
+        result = settings_agent(cfg)
+        self.assertEqual(result.status, "blocked")
+        self.assertTrue(any("speed" in finding for finding in result.findings))
+        cfg = config()
+        cfg["edit_settings"]["duration_seconds"] = True
+        self.assertEqual(settings_agent(cfg).status, "blocked")
+
     def test_settings_agent_blocks_unsupported_settings(self):
         cfg = config()
         cfg["video_settings"]["fps"] = 120
