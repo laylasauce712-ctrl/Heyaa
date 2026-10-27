@@ -25,7 +25,7 @@ def validate_edl(edl):
     edl = _obj(edl, "edl"); _keys(edl, TOP, "edl")
     version = require_int(edl.get("version"), "version", 1)
     if version != EDL_VERSION: raise EDLValidationError(f"unsupported EDL version: {version}")
-    require_int(edl.get("fps_num"), "fps_num", 1); require_int(edl.get("fps_den",1), "fps_den", 1)
+    require_int(edl.get("fps_num"), "fps_num", 1); require_int(edl.get("fps_den"), "fps_den", 1)
     require_int(edl.get("width"), "width", 1); require_int(edl.get("height"), "height", 1)
     total = require_int(edl.get("total_frames"), "total_frames", 1)
     video = edl.get("video")
@@ -44,7 +44,7 @@ def validate_edl(edl):
         if kind == "clip":
             require_int(item.get("source_start_f"), f"{name}.source_start_f")
             source_dur = require_int(item.get("source_dur_f"), f"{name}.source_dur_f", 1)
-            speed = item.get("speed", 1.0); _num(speed, f"{name}.speed", MIN_SPEED, MAX_SPEED)
+            speed = item.get("speed"); _num(speed, f"{name}.speed", MIN_SPEED, MAX_SPEED)
             if abs(dur - source_dur / speed) > 1: raise EDLValidationError(f"{name}.dur_f inconsistent with source_dur_f / speed")
             crop = _obj(item.get("crop"), f"{name}.crop"); _keys(crop, {"x","y","w","h"}, f"{name}.crop")
             if set(crop) != {"x","y","w","h"}: raise EDLValidationError(f"{name}.crop must contain x, y, w, h")

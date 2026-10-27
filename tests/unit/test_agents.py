@@ -39,8 +39,8 @@ def sample_edl():
 
 def render_report():
     return {"width": 1080, "height": 1920, "duration_seconds": 8.0, "expected_duration_seconds": 8.0,
-            "fps": 24.0, "frame_count": 192, "expected_frame_count": 192,
-            "has_audio": True, "decode_ok": True, "file_exists": True, "video_codec": "h264", "audio_codec": "aac"}
+            "fps": 24.0, "expected_fps": 24, "video_codec": "h264", "expected_video_codec": "h264",
+            "frame_count": 192, "expected_frame_count": 192, "has_audio": True, "decode_ok": True, "file_exists": True, "video_codec": "h264", "audio_codec": "aac"}
 
 
 class AgentTests(unittest.TestCase):

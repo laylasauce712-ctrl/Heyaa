@@ -1,6 +1,6 @@
 # Heyaa EDL v1 — integrated frame-based edit contract
 
-The renderer builds, validates and consumes an EDL from `params.json`. The EDL is the source of truth for ordered clip boundaries, project frame count, clip speed, source seek ranges, audio source and freeze placement. A validated EDL must cover every project frame exactly once: no gaps, overlaps or zero-length items.
+The renderer builds, validates and consumes an EDL from `params.json`. The validator requires explicit FPS denominator and explicit clip speed. The EDL is the source of truth for ordered clip boundaries, project frame count, clip speed, source seek ranges, audio source and freeze placement. A validated EDL must cover every project frame exactly once: no gaps, overlaps or zero-length items.
 
 ## Fields
 

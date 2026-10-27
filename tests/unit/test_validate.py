@@ -33,6 +33,16 @@ class ValidateTests(unittest.TestCase):
     def test_bool_is_not_integer(self):
         e=sample(); e["total_frames"]=True
         with self.assertRaises(EDLValidationError): validate_edl(e)
+    def test_required_fps_den_and_clip_speed(self):
+        e = sample()
+        del e["fps_den"]
+        with self.assertRaises(EDLValidationError):
+            validate_edl(e)
+        e = sample()
+        del e["video"][0]["speed"]
+        with self.assertRaises(EDLValidationError):
+            validate_edl(e)
+
     def test_no_mutation(self):
         e=sample(); before=copy.deepcopy(e); validate_edl(e); self.assertEqual(e,before)
 

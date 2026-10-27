@@ -340,7 +340,7 @@ def make_clip(index, item, source_duration):
             f"{'hflip,' if MIRROR_ENABLED else ''}"
             "eq=contrast=1.16:saturation=1.30:gamma=1.02,"
             "unsharp=5:5:0.72:3:3:0.0,setsar=1,"
-            f"fps={FPS},setpts=PTS/{SPEED},trim=end_frame={output_frames},setpts=PTS-STARTPTS[v]"
+            f"fps={FPS},setpts=PTS/{SPEED},fps={FPS},trim=end_frame={output_frames},setpts=PTS-STARTPTS[v]"
         )
     else:
         vf = (
@@ -353,7 +353,7 @@ def make_clip(index, item, source_duration):
             "eq=contrast=1.16:saturation=1.30:gamma=1.02,"
             "unsharp=5:5:0.72:3:3:0.0[front];"
             "[back][front]overlay=0:420,setsar=1,"
-            f"fps={FPS},setpts=PTS/{SPEED},trim=end_frame={output_frames},setpts=PTS-STARTPTS[v]"
+            f"fps={FPS},setpts=PTS/{SPEED},fps={FPS},trim=end_frame={output_frames},setpts=PTS-STARTPTS[v]"
         )
 
     # Loop only when the selected range cannot supply the requested source time.
@@ -421,7 +421,7 @@ def verify_output(path):
     # A successful probe is not enough: decode the complete streams to catch corrupt packets.
     run(["ffmpeg", "-hide_banner", "-v", "error", "-i", path, "-f", "null", "-"])
     details = {
-        "width": width, "height": height, "fps": float(rate),
+        "width": width, "height": height, "fps": float(rate), "expected_fps": FPS, "expected_video_codec": CODEC,
         "frame_count": frame_count, "expected_frame_count": expected_frames,
         "has_audio": True, "decode_ok": True, "file_exists": True,
         "duration_seconds": actual_duration, "expected_duration_seconds": DURATION,

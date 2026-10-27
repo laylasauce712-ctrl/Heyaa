@@ -9,7 +9,7 @@ The current repository uses deterministic Python agents—not an independent LLM
 3. **Beat Sync Agent** reports whether beat sync is enabled, how many onset candidates were found and whether timing fell back to even pacing. It never treats candidates as guaranteed downbeats.
 4. **Planner / EDL Agent** runs the strict EDL validator and checks FPS, resolution, total frames and clip speed against the actual settings.
 5. **Niche Analyst** only scores if all normalized craft signals are supplied. Current render code measures a limited beat-alignment proxy from cuts and detected onsets; semantic hook strength, visual clarity, drop impact and motion energy remain unavailable unless measured by a future tested analyzer. Missing inputs produce `insufficient_evidence`, not a fabricated score.
-6. **Inspector / Critic** rejects render output when dimensions, FPS, exact decoded frame count, duration, audio presence, full decode or file existence checks fail.
+6. **Inspector / Critic** rejects render output when dimensions, FPS, configured FPS, codec, exact decoded frame count, duration, audio presence, full decode or file existence checks fail.
 7. **Export Storage** records successful promotion only after blocking technical QA passes. The last known-good final file is preserved if QA blocks the new render.
 
 Every stage returns a structured result with status, findings, recommendations and evidence. The event stream comes from agent execution rather than invented agent-to-agent chat. `main` is the Director/orchestrator: it executes media analysis and rendering, then supplies those real outputs to the agents.

@@ -232,8 +232,9 @@ def niche_analyst(metrics: dict[str, Any], tags: list[str] | None = None) -> Age
 
 def inspector(report: dict[str, Any]) -> AgentResult:
     """Require actual render evidence; missing QA data is a failure, not a pass."""
-    required = ("width", "height", "duration_seconds", "expected_duration_seconds", "fps",
-                "frame_count", "expected_frame_count", "has_audio", "decode_ok", "file_exists")
+    required = ("width", "height", "duration_seconds", "expected_duration_seconds", "fps", "expected_fps",
+                "frame_count", "expected_frame_count", "has_audio", "decode_ok", "file_exists",
+                "video_codec", "expected_video_codec")
     missing = [key for key in required if key not in report]
     failures: list[str] = []
     if missing:
@@ -241,8 +242,13 @@ def inspector(report: dict[str, Any]) -> AgentResult:
     if report.get("width") != 1080 or report.get("height") != 1920:
         failures.append("Output must be 1080x1920 (9:16).")
     fps = report.get("fps")
+    expected_fps = report.get("expected_fps")
     if not _finite_number(fps) or float(fps) <= 0:
         failures.append("Output FPS is missing or invalid.")
+    elif not _finite_number(expected_fps) or abs(float(fps) - float(expected_fps)) > 0.01:
+        failures.append(f"Output FPS {fps} does not match configured FPS {expected_fps}.")
+    if report.get("video_codec") != report.get("expected_video_codec"):
+        failures.append(f"Output video codec {report.get('video_codec')} does not match configured codec {report.get('expected_video_codec')}.")
     duration, expected = report.get("duration_seconds"), report.get("expected_duration_seconds")
     if not _finite_number(duration) or not _finite_number(expected) or float(expected) <= 0:
         failures.append("Output/target duration is missing or invalid.")
