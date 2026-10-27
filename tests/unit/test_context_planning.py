@@ -1,5 +1,7 @@
 import math
 import statistics
+import tempfile
+from pathlib import Path
 import subprocess
 import unittest
 from unittest.mock import patch
@@ -87,6 +89,37 @@ class ContextPlanningTests(unittest.TestCase):
         self.assertAlmostEqual(boundaries[-1], renderer.EDIT_DURATION)
         self.assertGreaterEqual(min(lengths), 0.75)
         self.assertLessEqual(max(lengths), 3.3)
+
+    def test_analysis_cache_uses_file_hash_and_parameters(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source.bin"
+            cache_dir = root / "cache"
+            source.write_bytes(b"first content")
+            calls = []
+            def compute():
+                calls.append(len(calls) + 1)
+                return {"candidate_count": len(calls)}
+            first, first_hit = renderer.cached_analysis(
+                "fixture", [source], {"fps": 30}, compute, cache_dir=cache_dir,
+            )
+            second, second_hit = renderer.cached_analysis(
+                "fixture", [source], {"fps": 30}, compute, cache_dir=cache_dir,
+            )
+            third, third_hit = renderer.cached_analysis(
+                "fixture", [source], {"fps": 60}, compute, cache_dir=cache_dir,
+            )
+            self.assertFalse(first_hit)
+            self.assertTrue(second_hit)
+            self.assertFalse(third_hit)
+            self.assertEqual(first, second)
+            self.assertEqual(first["candidate_count"], 1)
+            self.assertEqual(third["candidate_count"], 2)
+
+    def test_scene_detection_scales_down_before_scoring(self):
+        filt = renderer.scene_detection_filter(threshold=0.22, width=320)
+        self.assertLess(filt.index("scale=320:-2"), filt.index("select="))
+        self.assertIn("gt(scene,0.22)", filt)
 
     def test_music_loop_graph_crossfades_short_soundtrack_and_trims_to_edit(self):
         result = renderer.build_music_loop_graph(

@@ -68,6 +68,13 @@ class AIUpscaleTests(unittest.TestCase):
         self.assertEqual(command[command.index("-frames:v") + 1], "60")
         self.assertEqual(command[command.index("-t") + 1], f"{2.0 + 1.0 / 30.0:.6f}")
 
+    def test_intermediate_crf_is_validated_for_near_lossless_clips(self):
+        cfg = valid_config()
+        cfg["video_settings"]["intermediate_crf"] = 10
+        self.assertEqual(settings_agent(cfg).status, "ok")
+        cfg["video_settings"]["intermediate_crf"] = 25
+        self.assertEqual(settings_agent(cfg).status, "blocked")
+
     def test_ai_upscale_timeout_setting_accepts_configured_bounds(self):
         cfg = valid_config()
         cfg["video_settings"]["ai_upscale_batch_timeout_seconds"] = 900

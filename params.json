@@ -11,7 +11,8 @@
     "ai_upscale_scale": 2,
     "ai_upscale_binary": "tools/realesrgan/realesrgan-ncnn-vulkan",
     "ai_upscale_model_dir": "tools/realesrgan/models",
-    "ai_upscale_batch_timeout_seconds": 600
+    "ai_upscale_batch_timeout_seconds": 600,
+    "intermediate_crf": 10
   },
   "edit_settings": {
     "duration_seconds": 20,

@@ -1,4 +1,5 @@
 import json
+import hashlib
 import math
 import os
 import re
@@ -94,6 +95,8 @@ AI_UPSCALE_BINARY = "tools/realesrgan/realesrgan-ncnn-vulkan"
 AI_UPSCALE_MODEL_DIR = "tools/realesrgan/models"
 AI_UPSCALE_BATCH_TIMEOUT_SECONDS = 600
 SOURCE_FPS = None
+INTERMEDIATE_CRF = 10
+ANALYSIS_CACHE_REPORT = []
 AI_UPSCALER_EXECUTABLE = None
 AI_UPSCALER_MODEL_DIR = None
 AI_UPSCALE_MODELS = {
@@ -147,7 +150,7 @@ def load_settings():
     global ENDING_SKULL_SIZE_PX, ENDING_SKULL_POSITION_X, ENDING_SKULL_POSITION_Y
     global ENDING_SKULL_POP_SECONDS, ENDING_IMPACT_SFX_ENABLED, PREVIEW_MODE
     global AI_UPSCALE_ENABLED, AI_UPSCALE_MODEL, AI_UPSCALE_SCALE
-    global AI_UPSCALE_BINARY, AI_UPSCALE_MODEL_DIR, AI_UPSCALE_BATCH_TIMEOUT_SECONDS
+    global AI_UPSCALE_BINARY, AI_UPSCALE_MODEL_DIR, AI_UPSCALE_BATCH_TIMEOUT_SECONDS, INTERMEDIATE_CRF
     path = _settings_path()
     if not os.path.isfile(path):
         raise FileNotFoundError(f"Settings file {path!r} is required; renderer defaults are disabled.")
@@ -175,6 +178,9 @@ def load_settings():
     CRF = video["crf"]
     if isinstance(CRF, bool) or not isinstance(CRF, int) or not 16 <= CRF <= 26:
         raise ValueError("video_settings.crf must be an integer from 16 to 26.")
+    INTERMEDIATE_CRF = video.get("intermediate_crf", 10)
+    if isinstance(INTERMEDIATE_CRF, bool) or not isinstance(INTERMEDIATE_CRF, int) or not 0 <= INTERMEDIATE_CRF <= 18:
+        raise ValueError("video_settings.intermediate_crf must be an integer from 0 to 18.")
     AI_UPSCALE_ENABLED = video.get("ai_upscale_enabled", False)
     if not isinstance(AI_UPSCALE_ENABLED, bool):
         raise ValueError("video_settings.ai_upscale_enabled must be an explicit boolean.")
@@ -526,6 +532,57 @@ def duration_of(path):
     return float(probe(path)["format"]["duration"])
 
 
+def _analysis_file_sha256(path):
+    """Hash the actual current file contents; do not trust mtime as content identity."""
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+def cached_analysis(cache_kind, input_paths, parameters, compute, cache_dir="output/cache"):
+    """Cache JSON analysis by full input content hashes and all relevant parameters."""
+    paths = [Path(path) for path in input_paths]
+    if any(not path.is_file() for path in paths):
+        value = compute()
+        ANALYSIS_CACHE_REPORT.append({"kind": cache_kind, "hit": False, "cacheable": False})
+        return value, False
+    fingerprints = [_analysis_file_sha256(path) for path in paths]
+    identity = {"kind": str(cache_kind), "input_sha256": fingerprints, "parameters": parameters}
+    identity_text = json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    key = hashlib.sha256(identity_text.encode("utf-8")).hexdigest()
+    cache_path = Path(cache_dir) / f"{cache_kind}-{key}.json"
+    try:
+        saved = json.loads(cache_path.read_text(encoding="utf-8"))
+        if saved.get("version") == 1 and saved.get("key") == key:
+            ANALYSIS_CACHE_REPORT.append({
+                "kind": cache_kind, "hit": True, "cacheable": True,
+                "cache_key": key, "cache_file": str(cache_path),
+            })
+            return saved.get("value"), True
+    except (OSError, ValueError, AttributeError):
+        pass
+    value = compute()
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = cache_path.with_name(cache_path.name + ".part")
+    temporary.write_text(
+        json.dumps({"version": 1, "key": key, "identity": identity, "value": value},
+                   ensure_ascii=False, sort_keys=True, indent=2),
+        encoding="utf-8",
+    )
+    os.replace(temporary, cache_path)
+    ANALYSIS_CACHE_REPORT.append({
+        "kind": cache_kind, "hit": False, "cacheable": True,
+        "cache_key": key, "cache_file": str(cache_path),
+    })
+    return value, False
+
+
+def scene_detection_filter(threshold=0.22, width=320):
+    """Scale down before FFmpeg calculates scene-change scores."""
+    return f"scale={int(width)}:-2:flags=fast_bilinear,select='gt(scene,{float(threshold):.2f})',showinfo"
+
+
 def detect_scenes(path, duration, scan_duration=None):
     """Use FFmpeg scene-change scores as an inexpensive cut detector."""
     print(f"[analyze] Scene changes: {Path(path).name}")
@@ -533,7 +590,7 @@ def detect_scenes(path, duration, scan_duration=None):
     if scan_duration is not None:
         cmd += ["-t", f"{max(0.1, float(scan_duration)):.3f}"]
     cmd += ["-i", path,
-        "-vf", "select='gt(scene,0.22)',showinfo",
+        "-vf", scene_detection_filter(0.22, 320),
         "-an", "-f", "null", "-"
     ]
     result = subprocess.run(
@@ -1586,7 +1643,7 @@ def make_clip(index, item, source_duration):
         subject_x = float(subject_observation["center_x"])
         subject_y = float(subject_observation["center_y"])
         crop_filter = (
-            "crop=1080:1920:"
+            f"crop={WIDTH}:{HEIGHT}:"
             f"x='max(0,min(iw-ow,{subject_x:.5f}*iw-ow/2))':"
             f"y='max(0,min(ih-oh,{subject_y:.5f}*ih-oh/2))',"
         )
@@ -1647,7 +1704,7 @@ def make_clip(index, item, source_duration):
         ]
     cmd += [
         "-filter_complex", vf, "-map", "[v]", "-an",
-        "-c:v", CODEC, "-preset", PRESET, "-crf", str(CRF),
+        "-c:v", CODEC, "-preset", PRESET, "-crf", str(INTERMEDIATE_CRF),
         "-pix_fmt", "yuv420p", "-r", str(FPS), "-frames:v", str(output_frames),
         "-threads", "2", path
     ]
@@ -1689,7 +1746,7 @@ def make_freeze_clip(index, item, previous_clip):
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
         "-loop", "1", "-framerate", str(FPS), "-i", still_path,
         "-vf", freeze_filter, "-an", "-frames:v", str(duration_frames),
-        "-c:v", CODEC, "-preset", PRESET, "-crf", str(CRF),
+        "-c:v", CODEC, "-preset", PRESET, "-crf", str(INTERMEDIATE_CRF),
         "-pix_fmt", "yuv420p", "-r", str(FPS), "-threads", "2", output_path
     ])
     return output_path
@@ -2246,6 +2303,7 @@ def main(argv=None):
     global VIDEO, MUSIC, REFERENCE, EDIT_DURATION, DURATION, FREEZE, SUBJECT_OBSERVATIONS, SOURCE_FPS
     global OUTDIR, WORK, FINAL, VARIANT_INDEX, PREVIEW_MODE, RUN_DIR
     args = parse_media_source_args(argv)
+    ANALYSIS_CACHE_REPORT.clear()
     if args.command == "doctor":
         return run_doctor()
     PREVIEW_MODE = bool(args.preview)
@@ -2354,13 +2412,29 @@ def main(argv=None):
                         "loop_enabled": MUSIC_LOOP, "crossfade_seconds": 0.10 if MUSIC_LOOP else None})
 
     progress_event("media_analysis", "running", "Detecting source scene changes.")
-    scenes = detect_scenes(VIDEO, source_duration)
+    scenes, scene_cache_hit = cached_analysis(
+        "scene_changes", [VIDEO],
+        {"source_duration": round(source_duration, 3), "threshold": 0.22, "analysis_scale_width": 320},
+        lambda: detect_scenes(VIDEO, source_duration),
+    )
     progress_event("media_analysis", "completed", f"Measured {len(scenes)} source scene-change candidate(s).",
-                   {"scene_change_count": len(scenes), "source_duration_seconds": source_duration})
+                   {"scene_change_count": len(scenes), "source_duration_seconds": source_duration,
+                    "analysis_cache_hit": scene_cache_hit})
     available_edit_duration = DURATION - FREEZE
     progress_event("beat_analysis", "running", "Measuring bass-onset / beat candidates.")
     if BEAT_SYNC:
-        raw_beats = detect_music_beats(MUSIC, available_edit_duration)
+        beat_bundle, beat_cache_hit = cached_analysis(
+            "music_beats", [MUSIC],
+            {"target_duration": round(available_edit_duration, 4), "fps": FPS,
+             "enabled": BEAT_SYNC, "grid_method": "period_phase_v1"},
+            lambda: {
+                "beats": detect_music_beats(MUSIC, available_edit_duration),
+                "grid": dict(BEAT_GRID_ANALYSIS),
+            },
+        )
+        raw_beats = beat_bundle["beats"]
+        BEAT_GRID_ANALYSIS.clear()
+        BEAT_GRID_ANALYSIS.update(beat_bundle["grid"])
     else:
         raw_beats = []
         BEAT_GRID_ANALYSIS.update({
@@ -2375,7 +2449,8 @@ def main(argv=None):
                     "grid_method": BEAT_GRID_ANALYSIS["method"],
                     "grid_confidence": BEAT_GRID_ANALYSIS["confidence"],
                     "grid_period_seconds": BEAT_GRID_ANALYSIS["period_seconds"],
-                    "grid_phase_seconds": BEAT_GRID_ANALYSIS["phase_seconds"]})
+                    "grid_phase_seconds": BEAT_GRID_ANALYSIS["phase_seconds"],
+                    "analysis_cache_hit": beat_cache_hit if BEAT_SYNC else False})
     drop_beat_time = choose_drop_beat(music_duration, available_edit_duration, MUSIC_LOOP)
     total_frames, freeze_frames = round(DURATION * FPS), round(FREEZE * FPS)
     drop_freeze_frames = max(1, round(DROP_FREEZE_DURATION * FPS)) if drop_beat_time is not None else 0
@@ -2387,12 +2462,20 @@ def main(argv=None):
     ]
     progress_event("reference_analysis", "running" if REFERENCE_PACING else "skipped",
                    "Measuring reference shot pacing." if REFERENCE_PACING else "Reference pacing is disabled.")
-    ref_profile = reference_pacing_profile(REFERENCE) if REFERENCE_PACING else None
+    if REFERENCE_PACING:
+        ref_profile, reference_cache_hit = cached_analysis(
+            "reference_pacing", [REFERENCE],
+            {"fps": FPS, "reference_pacing_enabled": REFERENCE_PACING},
+            lambda: reference_pacing_profile(REFERENCE),
+        )
+    else:
+        ref_profile, reference_cache_hit = None, False
     ref_interval = ref_profile.get("median_cut_interval_seconds") if ref_profile else None
     progress_event("reference_analysis", "completed" if ref_interval is not None else ("skipped" if not REFERENCE_PACING else "needs_review"),
                    "Reference pacing profile ready." if ref_interval is not None else "No usable measured reference interval; configured fallback will be used.",
                    {"median_cut_interval_seconds": ref_interval,
-                    "reference_available": _has_usable_reference_profile(ref_profile)})
+                    "reference_available": _has_usable_reference_profile(ref_profile),
+                    "analysis_cache_hit": reference_cache_hit})
     clip_count = choose_clip_count(ref_interval, args.clip_count)
     clip_selection_mode = (
         "explicit_user_choice" if args.clip_count is not None
@@ -2467,7 +2550,12 @@ def main(argv=None):
     if source_audio_available:
         try:
             scene_segments = build_source_scene_segments(context_start, context_end, scenes)
-            measured_segments = measure_source_scene_features(VIDEO, scene_segments)
+            measured_segments, source_feature_cache_hit = cached_analysis(
+                "source_scene_features", [VIDEO],
+                {"scene_segments": scene_segments, "fps": FPS, "audio_weight": 0.6,
+                 "motion_weight": 0.4, "feature_version": 1},
+                lambda: measure_source_scene_features(VIDEO, scene_segments),
+            )
             planned_source_ranges = plan_ranked_disjoint_source_ranges(
                 clip_source_durations, measured_segments, FPS, source_gap_frames
             )
@@ -2679,39 +2767,42 @@ def main(argv=None):
     print("[render 3/4] Adding bass-hit flashes, cinematic skull freeze, and Phonk audio...")
     progress_event("final_render", "running", "Applying configured flashes, skull freeze, audio processing and final encoding.")
     final_video = f"{WORK}/final_render.mp4"
+    final_freeze_start = edit_frames / FPS
+    skull_size_px = max(80, round(ENDING_SKULL_SIZE_PX * WIDTH / 1080))
+    skull_pop_frames = max(1, round(ENDING_SKULL_POP_SECONDS * FPS))
     flash_filter = make_flash_filter(beats)
     # Pad first, then split: the impact branch reads the cloned tail frames.
     # Only the freeze branch is enlarged/shaken, so normal footage stays stable.
     base_chain = (
         f"tpad=stop_mode=clone:stop={freeze_frames},"
-        f"eq=contrast=1.32:saturation=0:enable='gte(t,{EDIT_DURATION:.6f})'"
+        f"eq=contrast=1.32:saturation=0:enable='gte(t,{final_freeze_start:.6f})'"
     )
     if flash_filter:
         base_chain += "," + flash_filter
     base_chain += (
         f",drawbox=x=0:y=0:w=iw:h=ih:color=white@0.78:t=fill:"
-        f"enable='between(t,{EDIT_DURATION - 0.10:.3f},{EDIT_DURATION - 0.055:.3f})'"
+        f"enable='between(t,{final_freeze_start - 0.10:.3f},{final_freeze_start - 0.055:.3f})'"
     )
     impact_chain = (
         f"trim=start_frame={edit_frames}:end_frame={total_frames},"
         "setpts=PTS-STARTPTS,"
         f"fps={FPS},"
-        "scale=1188:2112:flags=lanczos,"
-        "crop=1080:1920:"
+        f"scale={round(WIDTH * 1.1)}:{round(HEIGHT * 1.1)}:flags=lanczos,"
+        f"crop={WIDTH}:{HEIGHT}:"
         "x='(iw-ow)/2+18*sin(t*70)':"
         "y='(ih-oh)/2+18*cos(t*57)',"
         "eq=contrast=1.48:saturation=0:brightness=0.015,"
         "drawbox=x=0:y=0:w=iw:h=ih:color=white@0.55:t=fill:"
         "enable='lt(t,0.055)',"
-        f"setpts=PTS+{EDIT_DURATION:.6f}/TB"
+        f"setpts=PTS+{final_freeze_start:.6f}/TB"
     )
     filter_graph = (
         f"[0:v]{base_chain},split[base][impact_src];"
         "[base]setsar=1[baseout];"
         f"[impact_src]{impact_chain}[impact_raw];"
-        f"[2:v]scale=w='if(lt(n,{max(1, round(ENDING_SKULL_POP_SECONDS * FPS))}),{ENDING_SKULL_SIZE_PX}*(0.62+0.38*n/{max(1, round(ENDING_SKULL_POP_SECONDS * FPS))}),{ENDING_SKULL_SIZE_PX})':h=-1:eval=frame,setpts=PTS+{EDIT_DURATION:.6f}/TB[skull];"
-        f"[impact_raw][skull]overlay=x='(W-w)*{ENDING_SKULL_POSITION_X:.5f}':y='(H-h)*{ENDING_SKULL_POSITION_Y:.5f}':enable='gte(t,{EDIT_DURATION:.5f})'[impact];"
-        f"[baseout][impact]overlay=0:0:enable='gte(t,{EDIT_DURATION:.5f})',"
+        f"[2:v]scale=w='if(lt(n,{skull_pop_frames}),{skull_size_px}*(0.62+0.38*n/{skull_pop_frames}),{skull_size_px})':h=-1:eval=frame,setpts=PTS+{final_freeze_start:.6f}/TB[skull];"
+        f"[impact_raw][skull]overlay=x='(W-w)*{ENDING_SKULL_POSITION_X:.5f}':y='(H-h)*{ENDING_SKULL_POSITION_Y:.5f}':enable='gte(t,{final_freeze_start:.5f})'[impact];"
+        f"[baseout][impact]overlay=0:0:enable='gte(t,{final_freeze_start:.5f})',"
         f"trim=end_frame={total_frames},setsar=1[outv]"
     )
     edl_audio = edl["audio"][0]
@@ -2743,7 +2834,7 @@ def main(argv=None):
     audio_parts.append(f"[{loop_graph['output_label']}]{audio_filter}[musicout]")
     # A procedural sub-bass frequency sweep plays at the start of the final freeze.
     if ENDING_IMPACT_SFX_ENABLED:
-        impact_delay_ms = round(EDIT_DURATION * 1000)
+        impact_delay_ms = round(final_freeze_start * 1000)
         audio_parts.append(
             f"[3:a]adelay={impact_delay_ms}:all=1,apad=whole_dur={DURATION:.6f},"
             f"atrim=duration={DURATION:.6f},volume=0.55[impact_sfx]"
@@ -2904,6 +2995,7 @@ def main(argv=None):
         "render_report": render_report,
     }, emit=print_agent_event, emit_progress=print_agent_event)
     agent_report["pre_render_review"] = pre_render_review
+    agent_report["analysis_cache"] = list(ANALYSIS_CACHE_REPORT)
     agent_report["clip_selection"] = {
         "selected_clip_count": actual_motion_clip_count,
         "requested_clip_count": args.clip_count,

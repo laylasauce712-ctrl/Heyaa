@@ -129,6 +129,9 @@ def settings_agent(config: dict[str, Any]) -> AgentResult:
     crf = video.get("crf")
     if not isinstance(crf, int) or isinstance(crf, bool) or not 16 <= crf <= 26:
         findings.append("video_settings.crf must be an integer from 16 to 26.")
+    intermediate_crf = video.get("intermediate_crf", 10)
+    if not isinstance(intermediate_crf, int) or isinstance(intermediate_crf, bool) or not 0 <= intermediate_crf <= 18:
+        findings.append("video_settings.intermediate_crf must be an integer from 0 to 18.")
     preset = video.get("preset")
     if preset not in {"ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow"}:
         findings.append("video_settings.preset is not an implemented x264 preset.")
