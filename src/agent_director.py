@@ -1109,6 +1109,10 @@ def _run_variant_batch(args):
     """Render independent, reviewable variants without redownloading source media."""
     output_root = Path("output") / "variants"
     output_root.mkdir(parents=True, exist_ok=True)
+    if args.clip_count_options is not None and args.clip_count is not None:
+        progress_event("clip_count_options", "blocked",
+                       "Use either one clip-count override or a list of clip-count alternatives, not both.")
+        raise SystemExit("Use either --clip-count or --clip-count-options, not both.")
     if args.clip_count_options is not None:
         if len(args.clip_count_options) != args.variants:
             progress_event("clip_count_options", "blocked",
@@ -1162,7 +1166,10 @@ def _run_variant_batch(args):
             ):
                 if value:
                     command.extend([flag, value])
-        selected_clip_count = args.clip_count_options[index - 1] if args.clip_count_options else None
+        selected_clip_count = (
+            args.clip_count_options[index - 1] if args.clip_count_options
+            else args.clip_count
+        )
         variant_label = VARIANT_LABELS.get(index, "Reference-timed source variation")
         if selected_clip_count is not None:
             variant_label = f"{selected_clip_count} clips | {variant_label}"
@@ -1216,10 +1223,13 @@ def _run_variant_batch(args):
         "requested_variants": args.variants,
         "minimum_requested": 3,
         "same_reference_timing_and_soundtrack": True,
+        "clip_count": args.clip_count,
         "clip_count_options": list(args.clip_count_options) if args.clip_count_options else None,
         "differences": (
             "Motion clip count and source-time progression vary; effects, reference pacing and soundtrack remain shared."
             if args.clip_count_options else
+            f"All candidates use {args.clip_count} motion clips and vary source-time progression; effects, reference pacing and soundtrack remain shared."
+            if args.clip_count is not None else
             "Only the progression through source timestamps varies; added effects, reference cut pacing and audio source remain shared."
         ),
         "variants": results,
@@ -1241,6 +1251,8 @@ def main(argv=None):
     global VIDEO, MUSIC, REFERENCE, EDIT_DURATION, DURATION, FREEZE, SUBJECT_OBSERVATIONS
     global OUTDIR, WORK, FINAL, VARIANT_INDEX
     args = parse_media_source_args(argv)
+    if args.clip_count_options is not None and args.clip_count is not None:
+        raise SystemExit("Use either --clip-count or --clip-count-options, not both.")
     if args.clip_count_options is not None and args.variant_index is None and args.variants == 1:
         if len(args.clip_count_options) != 1:
             raise SystemExit("--variants 1 requires exactly one --clip-count-options value.")
