@@ -15,6 +15,12 @@ cat > params.json <<'JSON'
 JSON
 ffmpeg -hide_banner -loglevel error -y -f lavfi -i "testsrc2=size=640x360:rate=24:duration=10" -an -c:v libx264 -pix_fmt yuv420p input/test_video.mp4
 ffmpeg -hide_banner -loglevel error -y -f lavfi -i "sine=frequency=70:sample_rate=44100:duration=9" -c:a libmp3lame input/phonk.mp3
+# Exercise the exact subject-aware 9:16 crop expression used when the optional
+# HOG tracker supplies a normalized center; no OpenCV/person model is needed here.
+ffmpeg -hide_banner -loglevel error -y -i input/test_video.mp4 \
+  -vf "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920:x='max(0,min(iw-ow,0.65000*iw-ow/2))':y='max(0,min(ih-oh,0.55000*ih-oh/2))',setsar=1" \
+  -frames:v 1 output/subject_crop_smoke.png
+test -s output/subject_crop_smoke.png
 python src/agent_director.py
 python - <<'PY'
 import json
