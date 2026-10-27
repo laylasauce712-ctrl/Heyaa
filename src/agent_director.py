@@ -209,6 +209,9 @@ def extend_looped_beats(beats, music_duration, limit, loop_enabled):
     original = [float(beat) for beat in beats if 0.0 <= float(beat) < end]
     if not loop_enabled or duration >= end:
         return sorted(set(original))
+    # A source-file analysis only represents one music cycle. Ignore any
+    # out-of-cycle timestamps before generating the repeated loop candidates.
+    original = [beat for beat in original if beat < duration]
     expanded = []
     for cycle in range(math.ceil(end / duration)):
         offset = cycle * duration
@@ -705,6 +708,23 @@ def main():
         print(f"[agent:{event['agent']}] {event['status']}: {event['summary']}")
     report_path = os.path.join(OUTDIR, "agent_report.json")
     if agent_report["status"] == "blocked":
+        storage_result = export_storage_agent(final_video, FINAL, technical_qa_passed=False)
+        storage_entry = {
+            "agent": storage_result.agent, "status": storage_result.status,
+            "score": storage_result.score, "confidence": storage_result.confidence,
+            "findings": list(storage_result.findings),
+            "recommendations": list(storage_result.recommendations),
+            "evidence": storage_result.evidence,
+        }
+        agent_report["results"]["export_storage"] = storage_entry
+        agent_report["events"].append({
+            "agent": "export_storage", "stage": "export_promotion",
+            "status": storage_result.status, "summary": storage_result.findings[0],
+            "data": {"score": storage_result.score, "confidence": storage_result.confidence,
+                     "findings": list(storage_result.findings),
+                     "recommendations": list(storage_result.recommendations),
+                     "evidence": storage_result.evidence},
+        })
         with open(report_path, "w", encoding="utf-8") as handle:
             json.dump(agent_report, handle, ensure_ascii=False, indent=2)
         raise RuntimeError("Technical QA blocked export; previous final file was preserved. See output/agent_report.json.")

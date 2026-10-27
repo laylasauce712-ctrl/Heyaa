@@ -31,6 +31,10 @@ class BeatPeriodTests(unittest.TestCase):
         beats = extend_looped_beats([0.5, 1.0, 1.5], music_duration=2.0, limit=5.0, loop_enabled=False)
         self.assertEqual(beats, [0.5, 1.0, 1.5])
 
+    def test_looped_music_ignores_source_candidates_beyond_one_cycle(self):
+        beats = extend_looped_beats([0.5, 1.0, 1.5, 4.2], music_duration=2.0, limit=5.0, loop_enabled=True)
+        self.assertEqual(beats, [0.5, 1.0, 1.5, 2.5, 3.0, 3.5, 4.5])
+
     def test_constant_signal_has_no_reliable_period(self):
         self.assertIsNone(_estimate_period_frames([0.0] * 600))
 
