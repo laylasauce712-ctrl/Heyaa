@@ -220,6 +220,21 @@ def resolve_ai_upscaler():
                 "AI upscaling is enabled but the Real-ESRGAN models folder was not found. "
                 "Set video_settings.ai_upscale_model_dir to the folder containing the model files."
             )
+    model_file_stem = (
+        f"{AI_UPSCALE_MODEL}-x{AI_UPSCALE_SCALE}"
+        if AI_UPSCALE_MODEL == "realesr-animevideov3"
+        else AI_UPSCALE_MODEL
+    )
+    missing_model_files = [
+        str(model_dir / f"{model_file_stem}{suffix}")
+        for suffix in (".param", ".bin")
+        if not (model_dir / f"{model_file_stem}{suffix}").is_file()
+    ]
+    if missing_model_files:
+        raise FileNotFoundError(
+            "Real-ESRGAN model files are missing: " + ", ".join(missing_model_files)
+            + ". Re-run bash scripts/install_realesrgan_linux.sh or correct ai_upscale_model_dir."
+        )
     AI_UPSCALER_EXECUTABLE = str(executable)
     AI_UPSCALER_MODEL_DIR = str(model_dir.resolve())
     print(f"[upscale] Real-ESRGAN ready: {AI_UPSCALER_EXECUTABLE}; models={AI_UPSCALER_MODEL_DIR}; model={AI_UPSCALE_MODEL}; scale={AI_UPSCALE_SCALE}x")
