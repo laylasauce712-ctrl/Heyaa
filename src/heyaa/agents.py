@@ -478,6 +478,9 @@ def render_critic(metrics: dict[str, Any]) -> AgentResult:
                            {"decision": "reject_silent_audio", "mean_volume_db": mean_db,
                             "max_volume_db": peak_db, "audio_silent": metrics["audio_silent"],
                             "black_segments": checked_segments, "semantic_visual_review": False})
+    measurement_errors = metrics.get("measurement_errors", [])
+    if isinstance(measurement_errors, list) and measurement_errors:
+        warnings.append("Some FFmpeg critic measurements failed: " + ", ".join(str(error) for error in measurement_errors))
     if longest_black >= max(0.75, float(duration) * 0.20):
         warnings.append("A long black interval was detected; review whether it is intentional.")
     if _finite_number(peak_db) and float(peak_db) >= -0.1:

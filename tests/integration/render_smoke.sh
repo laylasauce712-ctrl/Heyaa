@@ -31,6 +31,9 @@ assert report["results"]["framing_agent"]["status"] == "ok", report
 assert report["results"]["hook_analyst"]["status"] == "insufficient_evidence", report
 assert report["results"]["inspector"]["status"] == "ok", report
 assert report["results"]["render_critic"]["status"] in ("ok", "needs_review"), report
+assert report["render_critique"]["measurement_errors"] == [], report["render_critique"]
+assert isinstance(report["render_critique"]["mean_volume_db"], (int, float)), report["render_critique"]
+assert isinstance(report["render_critique"]["max_volume_db"], (int, float)), report["render_critique"]
 assert report["results"]["niche_analyst"]["status"] == "insufficient_evidence", report
 assert report["results"]["export_storage"]["status"] == "ok", report
 assert path.exists() and path.stat().st_size > 0

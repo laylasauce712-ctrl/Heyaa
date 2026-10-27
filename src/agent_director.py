@@ -485,11 +485,11 @@ def analyze_render_critique(path, duration):
     ]
     black_result = subprocess.run(black_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                   text=True, check=False)
-    black_log = (black_result.stderr or "") + "\\n" + (black_result.stdout or "")
+    black_log = (black_result.stderr or "") + "\n" + (black_result.stdout or "")
     if black_result.returncode != 0:
         errors.append("blackdetect_failed")
     else:
-        pattern = re.compile(r"black_start:([0-9.]+)\\s+black_end:([0-9.]+)\\s+black_duration:([0-9.]+)")
+        pattern = re.compile(r"black_start:([0-9.]+)\s+black_end:([0-9.]+)\s+black_duration:([0-9.]+)")
         for match in pattern.finditer(black_log):
             black_segments.append({
                 "start_seconds": float(match.group(1)),
@@ -501,12 +501,12 @@ def analyze_render_critique(path, duration):
     ]
     volume_result = subprocess.run(volume_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    text=True, check=False)
-    volume_log = (volume_result.stderr or "") + "\\n" + (volume_result.stdout or "")
+    volume_log = (volume_result.stderr or "") + "\n" + (volume_result.stdout or "")
     if volume_result.returncode != 0:
         errors.append("volumedetect_failed")
 
     def read_db(label):
-        match = re.search(label + r":\\s*(-?inf|-?\\d+(?:\\.\\d+)?)\\s*dB", volume_log, re.IGNORECASE)
+        match = re.search(label + r":\s*(-?inf|-?\d+(?:\.\d+)?)\s*dB", volume_log, re.IGNORECASE)
         if not match or match.group(1).lower() in ("-inf", "inf"):
             return None
         try:
@@ -517,7 +517,7 @@ def analyze_render_critique(path, duration):
 
     mean_db = read_db("mean_volume")
     peak_db = read_db("max_volume")
-    audio_silent = bool(re.search(r"(?:mean_volume|max_volume):\\s*-inf\\s*dB", volume_log, re.IGNORECASE))
+    audio_silent = bool(re.search(r"(?:mean_volume|max_volume):\s*-inf\s*dB", volume_log, re.IGNORECASE))
     return {
         "black_segments": black_segments, "duration_seconds": float(duration),
         "mean_volume_db": mean_db, "max_volume_db": peak_db,
