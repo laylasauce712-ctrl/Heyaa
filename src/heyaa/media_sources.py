@@ -151,10 +151,13 @@ def download_direct_https(url: str, target_path: str | Path, kind: str) -> Path:
 
 
 def download_youtube(url: str, target_path: str | Path, kind: str) -> Path:
-    """Download a YouTube video/audio with a hard timeout so runs cannot hang forever."""
+    """Download a YouTube video/audio with visible progress and a hard timeout."""
     url = validate_youtube_url(url, kind)
     target = Path(target_path)
     target.parent.mkdir(parents=True, exist_ok=True)
+    path_report = target.parent / f".{target.stem}.{kind}.yt-dlp-path.txt"
+    path_report.unlink(missing_ok=True)
+
     executable = shutil.which("yt-dlp")
     if executable:
         command = [executable]
@@ -163,45 +166,60 @@ def download_youtube(url: str, target_path: str | Path, kind: str) -> Path:
             import yt_dlp  # noqa: F401
         except ImportError as exc:
             raise MediaSourceError(
-                "yt-dlp is required for YouTube links. Install it with: python3 -m pip install -U yt-dlp"
+                "yt-dlp is required for YouTube links. Install it with: python3 -m pip install -U \"yt-dlp[default]\""
             ) from exc
         command = [sys.executable, "-m", "yt_dlp"]
     command += [
-        "--ignore-config", "--no-playlist", "--no-warnings", "--no-progress", "--quiet",
+        "--ignore-config", "--no-warnings", "--newline", "--progress", "--progress-delta", "1",
         "--socket-timeout", "20", "--retries", "2", "--fragment-retries", "2",
         "--force-overwrites", "-o", str(target.parent / f"{target.stem}.%(ext)s"),
-        "--print", "after_move:filepath",
+        "--print-to-file", "after_move:filepath", str(path_report),
     ]
     if kind == "music":
         command += ["-f", "ba/b", "-x", "--audio-format", "mp3", "--audio-quality", "0"]
     else:
         command += ["-f", VIDEO_FORMAT, "--merge-output-format", "mp4", "--remux-video", "mp4"]
     command.append(url)
-    print(f"[sources] Downloading YouTube {kind} (timeout: {DOWNLOAD_TIMEOUT_SECONDS}s)...", flush=True)
+    print(
+        f"[sources] Downloading YouTube {kind}; live progress enabled "
+        f"(timeout: {DOWNLOAD_TIMEOUT_SECONDS}s)...",
+        flush=True,
+    )
     try:
-        result = subprocess.run(
-            command, check=False, capture_output=True, text=True, timeout=DOWNLOAD_TIMEOUT_SECONDS,
-        )
+        # Inherit stdout/stderr so progress and extractor errors stream immediately
+        # to the terminal (and to a caller's tee logfile) instead of being hidden
+        # in a captured buffer until the subprocess exits.
+        result = subprocess.run(command, check=False, timeout=DOWNLOAD_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired as exc:
         raise MediaSourceError(
             f"YouTube {kind} download timed out after {DOWNLOAD_TIMEOUT_SECONDS}s. "
-            "The source may be blocked or the connection may be stalled; use a direct HTTPS media URL or a local file."
+            "Read the live yt-dlp output above; if network/CDN access failed, use a permitted local file "
+            "or a direct HTTPS media URL instead."
         ) from exc
     except OSError as exc:
         raise MediaSourceError(f"Could not start yt-dlp: {exc}") from exc
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "yt-dlp returned a non-zero exit code").strip()
-        raise MediaSourceError(f"Could not download YouTube {kind}: {detail[-1400:]}")
-    printed_paths = [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
-    if not printed_paths:
-        raise MediaSourceError(f"yt-dlp finished without reporting the downloaded {kind} path.")
-    downloaded = Path(printed_paths[-1]).resolve()
-    if downloaded.parent != target.parent.resolve():
-        raise MediaSourceError("yt-dlp reported a path outside the project input directory.")
-    if not downloaded.is_file() or downloaded.stat().st_size <= 0:
-        raise MediaSourceError(f"yt-dlp reported a missing or empty file: {downloaded}")
-    return downloaded
 
+    try:
+        if result.returncode != 0:
+            raise MediaSourceError(
+                f"YouTube {kind} download failed (yt-dlp exit code {result.returncode}). "
+                "The exact network/extractor error is printed above."
+            )
+        if not path_report.is_file():
+            raise MediaSourceError(
+                f"yt-dlp exited successfully but did not report the downloaded {kind} path."
+            )
+        printed_paths = [line.strip() for line in path_report.read_text(encoding="utf-8").splitlines() if line.strip()]
+        if not printed_paths:
+            raise MediaSourceError(f"yt-dlp wrote an empty output-path report for {kind}.")
+        downloaded = Path(printed_paths[-1]).resolve()
+        if downloaded.parent != target.parent.resolve():
+            raise MediaSourceError("yt-dlp reported a path outside the project input directory.")
+        if not downloaded.is_file() or downloaded.stat().st_size <= 0:
+            raise MediaSourceError(f"yt-dlp reported a missing or empty file: {downloaded}")
+        return downloaded
+    finally:
+        path_report.unlink(missing_ok=True)
 
 def download_media_source(url: str, target_path: str | Path, kind: str) -> Path:
     """Route YouTube pages to yt-dlp and direct HTTPS media links to a bounded downloader."""
