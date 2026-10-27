@@ -24,5 +24,14 @@ assert report["status"] == "ready_for_human_review", report
 assert report["results"]["inspector"]["status"] == "ok", report
 assert report["results"]["niche_analyst"]["status"] == "insufficient_evidence", report
 assert Path("output/final_phonk_20s.mp4").exists()
-print("Render smoke test passed; niche metrics correctly reported as unavailable.")
+edl = json.loads(Path("output/edit_decision_list.json").read_text(encoding="utf-8"))
+assert edl["version"] == 1
+cursor = 0
+for item in edl["video"]:
+    assert item["start_f"] == cursor, (cursor, item)
+    cursor += item["dur_f"]
+assert cursor == edl["total_frames"], (cursor, edl["total_frames"])
+assert edl["video"][-1]["type"] == "freeze"
+assert edl["fps_num"] == 24
+print("Render smoke test passed; EDL is frame-contiguous and freeze is explicit.")
 PY
