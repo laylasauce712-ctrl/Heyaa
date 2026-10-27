@@ -50,7 +50,8 @@ class ProgressTraceTests(unittest.TestCase):
         self.assertIsNone(args.clip_count_options)
 
     def test_agent_lifecycle_emits_running_then_completed_events(self):
-        events = []
+        progress_events = []
+        completed_events = []
 
         def mocked_result(agent, evidence=None, status="ok"):
             return lambda *args, **kwargs: AgentResult(
@@ -83,18 +84,24 @@ class ProgressTraceTests(unittest.TestCase):
         try:
             for context in patches:
                 context.__enter__()
-            report = run_agent_team({}, emit=events.append)
+            report = run_agent_team(
+                {}, emit=completed_events.append, emit_progress=progress_events.append
+            )
         finally:
             for context in reversed(patches):
                 context.__exit__(None, None, None)
 
         self.assertEqual(report["status"], "ready_for_human_review")
-        self.assertEqual(events[0]["agent"], "settings_agent")
-        self.assertEqual(events[0]["status"], "running")
-        self.assertEqual(events[1]["agent"], "settings_agent")
-        self.assertEqual(events[1]["status"], "ok")
-        self.assertTrue(any(event["agent"] == "director" and event["status"] == "running" for event in events))
-        self.assertEqual(len(report["events"]), 11)  # Completed results only; lifecycle starts are streamed separately.
+        self.assertEqual(progress_events[0]["agent"], "settings_agent")
+        self.assertEqual(progress_events[0]["status"], "running")
+        self.assertEqual(completed_events[0]["agent"], "settings_agent")
+        self.assertEqual(completed_events[0]["status"], "ok")
+        self.assertTrue(any(
+            event["agent"] == "director" and event["status"] == "running"
+            for event in progress_events
+        ))
+        self.assertEqual(len(completed_events), 11)
+        self.assertEqual(len(report["events"]), 11)  # Stable completed-results contract.
 
 
 if __name__ == "__main__":
