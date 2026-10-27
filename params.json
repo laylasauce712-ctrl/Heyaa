@@ -6,7 +6,7 @@
     "codec": "libx264",
     "crf": 18,
     "preset": "veryfast",
-    "ai_upscale_enabled": false,
+    "ai_upscale_enabled": true,
     "ai_upscale_model": "realesrgan-x4plus",
     "ai_upscale_scale": 2,
     "ai_upscale_binary": "tools/realesrgan/realesrgan-ncnn-vulkan",
