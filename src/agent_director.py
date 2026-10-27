@@ -3,6 +3,7 @@ import math
 import os
 import re
 import shutil
+import signal
 import statistics
 import struct
 import subprocess
@@ -1213,6 +1214,65 @@ def analyze_render_critique(path, duration):
     }
 
 
+
+def _run_variant_process(command, variant_index):
+    """Run one variant in its own process group so Ctrl-C stops the whole render tree."""
+    popen_options = {}
+    if os.name == "nt":
+        popen_options["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    else:
+        popen_options["start_new_session"] = True
+
+    child = subprocess.Popen(command, **popen_options)
+    try:
+        returncode = child.wait()
+    except KeyboardInterrupt:
+        progress_event(
+            "variant_interrupt", "running",
+            f"Interrupt received; stopping variant {variant_index} and its render subprocesses.",
+            {"variant_index": variant_index, "pid": child.pid},
+        )
+        if child.poll() is None:
+            if os.name == "nt":
+                try:
+                    child.send_signal(getattr(signal, "CTRL_BREAK_EVENT", signal.SIGTERM))
+                except (OSError, ValueError):
+                    child.terminate()
+            else:
+                try:
+                    os.killpg(child.pid, signal.SIGINT)
+                except ProcessLookupError:
+                    pass
+            try:
+                child.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                if os.name == "nt":
+                    child.terminate()
+                else:
+                    try:
+                        os.killpg(child.pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                try:
+                    child.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    if os.name == "nt":
+                        child.kill()
+                    else:
+                        try:
+                            os.killpg(child.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                    child.wait()
+        progress_event(
+            "variant_interrupt", "cancelled",
+            f"Variant {variant_index} was cancelled; no further variants will start.",
+            {"variant_index": variant_index, "exit_code": 130},
+        )
+        raise SystemExit(130) from None
+    return subprocess.CompletedProcess(command, returncode)
+
+
 def _run_variant_batch(args):
     """Render independent, reviewable variants without redownloading source media."""
     output_root = Path("output") / "variants"
@@ -1292,7 +1352,7 @@ def _run_variant_batch(args):
         )
         print()
         print(f"[variants] Rendering {index}/{args.variants}: {variant_label}", flush=True)
-        completed = subprocess.run(command, check=False)
+        completed = _run_variant_process(command, index)
         report = {}
         if report_path.is_file():
             try:
