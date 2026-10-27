@@ -72,6 +72,18 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(result.status, "blocked")
         self.assertTrue(any("1.7–3.0" in finding for finding in result.findings))
 
+    def test_framing_agent_reports_optional_person_track_evidence(self):
+        media = {"context_window": {"subject_tracking": {
+            "detected": True,
+            "method": "opencv-hog-appearance-consistency-proxy",
+            "track_quality_proxy": 0.65,
+        }}}
+        result = framing_agent(config(), sample_edl(), media)
+        self.assertEqual(result.status, "ok")
+        self.assertTrue(result.evidence["subject_tracking"])
+        self.assertEqual(result.evidence["mode"], "subject_aware_crop_proxy")
+        self.assertFalse(result.evidence["identity_recognition"])
+
     def test_settings_agent_rejects_boolean_numeric_settings(self):
         cfg = config()
         cfg["edit_settings"]["speed"] = True
