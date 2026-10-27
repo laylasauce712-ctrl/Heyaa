@@ -20,10 +20,10 @@ def config():
     }
 
 
-def sample_edl():
+def sample_edl(include_drop_freeze=False):
     clips = []
     cursor = 0
-    durations = [26, 25, 25, 25, 25, 25]
+    durations = [25, 24, 24, 24, 24, 24] if include_drop_freeze else [26, 25, 25, 25, 25, 25]
     for i, duration in enumerate(durations):
         source_duration = round(duration * 1.1)
         clips.append({
@@ -33,6 +33,11 @@ def sample_edl():
             "crop": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0},
         })
         cursor += duration
+        if include_drop_freeze and i == 2:
+            clips.append({"type": "freeze", "source": "timeline:last_frame",
+                          "source_frame_f": cursor - 1, "start_f": cursor,
+                          "dur_f": 6, "effect": "drop-impact-freeze"})
+            cursor += 6
     clips.append({"type": "freeze", "source": "timeline:last_frame", "source_frame_f": cursor - 1,
                   "start_f": cursor, "dur_f": 192 - cursor, "effect": "phonk-freeze"})
     return {
@@ -59,6 +64,13 @@ class AgentTests(unittest.TestCase):
         cfg["edit_settings"]["speed"] = 1.2
         cfg["edit_settings"]["smart_crop"] = False
         self.assertEqual(settings_agent(cfg).status, "ok")
+
+    def test_settings_agent_requires_final_freeze_of_at_least_1_7_seconds(self):
+        cfg = config()
+        cfg["edit_settings"]["freeze_duration"] = 1.2
+        result = settings_agent(cfg)
+        self.assertEqual(result.status, "blocked")
+        self.assertTrue(any("1.7–3.0" in finding for finding in result.findings))
 
     def test_settings_agent_rejects_boolean_numeric_settings(self):
         cfg = config()
@@ -91,6 +103,14 @@ class AgentTests(unittest.TestCase):
         self.assertGreaterEqual(result.score, 80)
         self.assertEqual(result.evidence["viral_prediction"], "not_guaranteed")
 
+    def test_niche_proxy_score_is_flagged_for_human_review(self):
+        metrics = {key: 0.8 for key in ("beat_alignment", "visual_clarity", "hook_strength", "drop_impact", "motion_energy")}
+        metrics["metric_methods"] = {"visual_clarity": "source-resolution proxy"}
+        result = niche_analyst(metrics, ["phonk", "montagem"])
+        self.assertEqual(result.status, "needs_review")
+        self.assertIn("metric_methods", result.evidence)
+        self.assertEqual(result.evidence["score_kind"], "measured_proxy_composite")
+
     def test_inspector_rejects_wrong_frames_decode_or_missing_audio(self):
         report = render_report()
         report.update({"height": 1080, "frame_count": 191, "decode_ok": False, "has_audio": False})
@@ -105,6 +125,11 @@ class AgentTests(unittest.TestCase):
         ctx = {"settings": config(), "edl": sample_edl()}
         result = planner(ctx)
         self.assertEqual(result.status, "ok", result.findings)
+
+    def test_planner_accepts_one_internal_drop_freeze_and_one_final_freeze(self):
+        result = planner({"settings": config(), "edl": sample_edl(include_drop_freeze=True)})
+        self.assertEqual(result.status, "ok", result.findings)
+        self.assertEqual(result.evidence["video_items"], 8)
 
 
     def test_planner_rejects_unimplemented_crop_and_wrong_clip_count(self):
@@ -140,10 +165,13 @@ class AgentTests(unittest.TestCase):
         result = framing_agent(config(), edl)
         self.assertEqual(result.status, "needs_fix")
 
-    def test_hook_agent_never_claims_semantic_hook_score_from_scene_changes(self):
-        result = hook_analyst({"window_seconds": 2.0, "opening_scene_change_count": 3})
-        self.assertEqual(result.status, "insufficient_evidence")
-        self.assertIsNone(result.score)
+    def test_hook_agent_reports_a_measured_proxy_without_claiming_semantic_understanding(self):
+        result = hook_analyst({"window_seconds": 2.0, "opening_scene_change_count": 2})
+        self.assertEqual(result.status, "needs_review")
+        self.assertIsNotNone(result.score)
+        self.assertGreaterEqual(result.score, 0.0)
+        self.assertLessEqual(result.score, 1.0)
+        self.assertEqual(result.evidence["hook_activity_proxy"], result.score)
         self.assertFalse(result.evidence["semantic_hook_assessed"])
 
 
@@ -238,7 +266,9 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(result["results"]["niche_analyst"]["status"], "insufficient_evidence")
         self.assertIn("planner", result["results"])
         self.assertIn("director", result["results"])
-        self.assertEqual(result["results"]["hook_analyst"]["status"], "insufficient_evidence")
+        self.assertEqual(result["results"]["hook_analyst"]["status"], "needs_review")
+        self.assertEqual(len(result["agent_dialogue"]), 6)
+        self.assertTrue(any(turn["speaker"] == "Reference Analyst" for turn in result["agent_dialogue"]))
         self.assertEqual(result["results"]["reference_analyst"]["status"], "skipped")
         self.assertEqual(result["results"]["framing_agent"]["status"], "ok")
         self.assertEqual(result["results"]["render_critic"]["status"], "ok")
