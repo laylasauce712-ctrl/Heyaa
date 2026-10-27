@@ -438,8 +438,6 @@ def main():
         "eq=contrast=1.48:saturation=0:brightness=0.015,"
         "drawbox=x=0:y=0:w=iw:h=ih:color=white@0.55:t=fill:"
         "enable='lt(t,0.055)',"
-        "drawtext=text='☠':fontcolor=white:fontsize=170:borderw=8:"
-        "bordercolor=black:x=(w-text_w)/2:y=(h-text_h)/2,"
         f"setpts=PTS+{EDIT_DURATION:.5f}/TB"
     )
     filter_graph = (
