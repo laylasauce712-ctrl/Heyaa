@@ -138,6 +138,14 @@ class AIUpscaleTests(unittest.TestCase):
             self.assertEqual(len(list((root / "input").glob("frame_*.png"))), 3)
             self.assertEqual(len(list((root / "upscaled").glob("frame_*.png"))), 3)
 
+    def test_missing_upscaler_is_checked_before_source_download(self):
+        with patch("src.agent_director.load_settings"), \
+             patch("src.agent_director.resolve_ai_upscaler", side_effect=FileNotFoundError("missing model")), \
+             patch("src.agent_director.prepare_media_sources") as prepare_sources:
+            with self.assertRaisesRegex(FileNotFoundError, "missing model"):
+                renderer.main(["--variants", "1"])
+        prepare_sources.assert_not_called()
+
     def test_disabled_mode_does_not_require_real_esrgan_binary(self):
         renderer.AI_UPSCALE_ENABLED = False
         renderer.AI_UPSCALER_EXECUTABLE = "stale-value"
