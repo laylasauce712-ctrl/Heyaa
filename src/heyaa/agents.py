@@ -663,7 +663,8 @@ def export_storage_agent(temporary_path: str, final_path: str,
 
 
 def run_agent_team(context: dict[str, Any],
-                   emit: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
+                   emit: Callable[[dict[str, Any]], None] | None = None,
+                   emit_progress: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
     """Run deterministic evidence agents, then record an auditable review conference.
 
     The conference is structured rule-based cross-review, not a fabricated LLM chat.
@@ -673,9 +674,9 @@ def run_agent_team(context: dict[str, Any],
     events: list[AgentEvent] = []
 
     def announce(agent: str, stage: str) -> None:
-        """Emit a truthful lifecycle event before running a deterministic stage."""
-        if emit:
-            emit({
+        """Emit a lifecycle event only on the dedicated progress channel."""
+        if emit_progress:
+            emit_progress({
                 "agent": agent, "stage": stage, "status": "running",
                 "summary": f"Starting {agent.replace('_', ' ')}.",
             })
