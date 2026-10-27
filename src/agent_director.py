@@ -372,7 +372,7 @@ def main():
         "-c", "copy", joined
     ])
 
-    print("[render 3/4] Adding bass-hit flashes, skull freeze, and Phonk audio...")
+    print("[render 3/4] Adding bass-hit flashes, cinematic skull freeze, and Phonk audio...")
     final_video = f"{WORK}/final_render.mp4"
     flash_filter = make_flash_filter(beats)
     base_filter = (
