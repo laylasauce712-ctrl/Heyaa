@@ -12,6 +12,31 @@ from src.heyaa.media_sources import parse_media_source_args
 
 
 class ProgressTraceTests(unittest.TestCase):
+    def test_variant_interrupt_stops_child_and_exits_with_130(self):
+        child = unittest.mock.Mock()
+        child.pid = 4321
+        child.wait.side_effect = [KeyboardInterrupt(), 0]
+        child.poll.return_value = None
+        events = []
+
+        with patch("src.agent_director.subprocess.Popen", return_value=child) as popen, \\
+             patch("src.agent_director.os.killpg") as killpg, \\
+             patch.object(renderer, "progress_event",
+                          side_effect=lambda stage, status, summary, details=None, **kwargs:
+                          events.append((stage, status, details or {}))):
+            with self.assertRaises(SystemExit) as raised:
+                renderer._run_variant_process(["python", "child.py"], 2)
+
+        self.assertEqual(raised.exception.code, 130)
+        popen.assert_called_once()
+        self.assertEqual(popen.call_args.kwargs, {"start_new_session": True})
+        killpg.assert_called_once_with(4321, renderer.signal.SIGINT)
+        self.assertEqual([(stage, status) for stage, status, _ in events], [
+            ("variant_interrupt", "running"),
+            ("variant_interrupt", "cancelled"),
+        ])
+
+
     def test_progress_event_appends_machine_readable_jsonl(self):
         with tempfile.TemporaryDirectory() as temporary:
             with patch.object(renderer, "OUTDIR", temporary), patch("builtins.print"):
