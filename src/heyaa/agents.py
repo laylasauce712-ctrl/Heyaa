@@ -330,7 +330,10 @@ def framing_agent(config: dict[str, Any], edl: dict[str, Any],
     if mirror is True:
         recs.append("Mirroring is active; inspect any visible text because horizontal flipping reverses writing.")
     if subject_tracked:
-        findings.append("Optional OpenCV HOG detections guided nearby source-frame selection and horizontal/vertical crop centers.")
+        if smart_crop is True:
+            findings.append("Optional OpenCV HOG detections guided nearby source-frame selection and 9:16 crop centers.")
+        else:
+            findings.append("Optional OpenCV HOG detections guided source-time selection; the selected blurred-background foreground crop remains centered.")
         findings.append("The tracker uses person-shape plus short-term appearance consistency; it does not verify identity or understand story roles.")
     else:
         findings.append("Subject tracking was unavailable or no stable person track was found; deterministic center crop remains the fallback.")
