@@ -1248,7 +1248,7 @@ def main(argv=None):
         audio_filters.append(f"afade=t=out:st={fade_start:.6f}:d={fade_out_seconds:.6f}")
     # Keep a final ceiling even when bass boost is disabled; audio transients
     # otherwise can leave the exported encode at/near 0 dBFS.
-    audio_filters.append("alimiter=limit=0.90")
+    audio_filters.append("alimiter=limit=0.90:level=0")
     audio_filter = ",".join(audio_filters)
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", joined]
     if MUSIC_LOOP:
