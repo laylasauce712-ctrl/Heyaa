@@ -256,6 +256,8 @@ class AgentTests(unittest.TestCase):
             "media_analysis": {"source_duration_seconds": 10.0, "source_width": 640, "source_height": 360,
                                "scene_cut_count": 5, "music_duration_seconds": 9.0},
             "beat_analysis": {"enabled": False, "candidate_count": 0},
+            "reference_analysis": {"enabled": False},
+            "hook_analysis": {"window_seconds": 2.0, "opening_scene_change_count": 2},
             "niche_metrics": {}, "niche_tags": ["phonk", "montagem"],
             "render_report": render_report(), "render_critique": render_critique(),
         }, emit=emitted.append)
