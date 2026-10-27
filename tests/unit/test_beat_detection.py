@@ -13,6 +13,16 @@ class BeatPeriodTests(unittest.TestCase):
         self.assertIsNotNone(period)
         self.assertLessEqual(abs(period - 30), 1)
 
+
+    def test_estimates_fast_160_bpm_phonk_pulses(self):
+        # 19 frames at 20 ms is about 158 BPM, within normal tempo ambiguity.
+        envelope = [0.0] * 600
+        for index in range(7, len(envelope), 19):
+            envelope[index] = 1.0
+        period = _estimate_period_frames(envelope)
+        self.assertIsNotNone(period)
+        self.assertLessEqual(abs(period - 19), 1)
+
     def test_constant_signal_has_no_reliable_period(self):
         self.assertIsNone(_estimate_period_frames([0.0] * 600))
 
