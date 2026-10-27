@@ -1079,16 +1079,21 @@ def main(argv=None):
         "drop_impact": "relative strongest bass-onset novelty proxy; not a true musical drop classifier",
     }
     render_critique = analyze_render_critique(final_video, actual)
+
+    def print_agent_event(event):
+        # Stream each finished stage immediately so the terminal shows the
+        # inspection sequence as it happens rather than after every agent returns.
+        print(f"[agent:{event['agent']}] {event['status']}: {event['summary']}", flush=True)
+
     agent_report = run_agent_team({
         "settings": CONFIG, "edl": edl,
         "media_analysis": media_analysis, "beat_analysis": beat_analysis,
         "reference_analysis": reference_analysis, "hook_analysis": hook_analysis,
-        "render_critique": render_critique, "niche_metrics": niche_metrics, "niche_tags": ["phonk", "montagem", "vertical", "freeze"],
+        "render_critique": render_critique, "niche_metrics": niche_metrics,
+        "niche_tags": ["phonk", "montagem", "vertical", "freeze"],
         "render_report": render_report,
-    })
-    for event in agent_report["events"]:
-        print(f"[agent:{event['agent']}] {event['status']}: {event['summary']}")
-    print("[agent conference] Evidence-linked rule review (not independent LLM chat):")
+    }, emit=print_agent_event)
+    print("[agent conference] Evidence-linked rule review (not independent LLM chat):", flush=True)
     for turn in agent_report.get("agent_dialogue", []):
         print(f"[conference {turn['turn']}] {turn['speaker']} -> {turn['to']}: {turn['message']}")
     report_path = os.path.join(OUTDIR, "agent_report.json")
