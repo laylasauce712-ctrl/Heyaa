@@ -269,6 +269,10 @@ def parse_media_source_args(argv=None):
     parser = argparse.ArgumentParser(
         description="Render a Heyaa Phonk montage from local files, direct HTTPS media links, or YouTube video links."
     )
+    parser.add_argument("command", nargs="?", choices=("render", "doctor"), default="render",
+                        help="Use 'doctor' to check local render dependencies without starting a render.")
+    parser.add_argument("--preview", action="store_true",
+                        help="Render a single 540x960 30fps preview with AI upscaling disabled.")
     parser.add_argument("--video-url", help="HTTPS video URL (YouTube page or direct media URL) used as source footage.")
     parser.add_argument("--music-url", help="HTTPS audio URL (YouTube page or direct media URL) used as the soundtrack.")
     parser.add_argument("--reference-url", help="HTTPS video URL (YouTube page or direct media URL) used as the visual timing reference.")

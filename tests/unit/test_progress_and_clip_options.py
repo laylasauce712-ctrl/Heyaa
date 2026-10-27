@@ -18,6 +18,32 @@ class ProgressTraceTests(unittest.TestCase):
             parse_clip_count_options("40,41")
         self.assertIsInstance(raised.exception, __import__("argparse").ArgumentTypeError)
 
+    def test_preview_and_doctor_cli_options_are_available(self):
+        preview = parse_media_source_args(["--preview"])
+        doctor = parse_media_source_args(["doctor"])
+        self.assertTrue(preview.preview)
+        self.assertEqual(preview.variants, 3)
+        self.assertEqual(doctor.command, "doctor")
+
+    def test_cleanup_part_files_and_publish_latest_run(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            input_dir = root / "input"
+            output_dir = root / "output"
+            run_dir = output_dir / "runs" / "run-001"
+            input_dir.mkdir()
+            run_dir.mkdir(parents=True)
+            (input_dir / "stale.part").write_text("x", encoding="utf-8")
+            kept = input_dir / "keep.mp4"
+            kept.write_text("x", encoding="utf-8")
+            removed = renderer.cleanup_part_files((input_dir, output_dir))
+            self.assertEqual(len(removed), 1)
+            self.assertFalse((input_dir / "stale.part").exists())
+            latest = renderer.publish_latest_run(run_dir, output_root=output_dir)
+            self.assertTrue(Path(latest).is_symlink())
+            self.assertEqual(Path(latest).resolve(), run_dir.resolve())
+            self.assertTrue(kept.is_file())
+
     def test_local_settings_path_can_be_selected_without_editing_params_json(self):
         with patch.dict("os.environ", {"HEYAA_PARAMS_PATH": "params.local.json"}):
             self.assertEqual(renderer._settings_path(), "params.local.json")

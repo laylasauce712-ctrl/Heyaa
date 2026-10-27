@@ -61,6 +61,8 @@ BASS_BOOST = None
 REFERENCE_PACING = None
 MIRROR_ENABLED = None
 LAYOUT_MODE = "fill"
+PREVIEW_MODE = False
+RUN_DIR = None
 MIN_CLIPS = None
 MAX_CLIPS = None
 MIN_SHOT_SECONDS = 0.75
@@ -143,7 +145,7 @@ def load_settings():
     global BEAT_SYNC, BEAT_FLASH, BASS_BOOST, REFERENCE_PACING, MIRROR_ENABLED, LAYOUT_MODE
     global MIN_CLIPS, MAX_CLIPS, MIN_SHOT_SECONDS, MUSIC_LOOP, CODEC, CONFIG, DROP_FREEZE_DURATION, MIN_SOURCE_GAP_SECONDS
     global ENDING_SKULL_SIZE_PX, ENDING_SKULL_POSITION_X, ENDING_SKULL_POSITION_Y
-    global ENDING_SKULL_POP_SECONDS, ENDING_IMPACT_SFX_ENABLED
+    global ENDING_SKULL_POP_SECONDS, ENDING_IMPACT_SFX_ENABLED, PREVIEW_MODE
     global AI_UPSCALE_ENABLED, AI_UPSCALE_MODEL, AI_UPSCALE_SCALE
     global AI_UPSCALE_BINARY, AI_UPSCALE_MODEL_DIR, AI_UPSCALE_BATCH_TIMEOUT_SECONDS
     path = _settings_path()
@@ -151,6 +153,13 @@ def load_settings():
         raise FileNotFoundError(f"Settings file {path!r} is required; renderer defaults are disabled.")
     with open(path, "r", encoding="utf-8") as handle:
         config = json.load(handle)
+    if PREVIEW_MODE:
+        config["video_settings"]["resolution"] = "540x960"
+        config["video_settings"]["fps"] = 30
+        config["video_settings"]["ai_upscale_enabled"] = False
+        config["video_settings"]["crf"] = 26
+        config["video_settings"]["preset"] = "ultrafast"
+        config["_preview_mode"] = True
     video, audio, edit = config["video_settings"], config["audio_settings"], config["edit_settings"]
     if config.get("style") != "phonk_montagem":
         raise ValueError("Only style='phonk_montagem' is implemented by this renderer.")
@@ -158,8 +167,8 @@ def load_settings():
     if len(resolution) != 2:
         raise ValueError("video_settings.resolution must be WIDTHxHEIGHT")
     WIDTH, HEIGHT = int(resolution[0]), int(resolution[1])
-    if (WIDTH, HEIGHT) != (1080, 1920):
-        raise ValueError("This renderer currently requires 1080x1920 output.")
+    if (WIDTH, HEIGHT) != (1080, 1920) and not (PREVIEW_MODE and (WIDTH, HEIGHT) == (540, 960)):
+        raise ValueError("Output must be 1080x1920, or 540x960 when --preview is used.")
     FPS = video["fps"]
     if isinstance(FPS, bool) or not isinstance(FPS, int) or not 24 <= FPS <= 60:
         raise ValueError("video_settings.fps must be an integer from 24 to 60.")
@@ -1554,7 +1563,7 @@ def make_clip(index, item, source_duration):
         SUBJECT_OBSERVATIONS, clip_center_seconds,
         max_distance_seconds=max(1.0, input_duration / 2.0)
     )
-    crop_filter = "crop=1080:1920,"
+    crop_filter = f"crop={WIDTH}:{HEIGHT},"
     dynamic_crop = None
     if LAYOUT_MODE == "fill" and SUBJECT_OBSERVATIONS:
         dynamic_crop = build_dynamic_crop_path(
@@ -1563,7 +1572,7 @@ def make_clip(index, item, source_duration):
         )
     if dynamic_crop is not None:
         crop_filter = (
-            "crop=1080:1920:"
+            f"crop={WIDTH}:{HEIGHT}:"
             f"x='{dynamic_crop['x_expression']}':"
             f"y='{dynamic_crop['y_expression']}',"
         )
@@ -1590,7 +1599,7 @@ def make_clip(index, item, source_duration):
     # the deterministic centered 9:16 crop fallback.
     if LAYOUT_MODE == "fill":
         vf = (
-            "[0:v]scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,"
+            f"[0:v]scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase:flags=lanczos,"
             f"{crop_filter}"
             f"{'hflip,' if MIRROR_ENABLED else ''}"
             "eq=contrast=1.16:saturation=1.30:gamma=1.02,"
@@ -1600,9 +1609,9 @@ def make_clip(index, item, source_duration):
     else:
         vf = (
             "[0:v]split=2[bg][fg];"
-            "[bg]scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,"
-            "crop=1080:1920,boxblur=20:2,eq=brightness=-0.08:saturation=0.78[back];"
-            "[fg]scale=1080:1920:force_original_aspect_ratio=decrease:flags=lanczos"
+            f"[bg]scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase:flags=lanczos,"
+            f"crop={WIDTH}:{HEIGHT},boxblur=20:2,eq=brightness=-0.08:saturation=0.78[back];"
+            f"[fg]scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=decrease:flags=lanczos"
             f"{mirror},"
             "eq=contrast=1.16:saturation=1.30:gamma=1.02,"
             "unsharp=5:5:0.72:3:3:0.0[front];"
@@ -1670,8 +1679,8 @@ def make_freeze_clip(index, item, previous_clip):
     ])
     duration_frames = int(item["dur_f"])
     freeze_filter = (
-        "scale=1188:2112:flags=lanczos,"
-        "crop=1080:1920:x='(iw-ow)/2+5*sin(t*90)':y='(ih-oh)/2+5*cos(t*73)',"
+        f"scale={round(WIDTH * 1.1)}:{round(HEIGHT * 1.1)}:flags=lanczos,"
+        f"crop={WIDTH}:{HEIGHT}:x='(iw-ow)/2+5*sin(t*90)':y='(ih-oh)/2+5*cos(t*73)',"
         "eq=contrast=1.38:saturation=0,"
         "drawbox=x=0:y=0:w=iw:h=ih:color=white@0.55:t=fill:enable='lt(t,0.05)',"
         f"fps={FPS},trim=end_frame={duration_frames},setpts=PTS-STARTPTS"
@@ -1968,7 +1977,7 @@ def _run_variant_process(command, variant_index):
 
 def _run_variant_batch(args):
     """Render independent, reviewable variants without redownloading source media."""
-    output_root = Path("output") / "variants"
+    output_root = Path(os.environ.get("HEYAA_RUN_DIR", "output")) / "variants"
     output_root.mkdir(parents=True, exist_ok=True)
     if args.clip_count_options is not None and args.clip_count is not None:
         progress_event("clip_count_options", "blocked",
@@ -2112,27 +2121,176 @@ def _run_variant_batch(args):
         raise SystemExit(1)
 
 
+def _new_run_id():
+    return time.strftime("%Y%m%d-%H%M%S") + f"-{time.time_ns() % 1000000:06d}"
+
+
+def cleanup_part_files(root_paths=("input", "output")):
+    """Remove leftover FFmpeg/download .part files before a new top-level run."""
+    removed = []
+    for root_value in root_paths:
+        root = Path(root_value)
+        if not root.exists():
+            continue
+        for path in root.rglob("*.part"):
+            try:
+                if path.is_file() or path.is_symlink():
+                    path.unlink()
+                    removed.append(str(path))
+            except OSError:
+                continue
+    return removed
+
+
+def publish_latest_run(run_dir, output_root="output"):
+    """Atomically point output/latest at a completed run without clobbering a real directory."""
+    root = Path(output_root)
+    root.mkdir(parents=True, exist_ok=True)
+    run_path = Path(run_dir)
+    relative_target = Path(os.path.relpath(run_path, root))
+    latest = root / "latest"
+    temporary = root / "latest.part"
+    if temporary.is_symlink() or temporary.is_file():
+        temporary.unlink()
+    elif temporary.exists():
+        raise RuntimeError(f"Refusing to replace non-file latest staging path: {temporary}")
+    if latest.exists() and not latest.is_symlink():
+        if latest.is_dir():
+            raise RuntimeError("output/latest exists as a real directory; move it aside before publishing a run.")
+        latest.unlink()
+    elif latest.is_symlink():
+        latest.unlink()
+    temporary.symlink_to(relative_target, target_is_directory=True)
+    os.replace(temporary, latest)
+    return str(latest)
+
+
+def create_contact_sheet(video_path, output_path, duration_seconds):
+    """Write 12 evenly sampled preview frames into a compact PNG contact sheet."""
+    sample_rate = max(0.1, 12.0 / max(0.1, float(duration_seconds)))
+    command = [
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(video_path),
+        "-vf", f"fps={sample_rate:.6f},scale=180:320:flags=fast_bilinear,tile=4x3:nb_frames=12",
+        "-frames:v", "1", str(output_path),
+    ]
+    result = subprocess.run(command, check=False, capture_output=True, text=True)
+    if result.returncode != 0 or not Path(output_path).is_file():
+        raise RuntimeError(f"Could not create contact sheet: {result.stderr[-1000:]}")
+    return str(output_path)
+
+
+def run_doctor():
+    """Check core render dependencies plus optional OpenCV, Vulkan and free disk space."""
+    checks = {}
+    ffmpeg = shutil.which("ffmpeg")
+    ffprobe = shutil.which("ffprobe")
+    checks["ffmpeg"] = {"status": "ok" if ffmpeg else "fail", "path": ffmpeg}
+    checks["ffprobe"] = {"status": "ok" if ffprobe else "fail", "path": ffprobe}
+    svg_ok = False
+    svg_error = None
+    if ffmpeg and Path(SKULL_ASSET).is_file():
+        command = [
+            ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+            "-i", "color=c=black:s=32x56:r=1:d=1",
+            "-loop", "1", "-framerate", "1", "-i", SKULL_ASSET,
+            "-filter_complex", "[0:v][1:v]overlay=(W-w)/2:(H-h)/2",
+            "-frames:v", "1", "-f", "null", "-",
+        ]
+        result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=20)
+        svg_ok = result.returncode == 0
+        svg_error = None if svg_ok else result.stderr[-800:]
+    checks["svg_overlay"] = {"status": "ok" if svg_ok else "fail", "error": svg_error}
+    try:
+        import cv2
+        checks["opencv"] = {"status": "ok", "version": getattr(cv2, "__version__", "unknown")}
+    except Exception as exc:
+        checks["opencv"] = {"status": "warning", "detail": str(exc)}
+    settings_path = _settings_path()
+    ai_enabled = False
+    binary = "tools/realesrgan/realesrgan-ncnn-vulkan"
+    model_dir = "tools/realesrgan/models"
+    try:
+        settings = json.loads(Path(settings_path).read_text(encoding="utf-8"))
+        video_settings = settings.get("video_settings", {})
+        ai_enabled = video_settings.get("ai_upscale_enabled", False) is True
+        binary = video_settings.get("ai_upscale_binary", binary)
+        model_dir = video_settings.get("ai_upscale_model_dir", model_dir)
+    except (OSError, ValueError, AttributeError):
+        checks["settings"] = {"status": "warning", "detail": f"Could not inspect {settings_path}"}
+    binary_path = Path(binary)
+    if not binary_path.is_absolute():
+        binary_path = Path.cwd() / binary_path
+    models_path = Path(model_dir)
+    if not models_path.is_absolute():
+        models_path = Path.cwd() / models_path
+    upscale_ok = binary_path.is_file() and models_path.is_dir()
+    checks["vulkan_realesrgan"] = {
+        "status": "ok" if upscale_ok else ("fail" if ai_enabled else "warning"),
+        "enabled_in_settings": ai_enabled, "binary_exists": binary_path.is_file(),
+        "models_directory_exists": models_path.is_dir(),
+    }
+    free_bytes = shutil.disk_usage(".").free
+    checks["disk"] = {
+        "status": "ok" if free_bytes >= 1024 ** 3 else ("warning" if free_bytes >= 256 * 1024 ** 2 else "fail"),
+        "free_gib": round(free_bytes / (1024 ** 3), 2),
+    }
+    failed = any(checks[name]["status"] == "fail" for name in ("ffmpeg", "ffprobe", "svg_overlay", "disk"))
+    if ai_enabled and not upscale_ok:
+        failed = True
+    result = {"status": "fail" if failed else "ok", "checks": checks}
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 1 if failed else 0
+
+
 def main(argv=None):
     global VIDEO, MUSIC, REFERENCE, EDIT_DURATION, DURATION, FREEZE, SUBJECT_OBSERVATIONS, SOURCE_FPS
-    global OUTDIR, WORK, FINAL, VARIANT_INDEX
+    global OUTDIR, WORK, FINAL, VARIANT_INDEX, PREVIEW_MODE, RUN_DIR
     args = parse_media_source_args(argv)
+    if args.command == "doctor":
+        return run_doctor()
+    PREVIEW_MODE = bool(args.preview)
+    if PREVIEW_MODE:
+        args.variants = 1
     if args.clip_count_options is not None and args.clip_count is not None:
         raise SystemExit("Use either --clip-count or --clip-count-options, not both.")
     if args.clip_count_options is not None and args.variant_index is None and args.variants == 1:
         if len(args.clip_count_options) != 1:
             raise SystemExit("--variants 1 requires exactly one --clip-count-options value.")
         args.clip_count = args.clip_count_options[0]
-    if args.variant_index is None and args.variants > 1:
+    if args.variant_index is None:
+        removed_parts = cleanup_part_files()
+        RUN_DIR = Path("output") / "runs" / _new_run_id()
+        os.environ["HEYAA_RUN_DIR"] = str(RUN_DIR)
+        if removed_parts:
+            print(f"[cleanup] Removed {len(removed_parts)} leftover .part file(s).", flush=True)
+    else:
+        RUN_DIR = Path(os.environ.get("HEYAA_RUN_DIR", str(Path("output") / "runs" / _new_run_id())))
+        os.environ["HEYAA_RUN_DIR"] = str(RUN_DIR)
+    VARIANT_INDEX = args.variant_index
+    if VARIANT_INDEX is None and args.variants > 1:
+        OUTDIR = str(RUN_DIR)
+        WORK = str(RUN_DIR / "work")
+        FINAL = str(RUN_DIR / "final_phonk_20s.mp4")
         Path(OUTDIR).mkdir(parents=True, exist_ok=True)
         reset_progress_log()
         progress_event("run", "started", "Starting comparison render batch.")
         _run_variant_batch(args)
-        return
-    VARIANT_INDEX = args.variant_index
+        sheet_source = next(iter(sorted((RUN_DIR / "variants").glob("variant_*/final_phonk.mp4"))), None)
+        if sheet_source and sheet_source.is_file():
+            try:
+                create_contact_sheet(sheet_source, RUN_DIR / "contact_sheet.png", DURATION or 20)
+            except Exception as exc:
+                print(f"[warn] Contact sheet skipped: {exc}", flush=True)
+        publish_latest_run(RUN_DIR)
+        return 0
     if VARIANT_INDEX is not None:
-        OUTDIR = str(Path("output") / "variants" / f"variant_{VARIANT_INDEX:02d}")
+        OUTDIR = str(RUN_DIR / "variants" / f"variant_{VARIANT_INDEX:02d}")
         WORK = str(Path(OUTDIR) / "work")
         FINAL = str(Path(OUTDIR) / "final_phonk.mp4")
+    else:
+        OUTDIR = str(RUN_DIR)
+        WORK = str(RUN_DIR / "work")
+        FINAL = str(RUN_DIR / ("preview.mp4" if PREVIEW_MODE else "final_phonk_20s.mp4"))
     reset_progress_log()
     progress_event("run", "started", "Heyaa render pipeline started.",
                    {"variant_index": VARIANT_INDEX, "variants_requested": args.variants,
@@ -2270,6 +2428,7 @@ def main(argv=None):
     context["subject_tracking"] = {
         key: value for key, value in subject_analysis.items() if key != "observations"
     }
+    context["preview_mode"] = PREVIEW_MODE
     context["dynamic_crop"] = {
         "configured_method": "piecewise_linear_low_pass" if LAYOUT_MODE == "fill" else "blur_fit_full_frame",
         "enabled_when_near_track_observations": bool(subject_analysis.get("detected") and LAYOUT_MODE == "fill"),
@@ -2626,6 +2785,7 @@ def main(argv=None):
         "source_height": int(source_video.get("height", 0)),
         "scene_cut_count": len(scenes),
         "music_duration_seconds": music_duration,
+        "preview_mode": PREVIEW_MODE,
         "music_shorter_than_edit": music_duration < DURATION,
         "music_loop_enabled": MUSIC_LOOP,
         "music_loop_crossfade_seconds": loop_graph["crossfade_seconds"],
@@ -2714,7 +2874,7 @@ def main(argv=None):
         niche_metrics["drop_impact"] = round(float(DROP_BEAT_STRENGTH), 4)
     niche_metrics["metric_methods"] = {
         "beat_alignment": "EDL cut distance from bass-onset candidates within 120ms",
-        "visual_clarity": "source pixel support ratio versus 1080x1920 output (not a sharpness/subject-visibility model)",
+        "visual_clarity": f"source pixel support ratio versus {WIDTH}x{HEIGHT} output (not a sharpness/subject-visibility model)",
         "hook_strength": "opening scene-change cadence proxy only; no semantic hook understanding",
         "motion_energy": "scene cuts per two seconds inside selected temporal context window",
         "drop_impact": "relative strongest bass-onset novelty proxy; not a true musical drop classifier",
@@ -2842,6 +3002,29 @@ def main(argv=None):
     }
     with open(report_path, "w", encoding="utf-8") as handle:
         json.dump(agent_report, handle, ensure_ascii=False, indent=2)
+    if VARIANT_INDEX is None:
+        artifacts = agent_report.setdefault("artifacts", {})
+        artifacts["run_directory"] = OUTDIR
+        artifacts["preview_mode"] = PREVIEW_MODE
+        try:
+            sheet_path = create_contact_sheet(FINAL, Path(OUTDIR) / "contact_sheet.png", DURATION)
+            artifacts["contact_sheet"] = sheet_path
+        except Exception as exc:
+            artifacts["contact_sheet"] = None
+            artifacts["contact_sheet_warning"] = str(exc)
+            print(f"[warn] Contact sheet skipped: {exc}", flush=True)
+        with open(report_path, "w", encoding="utf-8") as handle:
+            json.dump(agent_report, handle, ensure_ascii=False, indent=2)
+        publish_latest_run(OUTDIR)
+        if not PREVIEW_MODE:
+            compatibility = Path("output") / "final_phonk_20s.mp4"
+            compatibility.parent.mkdir(parents=True, exist_ok=True)
+            temporary_copy = compatibility.with_name(compatibility.name + ".part")
+            shutil.copy2(FINAL, temporary_copy)
+            os.replace(temporary_copy, compatibility)
+            artifacts["compatibility_copy"] = str(compatibility)
+            with open(report_path, "w", encoding="utf-8") as handle:
+                json.dump(agent_report, handle, ensure_ascii=False, indent=2)
     print(f"[agents] Status: {agent_report['status']} | report: {report_path}")
     print(f"[agents] Niche result: {agent_report['results']['niche_analyst']['status']} (no unsupported virality score)")
     print("[NOTE] Reference mode learns rough cut pacing; it does not copy copyrighted frames/effects.")
@@ -2853,7 +3036,7 @@ def main(argv=None):
 
 if __name__ == "__main__":
     try:
-        main()
+        raise SystemExit(main() or 0)
     except (subprocess.CalledProcessError, OSError, ValueError, KeyError, RuntimeError) as exc:
         progress_event("fatal_error", "error", str(exc))
         print(f"[ERROR] {exc}")

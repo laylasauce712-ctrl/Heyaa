@@ -90,8 +90,8 @@ import json
 import subprocess
 from pathlib import Path
 
-path = Path("output/final_phonk_20s.mp4")
-report = json.loads(Path("output/agent_report.json").read_text(encoding="utf-8"))
+path = Path("output/latest/final_phonk_20s.mp4")
+report = json.loads(Path("output/latest/agent_report.json").read_text(encoding="utf-8"))
 assert report["status"] == "ready_for_human_review", report
 assert report["results"]["settings_agent"]["status"] == "ok", report
 assert report["results"]["planner"]["status"] == "ok", report
@@ -109,6 +109,8 @@ assert report["render_critique"]["true_peak_dbfs"] <= -0.5, report["render_criti
 assert report["results"]["niche_analyst"]["status"] == "insufficient_evidence", report
 assert report["results"]["export_storage"]["status"] == "ok", report
 assert path.exists() and path.stat().st_size > 0
+assert Path("output/latest/contact_sheet.png").is_file(), "Contact sheet was not generated"
+assert Path("output/latest").resolve().parent.name == "runs", Path("output/latest").resolve()
 probe = json.loads(subprocess.check_output([
     "ffprobe", "-v", "error", "-count_frames", "-show_streams", "-show_format", "-of", "json", str(path)
 ], text=True))
@@ -119,7 +121,7 @@ assert int(video["nb_read_frames"]) == 192, video
 assert video["avg_frame_rate"] in ("24/1", "24/1"), video
 assert abs(float(probe["format"]["duration"]) - 8.0) <= (1 / 24 + 0.005)
 assert audio["codec_type"] == "audio"
-edl = json.loads(Path("output/edit_decision_list.json").read_text(encoding="utf-8"))
+edl = json.loads(Path("output/latest/edit_decision_list.json").read_text(encoding="utf-8"))
 assert edl["version"] == 1
 cursor = 0
 for item in edl["video"]:

@@ -58,8 +58,10 @@ def settings_agent(config: dict[str, Any]) -> AgentResult:
         layout_mode = ("fill" if legacy_smart_crop else "blur_fit") if isinstance(legacy_smart_crop, bool) else "fill"
     if config.get("style") != "phonk_montagem":
         findings.append("Only style='phonk_montagem' is implemented.")
-    if str(video.get("resolution", "")).lower() != "1080x1920":
-        findings.append("This renderer's required output is 1080x1920 (9:16).")
+    preview_mode = config.get("_preview_mode") is True
+    required_resolution = "540x960" if preview_mode else "1080x1920"
+    if str(video.get("resolution", "")).lower() != required_resolution:
+        findings.append(f"This renderer requires {required_resolution} output for the selected mode.")
     ai_upscale_enabled = video.get("ai_upscale_enabled", False)
     if not isinstance(ai_upscale_enabled, bool):
         findings.append("video_settings.ai_upscale_enabled must be an explicit boolean.")
@@ -535,8 +537,8 @@ def inspector(report: dict[str, Any]) -> AgentResult:
     failures: list[str] = []
     if missing:
         failures.append("Missing render QA fields: " + ", ".join(missing))
-    if report.get("width") != 1080 or report.get("height") != 1920:
-        failures.append("Output must be 1080x1920 (9:16).")
+    if (report.get("width"), report.get("height")) not in ((1080, 1920), (540, 960)):
+        failures.append("Output must be 1080x1920, or 540x960 for a preview.")
     fps = report.get("fps")
     expected_fps = report.get("expected_fps")
     if not _finite_number(fps) or float(fps) <= 0:

@@ -36,6 +36,8 @@ The renderer can compare exact motion-clip counts while retaining the same selec
 
 ```bash
 python3 src/agent_director.py --variants 3 --clip-count-options 8,12,16
+
+Each invocation stores artifacts in `output/runs/<timestamp>/`; `output/latest` points to the latest completed run. A `contact_sheet.png` is generated after successful rendering. Use `python3 src/agent_director.py --preview` for a one-pass 540x960, 30fps preview with AI upscaling disabled, and `python3 src/agent_director.py doctor` to check FFmpeg/FFprobe, SVG overlay support, OpenCV, Real-ESRGAN/Vulkan paths, and free disk. The legacy `output/final_phonk_20s.mp4` remains as a compatibility copy for full renders.
 ```
 
 The CLI validates every requested count against `params.json` before downloading source media. The resulting videos and their chosen counts are listed in `output/variants/index.json`; inspect `variant_01/final_phonk.mp4`, `variant_02/final_phonk.mp4` and `variant_03/final_phonk.mp4` to choose the pacing you prefer. To render one exact count only, use `--variants 1 --clip-count 12` (the value must remain within `min_clips` and `max_clips`). If the measured reference median is 0.55s, the 20-second profile with a 2-second final freeze selects 24 motion clips at the default 0.75s minimum-shot setting; this is a planning estimate, not proof of real-footage visual quality. Set `edit_settings.min_shot_seconds` lower (down to 0.3s) for faster cuts, provided the configured duration and minimum clip count can satisfy that constraint.
