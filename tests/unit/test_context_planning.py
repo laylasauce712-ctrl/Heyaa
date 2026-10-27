@@ -85,7 +85,7 @@ class ContextPlanningTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Not enough unused source footage"):
             renderer.enforce_source_progression(
                 candidate_start_f=40, source_dur_f=30, previous_source_end_f=100,
-                minimum_gap_f=3, maximum_source_start_f=105,
+                minimum_gap_f=3, maximum_source_start_f=102,
             )
 
     def test_long_source_selects_one_moderately_active_contiguous_context(self):

@@ -807,10 +807,11 @@ def enforce_source_progression(candidate_start_f, source_dur_f, previous_source_
         ("candidate_start_f", candidate_start_f, 0),
         ("source_dur_f", source_dur_f, 1),
         ("minimum_gap_f", minimum_gap_f, 0),
-        ("maximum_source_start_f", maximum_source_start_f, 0),
     ):
         if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
             raise ValueError(f"{name} must be an integer >= {minimum}.")
+    if isinstance(maximum_source_start_f, bool) or not isinstance(maximum_source_start_f, int):
+        raise ValueError("maximum_source_start_f must be an integer.")
     if previous_source_end_f is not None and (
         isinstance(previous_source_end_f, bool) or not isinstance(previous_source_end_f, int) or previous_source_end_f < 0
     ):
