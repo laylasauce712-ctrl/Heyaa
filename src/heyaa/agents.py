@@ -6,6 +6,7 @@ reported as missing; it is never invented to create a score.
 """
 from dataclasses import asdict, dataclass
 import math
+import os
 from typing import Any, Callable
 
 try:
@@ -424,6 +425,81 @@ def inspector(report: dict[str, Any]) -> AgentResult:
                         "fps": fps, "frame_count": frame_count, "expected_frame_count": expected_count})
 
 
+def director_agent(results: dict[str, AgentResult]) -> AgentResult:
+    """Make the explicit orchestration decision from the actual stage results."""
+    blocking_agents = ("settings_agent", "planner", "inspector")
+    blockers = []
+    for name in blocking_agents:
+        result = results.get(name)
+        if result is None or result.status != "ok":
+            blockers.append({
+                "agent": name,
+                "status": result.status if result else "missing",
+                "findings": list(result.findings) if result else ["Agent did not return a result."],
+            })
+    framing = results.get("framing_agent")
+    if framing is None or framing.status in ("blocked", "needs_fix"):
+        blockers.append({
+            "agent": "framing_agent",
+            "status": framing.status if framing else "missing",
+            "findings": list(framing.findings) if framing else ["Agent did not return a result."],
+        })
+    if blockers:
+        return AgentResult(
+            "director", "blocked", None, 1.0,
+            ("Director blocked export because one or more required gates did not pass.",),
+            ("Resolve the listed blockers and re-render; do not promote this temporary file.",),
+            {"decision": "block_export", "blockers": blockers, "human_review_required": True},
+        )
+    nonblocking = {
+        name: {"status": result.status, "findings": list(result.findings)}
+        for name, result in results.items()
+        if name in ("media_analyst", "beat_sync_agent", "reference_analyst", "hook_analyst", "niche_analyst")
+        and result.status not in ("ok",)
+    }
+    recommendations = ["Human visual review is required before considering the edit finished or publishing."]
+    if nonblocking:
+        recommendations.append("Review the evidence gaps listed in nonblocking_stage_gaps; do not infer semantic quality from absent metrics.")
+    return AgentResult(
+        "director", "ready_for_human_review", None, 1.0,
+        ("Required technical gates passed; the render may be promoted for human review.",),
+        tuple(recommendations),
+        {"decision": "allow_technical_export", "blockers": [], "human_review_required": True,
+         "nonblocking_stage_gaps": nonblocking},
+    )
+
+
+def export_storage_agent(temporary_path: str, final_path: str,
+                         technical_qa_passed: bool) -> AgentResult:
+    """Atomically promote a temporary render only after the Director's QA decision."""
+    if technical_qa_passed is not True:
+        return AgentResult("export_storage", "blocked", None, 1.0,
+                           ("The Director did not authorize technical export promotion.",),
+                           ("Keep the previous final video; correct the blocking checks first.",),
+                           {"promoted": False, "final_path": final_path})
+    if not os.path.isfile(temporary_path) or os.path.getsize(temporary_path) <= 0:
+        return AgentResult("export_storage", "blocked", None, 1.0,
+                           ("Temporary render is missing or empty.",),
+                           ("Render and verify a non-empty temporary output before promotion.",),
+                           {"promoted": False, "temporary_path": temporary_path,
+                            "final_path": final_path})
+    try:
+        os.makedirs(os.path.dirname(final_path) or ".", exist_ok=True)
+        os.replace(temporary_path, final_path)
+    except OSError as exc:
+        return AgentResult("export_storage", "blocked", None, 1.0,
+                           (f"Atomic export promotion failed: {exc}",),
+                           ("Keep the previous final output and resolve the storage error.",),
+                           {"promoted": False, "temporary_path": temporary_path,
+                            "final_path": final_path, "error": str(exc)})
+    return AgentResult("export_storage", "ok", None, 1.0,
+                       ("Director authorized technical QA and the temporary render was atomically promoted.",),
+                       ("Review the actual video before publishing.",),
+                       {"promoted": True, "temporary_path": temporary_path,
+                        "final_path": final_path, "atomic_replace": True,
+                        "human_review_required": True})
+
+
 def run_agent_team(context: dict[str, Any],
                    emit: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
     """Run each deterministic agent against the same real render context."""
@@ -461,19 +537,23 @@ def run_agent_team(context: dict[str, Any],
     record(niche, "craft_review")
     qa = inspector(context.get("render_report", {}))
     record(qa, "render_qa")
-    blocked = (setting_result.status != "ok" or plan.status != "ok" or
-               framing.status in ("blocked", "needs_fix") or qa.status != "ok")
-    status = "blocked" if blocked else "ready_for_human_review"
+    director = director_agent({
+        "settings_agent": setting_result, "media_analyst": media, "beat_sync_agent": beat,
+        "reference_analyst": reference, "framing_agent": framing, "hook_analyst": hook,
+        "planner": plan, "niche_analyst": niche, "inspector": qa,
+    })
+    record(director, "orchestration_decision")
+    status = "blocked" if director.status == "blocked" else "ready_for_human_review"
     return {
         "status": status,
         "viral_guarantee": False,
         "human_review_required": True,
-        "summary": ("Technical QA blocked export; inspect failures." if blocked else
-                    "Technical render QA passed; visual/human review is still required."),
+        "summary": director.findings[0],
         "results": {"settings_agent": asdict(setting_result), "media_analyst": asdict(media),
                     "beat_sync_agent": asdict(beat), "reference_analyst": asdict(reference),
                     "framing_agent": asdict(framing), "hook_analyst": asdict(hook),
-                    "planner": asdict(plan), "niche_analyst": asdict(niche), "inspector": asdict(qa)},
+                    "planner": asdict(plan), "niche_analyst": asdict(niche), "inspector": asdict(qa),
+                    "director": asdict(director)},
         "render_report": dict(context.get("render_report", {})),
         "media_analysis": dict(context.get("media_analysis", {})),
         "beat_analysis": dict(context.get("beat_analysis", {})),

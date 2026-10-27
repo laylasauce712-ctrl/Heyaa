@@ -34,8 +34,9 @@ params.json
    -> Planner validates EDL against settings
    -> FFmpeg renders to temporary path
    -> Inspector validates decoded output
+   -> Director combines the gates and records allow/block + reasons
    -> if blocked: preserve existing final and save failure report
-   -> if accepted: atomically promote output/final_phonk_20s.mp4
+   -> if accepted: Export Storage atomically promotes output/final_phonk_20s.mp4
    -> Niche Analyst reports measured metrics and missing evidence
    -> human visual review (required)
 ```

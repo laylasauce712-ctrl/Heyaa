@@ -26,6 +26,7 @@ report = json.loads(Path("output/agent_report.json").read_text(encoding="utf-8")
 assert report["status"] == "ready_for_human_review", report
 assert report["results"]["settings_agent"]["status"] == "ok", report
 assert report["results"]["planner"]["status"] == "ok", report
+assert report["results"]["director"]["status"] == "ready_for_human_review", report
 assert report["results"]["framing_agent"]["status"] == "ok", report
 assert report["results"]["hook_analyst"]["status"] == "insufficient_evidence", report
 assert report["results"]["inspector"]["status"] == "ok", report
@@ -51,6 +52,6 @@ for item in edl["video"]:
 assert cursor == edl["total_frames"] == 192, (cursor, edl["total_frames"])
 assert edl["video"][-1]["type"] == "freeze"
 assert edl["fps_num"] == 24
-assert len(report["events"]) == 10
-print("Render smoke test passed: exact frame count, continuous EDL, audio, full decode, QA and export event.")
+assert len(report["events"]) == 11
+print("Render smoke test passed: exact frame count, continuous EDL, audio, full decode, Director decision and atomic export.")
 PY

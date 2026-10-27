@@ -14,9 +14,9 @@ except ModuleNotFoundError:
     from heyaa.edl.validate import validate_edl
 
 try:
-    from src.heyaa.agents import run_agent_team
+    from src.heyaa.agents import run_agent_team, export_storage_agent
 except ModuleNotFoundError:
-    from heyaa.agents import run_agent_team
+    from heyaa.agents import run_agent_team, export_storage_agent
 
 VIDEO = "input/test_video.mp4"
 MUSIC = "input/phonk.mp3"
@@ -665,24 +665,35 @@ def main():
         with open(report_path, "w", encoding="utf-8") as handle:
             json.dump(agent_report, handle, ensure_ascii=False, indent=2)
         raise RuntimeError("Technical QA blocked export; previous final file was preserved. See output/agent_report.json.")
-    # Promote only after every blocking technical check passes; preserve the last known-good export otherwise.
-    os.replace(final_video, FINAL)
-    render_report["file"] = FINAL
-    agent_report["render_report"]["file"] = FINAL
+    # Export Storage performs the actual atomic promotion after the Director decision.
+    export_result_obj = export_storage_agent(
+        final_video, FINAL,
+        technical_qa_passed=(agent_report["results"]["director"]["status"] == "ready_for_human_review"),
+    )
     export_result = {
-        "agent": "export_storage", "status": "ok", "score": None, "confidence": 1.0,
-        "findings": ["Technical QA passed and the temporary render was atomically promoted."],
-        "recommendations": ["Review the actual video before publishing."],
-        "evidence": {"file": FINAL, "atomic_replace": True, "human_review_required": True},
+        "agent": export_result_obj.agent, "status": export_result_obj.status,
+        "score": export_result_obj.score, "confidence": export_result_obj.confidence,
+        "findings": list(export_result_obj.findings),
+        "recommendations": list(export_result_obj.recommendations),
+        "evidence": export_result_obj.evidence,
     }
     agent_report["results"]["export_storage"] = export_result
     export_event = {
-        "agent": "export_storage", "stage": "export_promotion", "status": "ok",
+        "agent": "export_storage", "stage": "export_promotion", "status": export_result["status"],
         "summary": export_result["findings"][0],
-        "data": {"score": None, "confidence": 1.0, "findings": export_result["findings"],
+        "data": {"score": export_result["score"], "confidence": export_result["confidence"],
+                 "findings": export_result["findings"],
                  "recommendations": export_result["recommendations"], "evidence": export_result["evidence"]},
     }
     agent_report["events"].append(export_event)
+    if export_result_obj.status != "ok":
+        agent_report["status"] = "blocked"
+        agent_report["summary"] = "Export Storage blocked promotion; the existing final video was preserved."
+        with open(report_path, "w", encoding="utf-8") as handle:
+            json.dump(agent_report, handle, ensure_ascii=False, indent=2)
+        raise RuntimeError("Export Storage could not promote the verified render; see output/agent_report.json.")
+    render_report["file"] = FINAL
+    agent_report["render_report"]["file"] = FINAL
     with open(report_path, "w", encoding="utf-8") as handle:
         json.dump(agent_report, handle, ensure_ascii=False, indent=2)
     print(f"[OK] Final video: {FINAL}")

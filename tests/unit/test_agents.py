@@ -1,8 +1,11 @@
 import unittest
+import tempfile
+from pathlib import Path
 
 from src.heyaa.agents import (
-    beat_sync_agent, framing_agent, hook_analyst, inspector, media_analyst,
-    niche_analyst, planner, reference_analyst, run_agent_team, settings_agent,
+    beat_sync_agent, director_agent, export_storage_agent, framing_agent, hook_analyst,
+    inspector, media_analyst, niche_analyst, planner, reference_analyst,
+    run_agent_team, settings_agent,
 )
 
 
@@ -135,6 +138,37 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(hook_analyst(None).status, "insufficient_evidence")
         self.assertEqual(inspector(None).status, "reject")
 
+    def test_director_makes_explicit_export_decision(self):
+        result = run_agent_team({
+            "settings": config(), "edl": sample_edl(),
+            "media_analysis": {"source_duration_seconds": 10.0, "source_width": 640, "source_height": 360,
+                               "scene_cut_count": 5, "music_duration_seconds": 9.0},
+            "beat_analysis": {"enabled": False, "candidate_count": 0},
+            "render_report": render_report(),
+        })
+        director = result["results"]["director"]
+        self.assertEqual(director["status"], "ready_for_human_review")
+        self.assertEqual(director["evidence"]["decision"], "allow_technical_export")
+        self.assertTrue(result["human_review_required"])
+        blocked = director_agent({"settings_agent": settings_agent(None)})
+        self.assertEqual(blocked.status, "blocked")
+        self.assertEqual(blocked.evidence["decision"], "block_export")
+
+    def test_export_storage_preserves_previous_final_when_blocked(self):
+        with tempfile.TemporaryDirectory() as folder:
+            final = Path(folder) / "final.mp4"
+            temp = Path(folder) / "temporary.mp4"
+            final.write_bytes(b"known-good")
+            temp.write_bytes(b"new-render")
+            blocked = export_storage_agent(str(temp), str(final), False)
+            self.assertEqual(blocked.status, "blocked")
+            self.assertEqual(final.read_bytes(), b"known-good")
+            self.assertTrue(temp.exists())
+            allowed = export_storage_agent(str(temp), str(final), True)
+            self.assertEqual(allowed.status, "ok")
+            self.assertEqual(final.read_bytes(), b"new-render")
+            self.assertFalse(temp.exists())
+
     def test_team_emits_all_actual_structured_stages_and_blocks_missing_qa(self):
         emitted = []
         result = run_agent_team({
@@ -146,11 +180,12 @@ class AgentTests(unittest.TestCase):
             "render_report": render_report(),
         }, emit=emitted.append)
         self.assertEqual(result["status"], "ready_for_human_review")
-        self.assertEqual(len(emitted), 9)
+        self.assertEqual(len(emitted), 10)
         self.assertEqual(emitted, result["events"])
         self.assertFalse(result["viral_guarantee"])
         self.assertEqual(result["results"]["niche_analyst"]["status"], "insufficient_evidence")
         self.assertIn("planner", result["results"])
+        self.assertIn("director", result["results"])
         self.assertEqual(result["results"]["hook_analyst"]["status"], "insufficient_evidence")
         self.assertEqual(result["results"]["reference_analyst"]["status"], "skipped")
         self.assertEqual(result["results"]["framing_agent"]["status"], "ok")
