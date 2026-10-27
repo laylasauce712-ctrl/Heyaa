@@ -163,6 +163,19 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(risky.status, "needs_review")
         self.assertGreaterEqual(len(risky.evidence["warnings"]), 2)
 
+    def test_director_blocks_when_render_critic_is_missing_or_malformed(self):
+        from src.heyaa.agents import AgentResult
+        ok = settings_agent(config())
+        required = {
+            "settings_agent": ok, "planner": AgentResult("planner", "ok", None, 1.0, (), (), {}),
+            "inspector": AgentResult("inspector", "ok", None, 1.0, (), (), {}),
+            "framing_agent": AgentResult("framing_agent", "ok", None, 1.0, (), (), {}),
+        }
+        missing = director_agent(required)
+        self.assertEqual(missing.status, "blocked")
+        malformed = director_agent({**required, "render_critic": AgentResult("render_critic", "blocked", None, 0.0, ("bad metrics",), (), {})})
+        self.assertEqual(malformed.status, "blocked")
+
     def test_director_blocks_when_render_critic_rejects_audio(self):
         cfg = config()
         ok = settings_agent(cfg)
