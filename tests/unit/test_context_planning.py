@@ -88,6 +88,24 @@ class ContextPlanningTests(unittest.TestCase):
         self.assertGreaterEqual(min(lengths), 0.75)
         self.assertLessEqual(max(lengths), 3.3)
 
+    def test_music_loop_graph_crossfades_short_soundtrack_and_trims_to_edit(self):
+        result = renderer.build_music_loop_graph(
+            music_duration=2.5, target_duration=8.0, loop_enabled=True,
+            crossfade_seconds=0.1,
+        )
+        self.assertGreaterEqual(result["loop_count"], 4)
+        self.assertEqual(result["output_label"], "looped_music")
+        self.assertIn("acrossfade=d=0.100000:c1=tri:c2=tri", result["graph"])
+        self.assertIn("atrim=duration=8.000000", result["graph"])
+
+    def test_music_loop_graph_does_not_loop_when_not_needed_or_disabled(self):
+        long_music = renderer.build_music_loop_graph(12.0, 8.0, loop_enabled=True)
+        disabled = renderer.build_music_loop_graph(2.5, 8.0, loop_enabled=False)
+        self.assertEqual(long_music["graph"], "")
+        self.assertEqual(long_music["loop_count"], 1)
+        self.assertEqual(disabled["output_label"], "1:a:0")
+        self.assertEqual(disabled["loop_count"], 1)
+
     def test_dynamic_crop_path_is_bounded_smoothed_and_piecewise_linear(self):
         observations = []
         for index, center_x in enumerate([0.1, 0.9, 0.1, 0.9, 0.1, 0.9]):

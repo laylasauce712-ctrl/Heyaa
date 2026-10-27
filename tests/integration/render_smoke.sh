@@ -21,7 +21,7 @@ cat > params.json <<'JSON'
 JSON
 ffmpeg -hide_banner -loglevel error -y -f lavfi -i "testsrc2=size=640x360:rate=24:duration=10" -an -c:v libx264 -pix_fmt yuv420p input/test_video.mp4
 # Deliberately hot input: the final output limiter must keep the export below clipping.
-ffmpeg -hide_banner -loglevel error -y -f lavfi -i "sine=frequency=70:sample_rate=44100:duration=9" -af "volume=20dB" -c:a libmp3lame input/phonk.mp3
+ffmpeg -hide_banner -loglevel error -y -f lavfi -i "sine=frequency=70:sample_rate=44100:duration=2.5" -af "volume=20dB" -c:a libmp3lame input/phonk.mp3
 # Exercise reference-audio extraction independently from the renderer's local-music path.
 ffmpeg -hide_banner -loglevel error -y \
   -f lavfi -i "testsrc2=size=640x360:rate=24:duration=4" \

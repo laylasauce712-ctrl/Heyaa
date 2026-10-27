@@ -40,6 +40,10 @@ python3 src/agent_director.py --variants 3 --clip-count-options 8,12,16
 
 The CLI validates every requested count against `params.json` before downloading source media. The resulting videos and their chosen counts are listed in `output/variants/index.json`; inspect `variant_01/final_phonk.mp4`, `variant_02/final_phonk.mp4` and `variant_03/final_phonk.mp4` to choose the pacing you prefer. To render one exact count only, use `--variants 1 --clip-count 12` (the value must remain within `min_clips` and `max_clips`). If the measured reference median is 0.55s, the 20-second profile with a 2-second final freeze selects 24 motion clips at the default 0.75s minimum-shot setting; this is a planning estimate, not proof of real-footage visual quality. Set `edit_settings.min_shot_seconds` lower (down to 0.3s) for faster cuts, provided the configured duration and minimum clip count can satisfy that constraint.
 
+## Audio headroom and soundtrack looping
+
+The final AAC stream is measured after encoding. The output limiter is set to a conservative 0.65 linear ceiling (subject to encoded true-peak remeasurement), and short soundtracks are repeated with a 100ms triangular crossfade when looping is enabled. The run report records whether music was shorter than the full edit, how many cycles were joined and the overlap duration. If looping is disabled, a shorter soundtrack triggers a warning because the remainder is padded to the edit duration.
+
 ## Ending freeze effect
 
 The ending skull is original in-repository SVG vector artwork with transparent background; it was authored for Heyaa and no external image asset or attribution dependency is used. The renderer animates its scale during the initial pop-in. Tune `edit_settings.skull_size_px` (160–960), normalized `skull_position_x` / `skull_position_y` (0–1), `skull_pop_seconds` (0.08–0.6s), or disable the procedural low-frequency impact using `impact_sfx_enabled: false`. The SFX is generated from FFmpeg's `aevalsrc`; no external sound file is downloaded. CI checks that a synthetic overlay changes center-region pixels, not that the effect looks good on real footage.

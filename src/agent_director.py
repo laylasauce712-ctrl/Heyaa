@@ -1426,6 +1426,56 @@ def build_dynamic_crop_path(observations, source_start_seconds, source_duration_
     }
 
 
+def build_music_loop_graph(music_duration, target_duration, loop_enabled=True,
+                           crossfade_seconds=0.10, start_offset_seconds=0.0):
+    """Return an FFmpeg filter graph that joins repeated music copies with short crossfades."""
+    values = (music_duration, target_duration, crossfade_seconds, start_offset_seconds)
+    if any(isinstance(value, bool) or not isinstance(value, (int, float))
+           or not math.isfinite(float(value)) for value in values):
+        raise ValueError("Music-loop timing values must be finite numbers.")
+    duration = float(music_duration) - float(start_offset_seconds)
+    target = float(target_duration)
+    fade = float(crossfade_seconds)
+    if duration <= 0 or target <= 0 or fade < 0:
+        raise ValueError("Music duration/target must be positive and crossfade non-negative.")
+    if not loop_enabled or duration >= target or fade == 0:
+        return {
+            "graph": "", "output_label": "1:a:0", "loop_count": 1,
+            "source_duration_seconds": duration, "crossfade_seconds": 0.0,
+        }
+    # Short clips need a proportionally shorter overlap, otherwise acrossfade
+    # could consume almost the entire cycle.
+    fade = min(fade, duration / 3.0)
+    if fade <= 0.005:
+        return {
+            "graph": "", "output_label": "1:a:0", "loop_count": 1,
+            "source_duration_seconds": duration, "crossfade_seconds": 0.0,
+        }
+    cycle_step = duration - fade
+    loop_count = max(2, math.ceil((target - fade) / cycle_step))
+    labels = [f"hey_music_src_{index}" for index in range(loop_count)]
+    parts = [f"[1:a:0]asplit={loop_count}" + "".join(f"[{label}]" for label in labels)]
+    for index, label in enumerate(labels):
+        parts.append(
+            f"[{label}]atrim=duration={duration:.6f},asetpts=PTS-STARTPTS[hey_music_{index}]"
+        )
+    current = "hey_music_0"
+    for index in range(1, loop_count):
+        output = f"hey_music_join_{index}"
+        parts.append(
+            f"[{current}][hey_music_{index}]acrossfade=d={fade:.6f}:c1=tri:c2=tri[{output}]"
+        )
+        current = output
+    parts.append(f"[{current}]atrim=duration={target:.6f},asetpts=PTS-STARTPTS[looped_music]")
+    return {
+        "graph": ";".join(parts),
+        "output_label": "looped_music",
+        "loop_count": loop_count,
+        "source_duration_seconds": round(duration, 6),
+        "crossfade_seconds": round(fade, 6),
+    }
+
+
 def make_clip(index, item, source_duration):
     """Render exactly the source range and output frame count declared by one EDL clip."""
     start = item["source_start_f"] / FPS
@@ -2061,6 +2111,17 @@ def main(argv=None):
         raise SystemExit("[ERROR] Source video is too short to edit.")
     print(f"[source] Video {source_duration:.2f}s | Music {music_duration:.2f}s")
     print(f"[target] {WIDTH}x{HEIGHT}, {FPS} FPS, {DURATION:.1f}s, Phonk/Montagem")
+    if music_duration < DURATION:
+        if MUSIC_LOOP:
+            message = (f"Soundtrack ({music_duration:.2f}s) is shorter than the edit "
+                       f"({DURATION:.2f}s); seamlessness is improved with {0.10:.2f}s crossfades.")
+        else:
+            message = (f"Soundtrack ({music_duration:.2f}s) is shorter than the edit "
+                       f"({DURATION:.2f}s); remaining timeline will be padded with silence.")
+        print("[warn] " + message, flush=True)
+        progress_event("music_length", "needs_review", message,
+                       {"music_duration_seconds": music_duration, "edit_duration_seconds": DURATION,
+                        "loop_enabled": MUSIC_LOOP, "crossfade_seconds": 0.10 if MUSIC_LOOP else None})
 
     progress_event("media_analysis", "running", "Detecting source scene changes.")
     scenes = detect_scenes(VIDEO, source_duration)
@@ -2440,21 +2501,30 @@ def main(argv=None):
         fade_start = max(0.0, DURATION - fade_out_seconds)
         audio_filters.append(f"afade=t=out:st={fade_start:.6f}:d={fade_out_seconds:.6f}")
     audio_filter = ",".join(audio_filters)
-    audio_graph = f"[1:a:0]{audio_filter},alimiter=limit=0.85:level=0[aout]"
-    # Original procedural lavfi impact: no external sound file or third-party audio asset.
+    loop_graph = build_music_loop_graph(
+        music_duration, DURATION, MUSIC_LOOP,
+        crossfade_seconds=0.10, start_offset_seconds=audio_start_seconds,
+    )
+    audio_parts = []
+    if loop_graph["graph"]:
+        audio_parts.append(loop_graph["graph"])
+    # Keep source music processing and the generated impact isolated until mixing.
+    audio_parts.append(f"[{loop_graph['output_label']}]{audio_filter}[musicout]")
+    # A procedural sub-bass frequency sweep plays at the start of the final freeze.
     if ENDING_IMPACT_SFX_ENABLED:
         impact_delay_ms = round(EDIT_DURATION * 1000)
-        audio_graph = (
-            f"[1:a:0]{audio_filter}[musicout];"
+        audio_parts.append(
             f"[3:a]adelay={impact_delay_ms}:all=1,apad=whole_dur={DURATION:.6f},"
-            f"atrim=duration={DURATION:.6f},volume=0.55[impact_sfx];"
-            "[musicout][impact_sfx]amix=inputs=2:duration=first:dropout_transition=0,"
-            "alimiter=limit=0.85:level=0[aout]"
+            f"atrim=duration={DURATION:.6f},volume=0.55[impact_sfx]"
         )
-    filter_graph += ";" + audio_graph
+        audio_parts.append(
+            "[musicout][impact_sfx]amix=inputs=2:duration=first:dropout_transition=0,"
+            "alimiter=limit=0.65:level=0[aout]"
+        )
+    else:
+        audio_parts.append("[musicout]alimiter=limit=0.65:level=0[aout]")
+    filter_graph += ";" + ";".join(audio_parts)
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", joined]
-    if MUSIC_LOOP:
-        cmd += ["-stream_loop", "-1"]
     if audio_start_seconds > 0:
         cmd += ["-ss", f"{audio_start_seconds:.6f}"]
     cmd += ["-i", audio_source, "-loop", "1", "-framerate", str(FPS), "-i", SKULL_ASSET,
@@ -2484,6 +2554,10 @@ def main(argv=None):
         "source_height": int(source_video.get("height", 0)),
         "scene_cut_count": len(scenes),
         "music_duration_seconds": music_duration,
+        "music_shorter_than_edit": music_duration < DURATION,
+        "music_loop_enabled": MUSIC_LOOP,
+        "music_loop_crossfade_seconds": loop_graph["crossfade_seconds"],
+        "music_loop_count": loop_graph["loop_count"],
         "context_window": context,
         "source_selection": source_selection_report,
         "context_caveat": "Temporal scene-cut-density proxy only; no semantic person identification in this build.",
