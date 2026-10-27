@@ -662,25 +662,28 @@ def choose_drop_beat(music_duration, available_edit_duration, loop_enabled):
     return min(candidates, key=lambda value: abs(value - target))
 
 
-def insert_drop_boundary(boundaries, desired_time, min_gap=0.75):
-    """Use the drop time as a cut boundary while preserving the planned clip count."""
+def insert_drop_boundary(boundaries, desired_time, min_gap=0.75, max_gap=3.3):
+    """Snap a drop-impact hold to a cut without violating either adjacent shot-length bound."""
     if desired_time is None or len(boundaries) < 3:
         return boundaries, None
+    if (not math.isfinite(float(min_gap)) or not math.isfinite(float(max_gap))
+            or min_gap < 0 or max_gap < min_gap):
+        raise ValueError("Drop-boundary shot-length bounds must satisfy 0 <= min_gap <= max_gap.")
     limit = boundaries[-1]
     if not 0.7 <= desired_time <= limit - 0.7:
         return boundaries, None
-    original_count = len(boundaries)
     candidates = sorted(range(1, len(boundaries) - 1),
                         key=lambda index: abs(boundaries[index] - desired_time))
     for index in candidates:
-        if (desired_time - boundaries[index - 1] >= min_gap and
-                boundaries[index + 1] - desired_time >= min_gap):
+        previous_gap = desired_time - boundaries[index - 1]
+        next_gap = boundaries[index + 1] - desired_time
+        if min_gap <= previous_gap <= max_gap and min_gap <= next_gap <= max_gap:
             updated = list(boundaries)
             updated[index] = desired_time
             updated.sort()
             return updated, desired_time
-    # If the strongest onset would create a very short adjacent shot, keep pacing
-    # stable and freeze at the nearest already-validated cut instead.
+    # If the exact beat would create a too-short or too-long adjacent shot, keep
+    # the validated pacing and place the freeze on the nearest existing cut.
     nearest = min(boundaries[1:-1], key=lambda value: abs(value - desired_time))
     return list(boundaries), nearest
 
