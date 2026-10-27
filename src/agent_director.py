@@ -1581,10 +1581,25 @@ def main(argv=None):
     print(f"[OK] Final video: {FINAL}")
     print(f"[OK] Duration: {actual:.3f}s | Resolution: {WIDTH}x{HEIGHT} | FPS: {FPS} | frames: {render_report['frame_count']}")
     print(f"[OK] Video codec: {video_codec} | Audio codec: {audio_codec}")
+    agent_report["enhancement"] = {
+        "ai_upscale_requested": AI_UPSCALE_ENABLED,
+        "ai_upscale_applied": AI_UPSCALE_ENABLED,
+        "method": f"Real-ESRGAN {AI_UPSCALE_MODEL} x{AI_UPSCALE_SCALE}" if AI_UPSCALE_ENABLED else "Lanczos/FFmpeg scaling",
+        "synthetic_detail_warning": (
+            "AI restoration may synthesize plausible texture; generated details are not verified source truth."
+            if AI_UPSCALE_ENABLED else
+            "AI restoration was disabled; only standard FFmpeg scaling/sharpening was applied."
+        ),
+    }
+    with open(report_path, "w", encoding="utf-8") as handle:
+        json.dump(agent_report, handle, ensure_ascii=False, indent=2)
     print(f"[agents] Status: {agent_report['status']} | report: {report_path}")
     print(f"[agents] Niche result: {agent_report['results']['niche_analyst']['status']} (no unsupported virality score)")
     print("[NOTE] Reference mode learns rough cut pacing; it does not copy copyrighted frames/effects.")
-    print("[NOTE] Standard FFmpeg scaling only; no AI upscaling or new source detail is generated.")
+    if AI_UPSCALE_ENABLED:
+        print(f"[NOTE] Real-ESRGAN AI restoration applied ({AI_UPSCALE_MODEL}, {AI_UPSCALE_SCALE}x). Its generated texture is plausible enhancement, not verified original detail.")
+    else:
+        print("[NOTE] AI upscaling is OFF. Install Real-ESRGAN and set video_settings.ai_upscale_enabled=true to synthesize plausible detail; FFmpeg scaling alone cannot recover lost source detail.")
 
 
 if __name__ == "__main__":
