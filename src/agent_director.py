@@ -20,8 +20,10 @@ except ModuleNotFoundError:
 
 try:
     from src.heyaa.agents import run_agent_team, export_storage_agent
+    from src.heyaa.subject_tracking import detect_person_track, subject_observation_near
 except ModuleNotFoundError:
     from heyaa.agents import run_agent_team, export_storage_agent
+    from heyaa.subject_tracking import detect_person_track, subject_observation_near
 
 VIDEO = "input/test_video.mp4"
 MUSIC = "input/phonk.mp3"
@@ -53,6 +55,7 @@ CONFIG = None
 DROP_FREEZE_DURATION = 0.25
 DROP_BEAT_TIME = None
 DROP_BEAT_STRENGTH = None
+SUBJECT_OBSERVATIONS = []
 
 
 def load_settings():
@@ -557,14 +560,31 @@ def make_clip(index, item, source_duration):
     start = max(0.0, min(start, max(0.0, source_duration - input_duration)))
     path = f"{WORK}/clip_{index:02d}.mp4"
     mirror = ",hflip" if MIRROR_ENABLED else ""
+    clip_center_seconds = start + input_duration / 2.0
+    subject_observation = subject_observation_near(
+        SUBJECT_OBSERVATIONS, clip_center_seconds,
+        max_distance_seconds=max(1.0, input_duration / 2.0)
+    )
+    crop_filter = "crop=1080:1920,"
+    if subject_observation is not None:
+        subject_x = float(subject_observation["center_x"])
+        subject_y = float(subject_observation["center_y"])
+        crop_filter = (
+            "crop=1080:1920:"
+            f"x='max(0,min(iw-ow,{subject_x:.5f}*iw-ow/2))':"
+            f"y='max(0,min(ih-oh,{subject_y:.5f}*ih-oh/2))',"
+        )
+        print(
+            f"  [framing] Subject-track crop applied near source {clip_center_seconds:.2f}s "
+            f"(center={subject_x:.2f},{subject_y:.2f}; appearance proxy, not identity recognition)."
+        )
 
-    # Smart crop is a center crop, not face/subject tracking.
-    # EDL crop currently describes the full normalized source area; aspect-fit
-    # and centering are renderer policy for the fixed 9:16 canvas.
+    # If optional OpenCV tracking found no stable person-shaped track, this remains
+    # the deterministic centered 9:16 crop fallback.
     if SMART_CROP_ENABLED:
         vf = (
             "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,"
-            "crop=1080:1920,"
+            f"{crop_filter}"
             f"{'hflip,' if MIRROR_ENABLED else ''}"
             "eq=contrast=1.16:saturation=1.30:gamma=1.02,"
             "unsharp=5:5:0.72:3:3:0.0,setsar=1,"
@@ -812,6 +832,23 @@ def main(argv=None):
     drop_frame = round(planned_drop_position * FPS) if planned_drop_position is not None else None
     context = choose_context_window(source_duration, scenes, EDIT_DURATION)
     context_start, context_end = context["start_seconds"], context["end_seconds"]
+    subject_analysis = detect_person_track(VIDEO, context_start, context_end)
+    SUBJECT_OBSERVATIONS = subject_analysis.get("observations", []) if subject_analysis.get("detected") else []
+    context["subject_tracking"] = {
+        key: value for key, value in subject_analysis.items() if key != "observations"
+    }
+    if subject_analysis.get("detected"):
+        print(
+            f"[context] OpenCV found an appearance-consistent person track "
+            f"({subject_analysis.get('track_span_seconds')}s span; "
+            f"quality proxy={subject_analysis.get('track_quality_proxy')}). "
+            "Per-shot source centers and 9:16 crops will follow nearby observations."
+        )
+    else:
+        print(
+            f"[context] Person tracking unavailable: {subject_analysis.get('reason', 'no stable track')}. "
+            "Using scene-density context and centered-crop fallback."
+        )
     context_duration = max(0.1, context_end - context_start)
     context_scenes = sorted(cut - context_start for cut in scenes if context_start <= cut <= context_end)
     edl_video = []
@@ -824,6 +861,12 @@ def main(argv=None):
         local_target = timeline_center / EDIT_DURATION * context_duration
         local_center = choose_source_center(local_target, context_scenes, context_duration)
         source_center = context_start + local_center
+        track_observation = subject_observation_near(
+            SUBJECT_OBSERVATIONS, source_center,
+            max_distance_seconds=max(1.5, dur_f / FPS)
+        )
+        if track_observation is not None:
+            source_center = float(track_observation["time_seconds"])
         source_dur_f = max(1, round(dur_f * SPEED))
         source_start_seconds = max(0.0, min(
             source_center - (source_dur_f / FPS) / 2,
