@@ -19,11 +19,16 @@ class ProgressTraceTests(unittest.TestCase):
         child.poll.return_value = None
         events = []
 
-        with patch("src.agent_director.subprocess.Popen", return_value=child) as popen, \\
-             patch("src.agent_director.os.killpg") as killpg, \\
-             patch.object(renderer, "progress_event",
-                          side_effect=lambda stage, status, summary, details=None, **kwargs:
-                          events.append((stage, status, details or {}))):
+        with (
+            patch("src.agent_director.subprocess.Popen", return_value=child) as popen,
+            patch("src.agent_director.os.killpg") as killpg,
+            patch.object(
+                renderer,
+                "progress_event",
+                side_effect=lambda stage, status, summary, details=None, **kwargs:
+                    events.append((stage, status, details or {})),
+            ),
+        ):
             with self.assertRaises(SystemExit) as raised:
                 renderer._run_variant_process(["python", "child.py"], 2)
 
@@ -35,7 +40,6 @@ class ProgressTraceTests(unittest.TestCase):
             ("variant_interrupt", "running"),
             ("variant_interrupt", "cancelled"),
         ])
-
 
     def test_progress_event_appends_machine_readable_jsonl(self):
         with tempfile.TemporaryDirectory() as temporary:
