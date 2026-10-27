@@ -1,6 +1,8 @@
+import statistics
 import unittest
 
 from src import agent_director as renderer
+from src.heyaa.agents import settings_agent
 
 
 class ContextPlanningTests(unittest.TestCase):
@@ -9,12 +11,18 @@ class ContextPlanningTests(unittest.TestCase):
         self.old_beat_sync = renderer.BEAT_SYNC
         self.old_drop_time = renderer.DROP_BEAT_TIME
         self.old_fps = renderer.FPS
+        self.old_min_shot_seconds = renderer.MIN_SHOT_SECONDS
+        self.old_min_clips = renderer.MIN_CLIPS
+        self.old_max_clips = renderer.MAX_CLIPS
 
     def tearDown(self):
         renderer.EDIT_DURATION = self.old_edit_duration
         renderer.BEAT_SYNC = self.old_beat_sync
         renderer.DROP_BEAT_TIME = self.old_drop_time
         renderer.FPS = self.old_fps
+        renderer.MIN_SHOT_SECONDS = self.old_min_shot_seconds
+        renderer.MIN_CLIPS = self.old_min_clips
+        renderer.MAX_CLIPS = self.old_max_clips
 
     def test_reference_profile_generates_non_uniform_bounded_shot_lengths(self):
         renderer.EDIT_DURATION = 16.0
@@ -73,6 +81,45 @@ class ContextPlanningTests(unittest.TestCase):
         self.assertAlmostEqual(boundaries[-1], renderer.EDIT_DURATION)
         self.assertGreaterEqual(min(lengths), 0.75)
         self.assertLessEqual(max(lengths), 3.3)
+
+    def test_short_reference_auto_derives_clip_count_to_match_fast_pacing(self):
+        renderer.EDIT_DURATION = 18.0
+        renderer.MIN_CLIPS = 8
+        renderer.MAX_CLIPS = 40
+        renderer.MIN_SHOT_SECONDS = 0.75
+        profile = {
+            "duration_seconds": 11.8,
+            "median_cut_interval_seconds": 0.55,
+            "shot_intervals_seconds": [0.5, 0.6, 0.5, 0.55, 0.5, 0.6],
+        }
+
+        clip_count = renderer.choose_clip_count(0.55)
+        self.assertEqual(clip_count, 24)
+        boundaries = renderer.make_boundaries(clip_count, [], profile)
+        lengths = [right - left for left, right in zip(boundaries, boundaries[1:])]
+        self.assertLessEqual(statistics.median(lengths), 0.9)
+        self.assertEqual(len(lengths), clip_count)
+
+    def test_settings_agent_accepts_40_clips_and_validates_min_shot_seconds(self):
+        cfg = {
+            "style": "phonk_montagem",
+            "video_settings": {"resolution": "1080x1920", "fps": 24, "codec": "libx264",
+                               "crf": 26, "preset": "ultrafast"},
+            "edit_settings": {"duration_seconds": 40, "speed": 1.1, "freeze_duration": 2.0,
+                              "drop_freeze_duration": 0.25, "edl_mode": "on",
+                              "min_clips": 8, "max_clips": 40, "min_shot_seconds": 0.3,
+                              "reference_pacing": True, "mirror_enabled": False, "layout_mode": "fill"},
+            "audio_settings": {"beat_sync": True, "beat_flash": True, "bass_boost": False,
+                               "music_loop": True},
+        }
+        self.assertEqual(settings_agent(cfg).status, "ok")
+        cfg["edit_settings"]["min_shot_seconds"] = 0.29
+        self.assertEqual(settings_agent(cfg).status, "blocked")
+        cfg["edit_settings"]["min_shot_seconds"] = 3.01
+        self.assertEqual(settings_agent(cfg).status, "blocked")
+        cfg["edit_settings"]["min_shot_seconds"] = 0.75
+        cfg["edit_settings"]["max_clips"] = 41
+        self.assertEqual(settings_agent(cfg).status, "blocked")
 
     def test_source_progression_moves_overlapping_candidate_forward_by_minimum_gap(self):
         selected = renderer.enforce_source_progression(

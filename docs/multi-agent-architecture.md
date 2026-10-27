@@ -4,7 +4,7 @@
 
 The current repository runs deterministic Python modules—not an independent LLM swarm. Each stage returns a structured result with status, findings, recommendations and evidence; events in `output/agent_report.json` are emitted from real execution, not fabricated agent chat.
 
-1. **Settings Agent** — validates the actual `params.json` structure, numeric types/ranges, supported codec/preset, clip limits, explicit booleans and EDL mode.
+1. **Settings Agent** — validates the actual `params.json` structure, numeric types/ranges, supported codec/preset, clip limits (up to 40), explicit booleans and EDL mode. `edit_settings.min_shot_seconds` defaults to 0.75s and supports 0.3–3.0s; when no exact `--clip-count` is provided, the selected count is derived from measured reference cadence and bounded by the configured limits.
 2. **Media Analyst** — reports measured source duration, dimensions, detected scene-change count and music duration. Scene cuts are visual-change heuristics, not semantic scene understanding.
 3. **Beat Sync Agent** — reports whether beat sync is enabled, how many onset candidates were measured, and whether even-pacing fallback was used. It is a bass-onset/autocorrelation heuristic, not guaranteed downbeat detection. When looping is enabled, valid candidates repeat at music-cycle offsets.
 4. **Reference Analyst** — reports measured median cut pacing only when a usable reference exists. Missing or invalid references lead to default pacing; frames are not copied.
@@ -31,13 +31,13 @@ The current repository runs deterministic Python modules—not an independent LL
 
 Each render writes `output/progress.jsonl` (or `output/variants/variant_NN/progress.jsonl` for comparison renders). Each JSONL row has a UTC timestamp, stage, status, summary and structured details. It records source/settings preflight, analysis, selected clip count, per-clip render completion, EDL validation, Inspector, the structured agent results, Director decision and Export Storage result. The terminal remains the live stream; `progress.jsonl` is the durable machine-readable trace. The existing `agent_report.json`, `pre_render_review.json` and `edit_decision_list.json` remain in place.
 
-The renderer can compare exact motion-clip counts while retaining the same selected source, music, edit style and configured effects. In count-comparison mode, source-time progression is held to the same balanced profile so the primary planned difference is the number of clips. For the current 8–16 clip bounds, use:
+The renderer can compare exact motion-clip counts while retaining the same selected source, music, edit style and configured effects. In count-comparison mode, source-time progression is held to the same balanced profile so the primary planned difference is the number of clips. For the configured 8–40 clip bounds, use:
 
 ```bash
 python3 src/agent_director.py --variants 3 --clip-count-options 8,12,16
 ```
 
-The CLI validates every requested count against `params.json` before downloading source media. The resulting videos and their chosen counts are listed in `output/variants/index.json`; inspect `variant_01/final_phonk.mp4`, `variant_02/final_phonk.mp4` and `variant_03/final_phonk.mp4` to choose the pacing you prefer. To render one exact count only, use `--variants 1 --clip-count 12` (the value must remain within `min_clips` and `max_clips`).
+The CLI validates every requested count against `params.json` before downloading source media. The resulting videos and their chosen counts are listed in `output/variants/index.json`; inspect `variant_01/final_phonk.mp4`, `variant_02/final_phonk.mp4` and `variant_03/final_phonk.mp4` to choose the pacing you prefer. To render one exact count only, use `--variants 1 --clip-count 12` (the value must remain within `min_clips` and `max_clips`). If the measured reference median is 0.55s, the 20-second profile with a 2-second final freeze selects 24 motion clips at the default 0.75s minimum-shot setting; this is a planning estimate, not proof of real-footage visual quality. Set `edit_settings.min_shot_seconds` lower (down to 0.3s) for faster cuts, provided the configured duration and minimum clip count can satisfy that constraint.
 
 ## Workflow and safeguards
 

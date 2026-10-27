@@ -88,6 +88,9 @@ def settings_agent(config: dict[str, Any]) -> AgentResult:
     drop_freeze = edit.get("drop_freeze_duration", 0.25)
     if not _finite_number(drop_freeze) or not 0.1 <= float(drop_freeze) <= 0.6:
         findings.append("drop_freeze_duration must be between 0.1 and 0.6 seconds.")
+    min_shot_seconds = edit.get("min_shot_seconds", 0.75)
+    if not _finite_number(min_shot_seconds) or not 0.3 <= float(min_shot_seconds) <= 3.0:
+        findings.append("edit_settings.min_shot_seconds must be between 0.3 and 3.0 seconds.")
     for key in ("mirror_enabled", "reference_pacing"):
         if not isinstance(edit.get(key), bool):
             findings.append(f"edit_settings.{key} must be an explicit boolean.")
@@ -104,8 +107,8 @@ def settings_agent(config: dict[str, Any]) -> AgentResult:
     minimum, maximum = edit.get("min_clips"), edit.get("max_clips")
     if (not isinstance(minimum, int) or isinstance(minimum, bool) or
             not isinstance(maximum, int) or isinstance(maximum, bool) or
-            not 6 <= minimum <= 12 or not minimum <= maximum <= 18):
-        findings.append("Clip bounds must satisfy 6 <= min_clips <= 12 and min_clips <= max_clips <= 18.")
+            not 6 <= minimum <= 12 or not minimum <= maximum <= 40):
+        findings.append("Clip bounds must satisfy 6 <= min_clips <= 12 and min_clips <= max_clips <= 40.")
     crf = video.get("crf")
     if not isinstance(crf, int) or isinstance(crf, bool) or not 16 <= crf <= 26:
         findings.append("video_settings.crf must be an integer from 16 to 26.")
@@ -123,6 +126,7 @@ def settings_agent(config: dict[str, Any]) -> AgentResult:
                        ("All required settings are present and within renderer-supported bounds.",), (),
                        {"resolution": video["resolution"], "fps": fps, "duration_seconds": duration,
                         "speed": speed, "freeze_duration": freeze,
+                        "min_shot_seconds": float(min_shot_seconds),
                         "mirror_enabled": edit["mirror_enabled"], "layout_mode": layout_mode,
                         "ai_upscale_enabled": ai_upscale_enabled,
                         "ai_upscale_model": ai_upscale_model,

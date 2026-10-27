@@ -63,6 +63,7 @@ MIRROR_ENABLED = None
 LAYOUT_MODE = "fill"
 MIN_CLIPS = None
 MAX_CLIPS = None
+MIN_SHOT_SECONDS = 0.75
 MIN_SOURCE_GAP_SECONDS = 0.05
 MUSIC_LOOP = None
 CODEC = None
@@ -125,7 +126,7 @@ def load_settings():
     """Load and strictly validate params.json; unsupported values fail fast."""
     global DURATION, FPS, WIDTH, HEIGHT, CRF, PRESET, SPEED, FREEZE, EDIT_DURATION
     global BEAT_SYNC, BEAT_FLASH, BASS_BOOST, REFERENCE_PACING, MIRROR_ENABLED, LAYOUT_MODE
-    global MIN_CLIPS, MAX_CLIPS, MUSIC_LOOP, CODEC, CONFIG, DROP_FREEZE_DURATION, MIN_SOURCE_GAP_SECONDS
+    global MIN_CLIPS, MAX_CLIPS, MIN_SHOT_SECONDS, MUSIC_LOOP, CODEC, CONFIG, DROP_FREEZE_DURATION, MIN_SOURCE_GAP_SECONDS
     global AI_UPSCALE_ENABLED, AI_UPSCALE_MODEL, AI_UPSCALE_SCALE
     global AI_UPSCALE_BINARY, AI_UPSCALE_MODEL_DIR
     path = _settings_path()
@@ -199,9 +200,16 @@ def load_settings():
     if (isinstance(minimum_value, bool) or not isinstance(minimum_value, int) or
             isinstance(maximum_value, bool) or not isinstance(maximum_value, int)):
         raise ValueError("min_clips and max_clips must be integers.")
+    min_shot_value = edit.get("min_shot_seconds", 0.75)
+    if (isinstance(min_shot_value, bool) or
+            not isinstance(min_shot_value, (int, float)) or
+            not math.isfinite(float(min_shot_value)) or
+            not 0.3 <= float(min_shot_value) <= 3.0):
+        raise ValueError("edit_settings.min_shot_seconds must be between 0.3 and 3.0 seconds.")
+    MIN_SHOT_SECONDS = float(min_shot_value)
     MIN_CLIPS, MAX_CLIPS = minimum_value, maximum_value
-    if not 6 <= MIN_CLIPS <= 12 or not MIN_CLIPS <= MAX_CLIPS <= 18:
-        raise ValueError("Clip bounds must satisfy 6 <= min_clips <= 12 and min_clips <= max_clips <= 18.")
+    if not 6 <= MIN_CLIPS <= 12 or not MIN_CLIPS <= MAX_CLIPS <= 40:
+        raise ValueError("Clip bounds must satisfy 6 <= min_clips <= 12 and min_clips <= max_clips <= 40.")
     source_gap_value = edit.get("source_min_gap_seconds", 0.05)
     if (isinstance(source_gap_value, bool) or not isinstance(source_gap_value, (int, float)) or
             not math.isfinite(float(source_gap_value)) or not 0.0 <= float(source_gap_value) <= 1.0):
@@ -233,7 +241,7 @@ def load_settings():
     DURATION = total_frames / FPS
     EDIT_DURATION = (total_frames - freeze_frames) / FPS
     CONFIG = config
-    print(f"[settings] {WIDTH}x{HEIGHT}@{FPS} | {DURATION:.3f}s | speed={SPEED:.2f}x | final_freeze={FREEZE:.3f}s (minimum 1.7s) | drop_freeze={DROP_FREEZE_DURATION:.3f}s | mirror={MIRROR_ENABLED} | layout_mode={LAYOUT_MODE} | ai_upscale={AI_UPSCALE_ENABLED} ({AI_UPSCALE_MODEL} x{AI_UPSCALE_SCALE}) | music_loop={MUSIC_LOOP} | source_min_gap={MIN_SOURCE_GAP_SECONDS:.3f}s | EDL=on")
+    print(f"[settings] {WIDTH}x{HEIGHT}@{FPS} | {DURATION:.3f}s | speed={SPEED:.2f}x | min_shot={MIN_SHOT_SECONDS:.2f}s | final_freeze={FREEZE:.3f}s (minimum 1.7s) | drop_freeze={DROP_FREEZE_DURATION:.3f}s | mirror={MIRROR_ENABLED} | layout_mode={LAYOUT_MODE} | ai_upscale={AI_UPSCALE_ENABLED} ({AI_UPSCALE_MODEL} x{AI_UPSCALE_SCALE}) | music_loop={MUSIC_LOOP} | source_min_gap={MIN_SOURCE_GAP_SECONDS:.3f}s | EDL=on")
     return config
 
 
@@ -634,7 +642,7 @@ def choose_clip_count(reference_interval, requested_count=None):
     # Bound the workload for mobile rendering while letting the reference affect pacing.
     if reference_interval is None:
         return MIN_CLIPS
-    return max(MIN_CLIPS, min(MAX_CLIPS, round(EDIT_DURATION / max(0.75, min(2.4, reference_interval)))))
+    return max(MIN_CLIPS, min(MAX_CLIPS, round(EDIT_DURATION / max(MIN_SHOT_SECONDS, min(2.4, reference_interval)))))
 
 
 def choose_drop_beat(music_duration, available_edit_duration, loop_enabled):
@@ -652,9 +660,9 @@ def choose_drop_beat(music_duration, available_edit_duration, loop_enabled):
     if loop_enabled and duration < limit:
         for cycle in range(math.ceil(limit / duration)):
             value = DROP_BEAT_TIME + cycle * duration
-            if 0.7 <= value <= limit - DROP_FREEZE_DURATION - 0.75:
+            if 0.7 <= value <= limit - DROP_FREEZE_DURATION - MIN_SHOT_SECONDS:
                 candidates.append(value)
-    elif 0.7 <= DROP_BEAT_TIME <= limit - DROP_FREEZE_DURATION - 0.75:
+    elif 0.7 <= DROP_BEAT_TIME <= limit - DROP_FREEZE_DURATION - MIN_SHOT_SECONDS:
         candidates.append(DROP_BEAT_TIME)
     if not candidates:
         return None
@@ -758,7 +766,7 @@ def _reference_boundaries(clip_count, total_duration, profile):
             exactish = [0.0] + selected_cuts + [total_duration]
             shot_lengths = [b - a for a, b in zip(exactish, exactish[1:])]
             if (len(exactish) == clip_count + 1 and
-                    all(0.75 <= length <= 3.3 for length in shot_lengths) and
+                    all(MIN_SHOT_SECONDS <= length <= 3.3 for length in shot_lengths) and
                     all(b > a for a, b in zip(exactish, exactish[1:]))):
                 REFERENCE_CUT_TIMESTAMPS_USED = True
                 print("[edit] Using the reference's measured cut timestamps, scaled to the requested edit duration.")
@@ -768,7 +776,7 @@ def _reference_boundaries(clip_count, total_duration, profile):
              and math.isfinite(float(value)) and float(value) > 0]
     if len(valid) < 2:
         return [total_duration * index / clip_count for index in range(clip_count + 1)]
-    minimum, maximum = 0.75, 3.3
+    minimum, maximum = MIN_SHOT_SECONDS, 3.3
     if (clip_count * minimum > total_duration + 1e-8 or
             clip_count * maximum < total_duration - 1e-8):
         print("[warn] Reference pacing cannot fit the requested duration inside the supported shot-length range; using even pacing.")
@@ -850,14 +858,14 @@ def make_boundaries(clip_count, beats, reference_profile=None):
             candidate = min(nearby, key=lambda beat: abs(beat - target))
             previous, following = boundaries[index - 1], boundaries[index + 1]
             previous_gap, next_gap = candidate - previous, following - candidate
-            if 0.75 <= previous_gap <= 3.3 and 0.75 <= next_gap <= 3.3:
+            if MIN_SHOT_SECONDS <= previous_gap <= 3.3 and MIN_SHOT_SECONDS <= next_gap <= 3.3:
                 boundaries[index] = candidate
     lengths = [b - a for a, b in zip(boundaries, boundaries[1:])]
-    if min(lengths) < 0.75 - 1e-8 or max(lengths) > 3.3 + 1e-8:
+    if min(lengths) < MIN_SHOT_SECONDS - 1e-8 or max(lengths) > 3.3 + 1e-8:
         print("[warn] Beat snapping would break safe shot lengths; reverting to reference-derived boundaries.")
         boundaries = list(reference_boundaries)
         lengths = [b - a for a, b in zip(boundaries, boundaries[1:])]
-    if min(lengths) < 0.75 - 1e-8 or max(lengths) > 3.3 + 1e-8:
+    if min(lengths) < MIN_SHOT_SECONDS - 1e-8 or max(lengths) > 3.3 + 1e-8:
         print("[warn] Reference-derived boundaries are outside the safe range; using even pacing.")
         boundaries = [EDIT_DURATION * index / clip_count for index in range(clip_count + 1)]
         lengths = [b - a for a, b in zip(boundaries, boundaries[1:])]
@@ -1583,11 +1591,11 @@ def main(argv=None):
                    f"Selected {clip_count} motion clips ({clip_selection_mode.replace('_', ' ')}).",
                    {"selected_clip_count": clip_count, "selection_mode": clip_selection_mode,
                     "requested_clip_count": args.clip_count, "min_clips": MIN_CLIPS,
-                    "max_clips": MAX_CLIPS, "reference_median_cut_interval_seconds": ref_interval})
+                    "max_clips": MAX_CLIPS, "min_shot_seconds": MIN_SHOT_SECONDS, "reference_median_cut_interval_seconds": ref_interval})
     boundaries_seconds = make_boundaries(clip_count, adjusted_beats, ref_profile)
     planned_drop_position = None
     if drop_beat_time is not None:
-        boundaries_seconds, planned_drop_position = insert_drop_boundary(boundaries_seconds, drop_beat_time)
+        boundaries_seconds, planned_drop_position = insert_drop_boundary(boundaries_seconds, drop_beat_time, min_gap=MIN_SHOT_SECONDS)
         print(
             f"[edit] Drop-impact freeze: strongest bass-onset proxy at {drop_beat_time:.2f}s; "
             f"freeze boundary={planned_drop_position:.2f}s for {drop_freeze_duration:.3f}s."
@@ -1988,6 +1996,7 @@ def main(argv=None):
         "selection_mode": clip_selection_mode,
         "min_clips": MIN_CLIPS,
         "max_clips": MAX_CLIPS,
+        "min_shot_seconds": MIN_SHOT_SECONDS,
         "reference_median_cut_interval_seconds": ref_interval,
         "comparison_clip_count_options": list(args.clip_count_options) if args.clip_count_options else None,
     }
