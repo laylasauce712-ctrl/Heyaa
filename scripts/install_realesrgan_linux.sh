@@ -41,4 +41,4 @@ cp -a "$MODELS/." "$DEST/models/"
 "$DEST/realesrgan-ncnn-vulkan" -h >/dev/null
 echo "[upscale install] Installed executable: $DEST/realesrgan-ncnn-vulkan"
 echo "[upscale install] Installed models: $DEST/models"
-echo "[upscale install] AI upscaling is still opt-in; set video_settings.ai_upscale_enabled=true in params.json."
+echo "[upscale install] Check params.json: video_settings.ai_upscale_enabled must be true to run AI restoration."
