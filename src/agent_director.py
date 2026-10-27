@@ -1728,7 +1728,7 @@ def main(argv=None):
         "render_critique": render_critique, "niche_metrics": niche_metrics,
         "niche_tags": ["phonk", "montagem", "vertical", "freeze"],
         "render_report": render_report,
-    }, emit=print_agent_event)
+    }, emit=print_agent_event, emit_progress=print_agent_event)
     agent_report["pre_render_review"] = pre_render_review
     agent_report["clip_selection"] = {
         "selected_clip_count": actual_motion_clip_count,
