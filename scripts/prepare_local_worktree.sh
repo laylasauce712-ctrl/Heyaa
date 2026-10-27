@@ -4,6 +4,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
 SOURCE_ARG="$ROOT/../Heyaa-ai-upscale-run"
 DISABLE_AI_UPSCALE=0
 while (($#)); do
@@ -63,7 +64,7 @@ for file in params.json input/test_video.mp4 input/phonk.mp3; do
     fi
 done
 
-# Check whether the Python venv can actually be created before changing local paths.
+# Check venv support before changing local paths. A pre-existing but incomplete venv is not auto-deleted.
 if [[ ! -x "$ROOT/.venv/bin/python" ]]; then
     VENV_PROBE="$(mktemp -d)"
     if ! "$PYTHON_BIN" -m venv "$VENV_PROBE/probe" >/dev/null 2>&1; then
@@ -73,12 +74,19 @@ if [[ ! -x "$ROOT/.venv/bin/python" ]]; then
         exit 4
     fi
     rm -rf "$VENV_PROBE"
+else
+    if ! "$ROOT/.venv/bin/python" -m pip --version >/dev/null 2>&1; then
+        echo "[setup] Existing .venv is incomplete (pip is unavailable); it was not changed." >&2
+        echo "[setup] Repair or rename .venv, then rerun this helper." >&2
+        exit 4
+    fi
 fi
 
-# Accept only the source settings or the exact settings produced by this helper.
-# This makes --disable-ai-upscale repeatable without permitting unrelated edits to be overwritten.
-if [[ -f "$ROOT/params.json" ]]; then
-    if ! "$PYTHON_BIN" - "$SOURCE/params.json" "$ROOT/params.json" "$DISABLE_AI_UPSCALE" <<'PY'
+LOCAL_PARAMS="$ROOT/params.local.json"
+# Use a separate ignored config so diagnostic settings never dirty/overwrite tracked params.json.
+# An existing local config is only accepted if it exactly matches the requested source settings.
+if [[ -f "$LOCAL_PARAMS" ]]; then
+    if ! "$PYTHON_BIN" - "$SOURCE/params.json" "$LOCAL_PARAMS" "$DISABLE_AI_UPSCALE" <<'PY'
 import json, pathlib, sys
 source_path, target_path, disable = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
 source = json.loads(pathlib.Path(source_path).read_text(encoding="utf-8"))
@@ -89,12 +97,9 @@ if disable:
 raise SystemExit(0 if target == desired else 1)
 PY
     then
-        if ! git -C "$ROOT" diff --quiet -- params.json ||
-           ! git -C "$ROOT" diff --cached --quiet -- params.json; then
-            echo "[setup] Destination params.json has independent local edits; refusing to overwrite it." >&2
-            echo "[setup] Nothing in params.json was changed. Review the two files first." >&2
-            exit 3
-        fi
+        echo "[setup] Existing params.local.json differs from requested settings; refusing to overwrite it." >&2
+        echo "[setup] Back it up or remove it deliberately before rerunning setup." >&2
+        exit 3
     fi
 fi
 
@@ -135,33 +140,22 @@ else
     echo "[setup] Real-ESRGAN directory not found in source worktree; AI-upscale preflight may require installation." >&2
 fi
 
-if [[ ! -f "$ROOT/params.json" ]] ||
-   ! "$PYTHON_BIN" - "$SOURCE/params.json" "$ROOT/params.json" "$DISABLE_AI_UPSCALE" <<'PY'
+if [[ ! -f "$LOCAL_PARAMS" ]]; then
+    "$PYTHON_BIN" - "$SOURCE/params.json" "$LOCAL_PARAMS" "$DISABLE_AI_UPSCALE" <<'PY'
 import json, pathlib, sys
 source_path, target_path, disable = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
-source = json.loads(pathlib.Path(source_path).read_text(encoding="utf-8"))
-target = json.loads(pathlib.Path(target_path).read_text(encoding="utf-8")) if pathlib.Path(target_path).exists() else None
-desired = json.loads(json.dumps(source))
+data = json.loads(pathlib.Path(source_path).read_text(encoding="utf-8"))
 if disable:
-    desired.setdefault("video_settings", {})["ai_upscale_enabled"] = False
-raise SystemExit(0 if target == desired else 1)
+    data.setdefault("video_settings", {})["ai_upscale_enabled"] = False
+pathlib.Path(target_path).write_text(json.dumps(data, indent=2) + "\\n", encoding="utf-8")
 PY
-then
-    cp "$SOURCE/params.json" "$ROOT/params.json"
     if [[ "$DISABLE_AI_UPSCALE" -eq 1 ]]; then
-        "$PYTHON_BIN" - "$ROOT/params.json" <<'PY'
-import json, pathlib, sys
-path = pathlib.Path(sys.argv[1])
-data = json.loads(path.read_text(encoding="utf-8"))
-data.setdefault("video_settings", {})["ai_upscale_enabled"] = False
-path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-PY
-        echo "[setup] Copied local settings and disabled AI upscaling in this worktree only."
+        echo "[setup] Created params.local.json with AI upscaling disabled for this worktree only."
     else
-        echo "[setup] Copied the local params.json into the new worktree; the source copy is untouched."
+        echo "[setup] Created params.local.json from the source worktree's settings."
     fi
 else
-    echo "[setup] params.json already matches the requested local setup."
+    echo "[setup] params.local.json already matches the requested local setup."
 fi
 
 # Keep vision dependencies isolated from the OS Python / other projects.
@@ -174,5 +168,5 @@ fi
 echo
 echo "[setup] Ready. Run from $ROOT using the repository venv."
 echo "[setup] Start with one candidate before spending time on all comparison renders:"
-echo "        .venv/bin/python src/agent_director.py --variants 1 --clip-count 8"
+echo "        HEYAA_PARAMS_PATH=params.local.json .venv/bin/python src/agent_director.py --variants 1 --clip-count 8"
 echo "[setup] Existing worktree was not changed; no render was started automatically."
