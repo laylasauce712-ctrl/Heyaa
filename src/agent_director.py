@@ -356,6 +356,7 @@ def reference_pacing_profile(reference_path):
             "scene_cut_count": len(cuts),
             "median_cut_interval_seconds": round(interval, 4),
             "shot_intervals_seconds": gaps,
+            "cut_timestamps_seconds": [round(cut, 4) for cut in cuts],
             "method": "ffmpeg-scene-cut-timestamps",
             "semantic_reference_understanding": False,
         }
@@ -469,10 +470,39 @@ def choose_context_window(source_duration, scene_cuts, target_duration):
 
 
 def _reference_boundaries(clip_count, total_duration, profile):
-    """Resample reference shot lengths and normalize them to the requested duration."""
+    """Prefer measured reference cut timestamps, with a bounded interval-resampling fallback."""
     intervals = profile.get("shot_intervals_seconds") if isinstance(profile, dict) else None
     if not isinstance(intervals, list) or len(intervals) < 2 or clip_count < 1:
         return [total_duration * index / clip_count for index in range(clip_count + 1)]
+
+    # When there are enough measured cuts, preserve their timestamp pattern after
+    # scaling the reference's active timeline to the requested edit duration.
+    # The candidate is accepted only if every resulting shot remains render-safe.
+    cuts = profile.get("cut_timestamps_seconds") if isinstance(profile, dict) else None
+    reference_duration = profile.get("duration_seconds") if isinstance(profile, dict) else None
+    if (isinstance(cuts, list) and isinstance(reference_duration, (int, float))
+            and not isinstance(reference_duration, bool) and math.isfinite(float(reference_duration))
+            and float(reference_duration) > 0):
+        valid_cuts = sorted({
+            float(value) for value in cuts
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+            and math.isfinite(float(value)) and 0.25 < float(value) < float(reference_duration) - 0.25
+        })
+        required = clip_count - 1
+        if required > 0 and len(valid_cuts) >= required:
+            selected_indices = [
+                round(index * (len(valid_cuts) - 1) / max(1, required - 1))
+                for index in range(required)
+            ]
+            selected_cuts = [valid_cuts[index] * total_duration / float(reference_duration)
+                             for index in selected_indices]
+            exactish = [0.0] + selected_cuts + [total_duration]
+            shot_lengths = [b - a for a, b in zip(exactish, exactish[1:])]
+            if (len(exactish) == clip_count + 1 and
+                    all(0.75 <= length <= 3.3 for length in shot_lengths) and
+                    all(b > a for a, b in zip(exactish, exactish[1:]))):
+                print("[edit] Using the reference's measured cut timestamps, scaled to the requested edit duration.")
+                return exactish
     valid = [float(value) for value in intervals
              if isinstance(value, (int, float)) and not isinstance(value, bool)
              and math.isfinite(float(value)) and float(value) > 0]
@@ -532,7 +562,8 @@ def make_boundaries(clip_count, beats, reference_profile=None):
     if beats:
         for index in range(1, clip_count):
             target = boundaries[index]
-            nearby = [beat for beat in beats if abs(beat - target) <= 0.42]
+            snap_window = 0.16 if reference_profile and reference_profile.get("cut_timestamps_seconds") else 0.42
+            nearby = [beat for beat in beats if abs(beat - target) <= snap_window]
             if not nearby:
                 continue
             candidate = min(nearby, key=lambda beat: abs(beat - target))
@@ -1249,6 +1280,7 @@ def main(argv=None):
         "median_cut_interval_seconds": ref_interval,
         "source": REFERENCE if os.path.isfile(REFERENCE) else None,
         "shot_intervals_seconds": ref_profile.get("shot_intervals_seconds", []) if ref_profile else [],
+        "cut_timestamps_seconds": ref_profile.get("cut_timestamps_seconds", []) if ref_profile else [],
         "scene_cut_count": ref_profile.get("scene_cut_count") if ref_profile else None,
         "used_for_planning": bool(ref_profile),
         "method": ref_profile.get("method") if ref_profile else None,
