@@ -21,6 +21,7 @@ jobs:
         run: |
           python -m py_compile src/agent_director.py src/heyaa/agents.py
           python -m json.tool params.json > /dev/null
+          bash -n scripts/install_realesrgan_linux.sh
       - name: Run dependency-free unit tests
         run: python -m unittest discover -s tests/unit -v
       - name: Run synthetic end-to-end render smoke test
