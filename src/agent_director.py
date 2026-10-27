@@ -5,6 +5,8 @@ import re
 import statistics
 import struct
 import subprocess
+import sys
+import time
 from fractions import Fraction
 from pathlib import Path
 
@@ -31,6 +33,15 @@ REFERENCE = "input/reference.mp4"
 OUTDIR = "output"
 WORK = "output/work"
 FINAL = "output/final_phonk_20s.mp4"
+VARIANT_INDEX = None
+VARIANT_SOURCE_POWERS = {1: 1.0, 2: 1.16, 3: 0.84, 4: 1.08, 5: 0.92}
+VARIANT_LABELS = {
+    1: "Reference-timed / balanced source progression",
+    2: "Reference-timed / early-source emphasis",
+    3: "Reference-timed / late-source emphasis",
+    4: "Reference-timed / gently early-weighted progression",
+    5: "Reference-timed / gently late-weighted progression",
+}
 SKULL_ASSET = str(Path(__file__).parent / "heyaa" / "assets" / "skull_freeze.svg")
 
 DURATION = None
@@ -583,7 +594,7 @@ def make_clip(index, item, source_duration):
     # the deterministic centered 9:16 crop fallback.
     if SMART_CROP_ENABLED:
         vf = (
-            "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,"
+            "[0:v]scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,"
             f"{crop_filter}"
             f"{'hflip,' if MIRROR_ENABLED else ''}"
             "eq=contrast=1.16:saturation=1.30:gamma=1.02,"
@@ -593,7 +604,7 @@ def make_clip(index, item, source_duration):
     else:
         vf = (
             "[0:v]split=2[bg][fg];"
-            "[bg]scale=1080:1920:force_original_aspect_ratio=increase,"
+            "[bg]scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,"
             "crop=1080:1920,boxblur=20:2,eq=brightness=-0.08:saturation=0.78[back];"
             "[fg]scale=1188:1188:force_original_aspect_ratio=increase,"
             "crop=1080:1080:x='(iw-1080)/2+5*sin(t*10)':y='(ih-1080)/2+4*cos(t*8)'"
@@ -840,9 +851,94 @@ def analyze_render_critique(path, duration):
     }
 
 
+def _run_variant_batch(args):
+    """Render independent, reviewable variants without redownloading source media."""
+    output_root = Path("output") / "variants"
+    output_root.mkdir(parents=True, exist_ok=True)
+    results = []
+    for index in range(1, args.variants + 1):
+        variant_dir = output_root / f"variant_{index:02d}"
+        final_path = variant_dir / "final_phonk.mp4"
+        report_path = variant_dir / "agent_report.json"
+        before_final = final_path.stat().st_mtime if final_path.is_file() else None
+        before_report = report_path.stat().st_mtime if report_path.is_file() else None
+        started = time.time()
+        command = [
+            sys.executable, str(Path(__file__).resolve()),
+            "--variants", "1", "--variant-index", str(index),
+        ]
+        # Download inputs once. Later variants reuse the validated local copies,
+        # including audio extracted from the reference when no music URL was given.
+        if index == 1:
+            for flag, value in (
+                ("--video-url", args.video_url),
+                ("--music-url", args.music_url),
+                ("--reference-url", args.reference_url),
+            ):
+                if value:
+                    command.extend([flag, value])
+        print(f"\\n[variants] Rendering {index}/{args.variants}: {VARIANT_LABELS.get(index, 'Reference-timed source variation')}", flush=True)
+        completed = subprocess.run(command, check=False)
+        report = {}
+        if report_path.is_file():
+            try:
+                report = json.loads(report_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                report = {}
+        fresh_final = final_path.is_file() and (before_final is None or final_path.stat().st_mtime > before_final)
+        fresh_report = report_path.is_file() and (before_report is None or report_path.stat().st_mtime > before_report)
+        export_status = report.get("results", {}).get("export_storage", {}).get("status")
+        status_ok = report.get("status") == "ready_for_human_review" and export_status == "ok"
+        success = completed.returncode == 0 and fresh_final and fresh_report and status_ok
+        results.append({
+            "index": index,
+            "label": VARIANT_LABELS.get(index, "Reference-timed source variation"),
+            "status": "ok" if success else "failed",
+            "exit_code": completed.returncode,
+            "video": str(final_path) if final_path.is_file() else None,
+            "agent_report": str(report_path) if report_path.is_file() else None,
+            "director_status": report.get("status"),
+            "export_status": export_status,
+        })
+        if index == 1 and not success:
+            # If the first run could not prepare inputs, subsequent runs would only
+            # repeat the same missing-input failure. Record them as unattempted.
+            for remaining in range(2, args.variants + 1):
+                results.append({
+                    "index": remaining,
+                    "label": VARIANT_LABELS.get(remaining, "Reference-timed source variation"),
+                    "status": "not_run", "video": None, "agent_report": None,
+                    "reason": "The first variant failed before producing a fresh, QA-approved output.",
+                })
+            break
+    manifest = {
+        "requested_variants": args.variants,
+        "minimum_requested": 3,
+        "same_reference_timing_and_soundtrack": True,
+        "differences": "Only the progression through source timestamps varies; added effects, reference cut pacing and audio source remain shared.",
+        "variants": results,
+    }
+    manifest_path = output_root / "index.json"
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"\\n[variants] Comparison manifest: {manifest_path}", flush=True)
+    for result in results:
+        print(f"[variants] {result['index']}: {result['status']} | {result.get('video') or result.get('reason', '')}", flush=True)
+    if len(results) != args.variants or any(item["status"] != "ok" for item in results):
+        raise SystemExit(1)
+
+
 def main(argv=None):
     global VIDEO, MUSIC, REFERENCE, EDIT_DURATION, DURATION, FREEZE, SUBJECT_OBSERVATIONS
+    global OUTDIR, WORK, FINAL, VARIANT_INDEX
     args = parse_media_source_args(argv)
+    if args.variant_index is None and args.variants > 1:
+        _run_variant_batch(args)
+        return
+    VARIANT_INDEX = args.variant_index
+    if VARIANT_INDEX is not None:
+        OUTDIR = str(Path("output") / "variants" / f"variant_{VARIANT_INDEX:02d}")
+        WORK = str(Path(OUTDIR) / "work")
+        FINAL = str(Path(OUTDIR) / "final_phonk.mp4")
     VIDEO, MUSIC, REFERENCE = prepare_media_sources(
         video_url=args.video_url,
         music_url=args.music_url,
@@ -927,7 +1023,11 @@ def main(argv=None):
         if dur_f <= 0:
             raise RuntimeError("EDL contains a zero-length clip after frame quantization.")
         timeline_center = (start_f + dur_f / 2) / FPS
-        local_target = timeline_center / EDIT_DURATION * context_duration
+        progress = max(0.0, min(1.0, timeline_center / max(EDIT_DURATION, 1 / FPS)))
+        source_power = VARIANT_SOURCE_POWERS.get(VARIANT_INDEX, 1.0)
+        # Keep the reference-derived output cut times identical across variants;
+        # vary only which point in the same coherent source window each shot samples.
+        local_target = (progress ** source_power) * context_duration
         local_center = choose_source_center(local_target, context_scenes, context_duration)
         source_center = context_start + local_center
         track_observation = subject_observation_near(
@@ -1214,6 +1314,15 @@ def main(argv=None):
         "render_report": render_report,
     }, emit=print_agent_event)
     agent_report["pre_render_review"] = pre_render_review
+    if VARIANT_INDEX is not None:
+        agent_report["variant"] = {
+            "index": VARIANT_INDEX,
+            "label": VARIANT_LABELS.get(VARIANT_INDEX, "Reference-timed source variation"),
+            "source_time_curve_power": VARIANT_SOURCE_POWERS.get(VARIANT_INDEX, 1.0),
+            "shared_reference_timing": True,
+            "shared_soundtrack": MUSIC,
+            "note": "Variation changes source-time emphasis only; it does not add extra overlays or effects beyond the configured edit.",
+        }
     print("[agent conference] Evidence-linked post-render review (not independent LLM chat):", flush=True)
     for turn in agent_report.get("agent_dialogue", []):
         print(f"[conference {turn['turn']}] {turn['speaker']} -> {turn['to']}: {turn['message']}")
