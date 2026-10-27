@@ -7,10 +7,13 @@ The current repository uses deterministic Python agents—not an independent LLM
 1. **Settings Agent** validates the real `params.json` values and rejects unsupported or out-of-range settings. It does not compare against hard-coded preferences for speed or Smart Crop.
 2. **Media Analyst** reports measured source duration, dimensions, scene-cut count and music duration. Scene cuts are visual-change heuristics, not semantic scene understanding.
 3. **Beat Sync Agent** reports whether beat sync is enabled, how many onset candidates were found and whether timing fell back to even pacing. It never treats candidates as guaranteed downbeats.
-4. **Planner / EDL Agent** runs the strict EDL validator and checks FPS, resolution, total frames and clip speed against the actual settings.
-5. **Niche Analyst** only scores if all normalized craft signals are supplied. Current render code measures a limited beat-alignment proxy from cuts and detected onsets; semantic hook strength, visual clarity, drop impact and motion energy remain unavailable unless measured by a future tested analyzer. Missing inputs produce `insufficient_evidence`, not a fabricated score.
-6. **Inspector / Critic** rejects render output when dimensions, FPS, configured FPS, codec, exact decoded frame count, duration, audio presence, full decode or file existence checks fail.
-7. **Export Storage** records successful promotion only after blocking technical QA passes. The last known-good final file is preserved if QA blocks the new render.
+4. **Reference Analyst** reports measured median cut pacing from an available reference. Missing/invalid references are surfaced and lead to default pacing; frames are not copied.
+5. **Framing Agent** checks EDL crop compatibility with the renderer, reports center-crop vs legacy blurred-background mode, and warns that mirror reverses text. Unsupported arbitrary crop rectangles block export.
+6. **Hook Analyst** measures opening scene-change count as a pacing proxy. It deliberately returns `insufficient_evidence` for semantic hook strength; the proxy is not an AI/content understanding score.
+7. **Planner / EDL Agent** runs the strict EDL validator and checks FPS, resolution, total frames and clip speed against the actual settings.
+8. **Niche Analyst** only scores if all normalized craft signals are supplied. Current render code measures a limited beat-alignment proxy from cuts and detected onsets; semantic hook strength, visual clarity, drop impact and motion energy remain unavailable unless measured by a future tested analyzer. Missing inputs produce `insufficient_evidence`, not a fabricated score.
+9. **Inspector / Critic** rejects render output when dimensions, FPS, configured FPS, codec, exact decoded frame count, duration, audio presence, full decode or file existence checks fail.
+10. **Export Storage** records successful promotion only after blocking technical QA passes. The last known-good final file is preserved if QA blocks the new render.
 
 Every stage returns a structured result with status, findings, recommendations and evidence. The event stream comes from agent execution rather than invented agent-to-agent chat. `main` is the Director/orchestrator: it executes media analysis and rendering, then supplies those real outputs to the agents.
 

@@ -619,6 +619,18 @@ def main():
         "fallback": "even_pacing" if BEAT_SYNC and len(beats) < 3 else None,
         "method": "bass-lowpass-rms-novelty-autocorrelation-heuristic" if BEAT_SYNC else "disabled",
     }
+    reference_analysis = {
+        "enabled": REFERENCE_PACING,
+        "available": os.path.isfile(REFERENCE) and ref_interval is not None,
+        "median_cut_interval_seconds": ref_interval,
+        "source": REFERENCE if os.path.isfile(REFERENCE) else None,
+    }
+    final_scenes = detect_scenes(final_video, actual)
+    hook_analysis = {
+        "window_seconds": min(2.0, actual),
+        "opening_scene_change_count": sum(1 for time in final_scenes if 0.0 < time <= min(2.0, actual)),
+        "measurement": "ffmpeg_scene_change",
+    }
     cut_times = [item["start_f"] / FPS for item in edl_video[:-1] if item["start_f"] > 0]
     niche_metrics = {}
     if cut_times and beats:
@@ -629,6 +641,7 @@ def main():
     agent_report = run_agent_team({
         "settings": CONFIG, "edl": edl,
         "media_analysis": media_analysis, "beat_analysis": beat_analysis,
+        "reference_analysis": reference_analysis, "hook_analysis": hook_analysis,
         "niche_metrics": niche_metrics, "niche_tags": ["phonk", "montagem", "vertical", "freeze"],
         "render_report": render_report,
     })

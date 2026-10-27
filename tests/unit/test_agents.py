@@ -1,8 +1,8 @@
 import unittest
 
 from src.heyaa.agents import (
-    beat_sync_agent, inspector, media_analyst, niche_analyst, planner,
-    run_agent_team, settings_agent,
+    beat_sync_agent, framing_agent, hook_analyst, inspector, media_analyst,
+    niche_analyst, planner, reference_analyst, run_agent_team, settings_agent,
 )
 
 
@@ -93,6 +93,25 @@ class AgentTests(unittest.TestCase):
         beat = beat_sync_agent({"enabled": True, "candidate_count": 0, "fallback": "even_pacing"})
         self.assertEqual(beat.status, "insufficient_evidence")
 
+
+    def test_reference_agent_reports_fallback_not_fake_reference_results(self):
+        result = reference_analyst({"enabled": True, "available": False, "source": None,
+                                    "median_cut_interval_seconds": None})
+        self.assertEqual(result.status, "insufficient_evidence")
+        self.assertFalse(result.evidence["used_for_planning"])
+
+    def test_framing_agent_rejects_ignored_edl_crop(self):
+        edl = sample_edl()
+        edl["video"][0]["crop"] = {"x": 0.2, "y": 0.0, "w": 0.8, "h": 1.0}
+        result = framing_agent(config(), edl)
+        self.assertEqual(result.status, "needs_fix")
+
+    def test_hook_agent_never_claims_semantic_hook_score_from_scene_changes(self):
+        result = hook_analyst({"window_seconds": 2.0, "opening_scene_change_count": 3})
+        self.assertEqual(result.status, "insufficient_evidence")
+        self.assertIsNone(result.score)
+        self.assertFalse(result.evidence["semantic_hook_assessed"])
+
     def test_team_emits_all_actual_structured_stages_and_blocks_missing_qa(self):
         emitted = []
         result = run_agent_team({
@@ -104,11 +123,14 @@ class AgentTests(unittest.TestCase):
             "render_report": render_report(),
         }, emit=emitted.append)
         self.assertEqual(result["status"], "ready_for_human_review")
-        self.assertEqual(len(emitted), 6)
+        self.assertEqual(len(emitted), 9)
         self.assertEqual(emitted, result["events"])
         self.assertFalse(result["viral_guarantee"])
         self.assertEqual(result["results"]["niche_analyst"]["status"], "insufficient_evidence")
         self.assertIn("planner", result["results"])
+        self.assertEqual(result["results"]["hook_analyst"]["status"], "insufficient_evidence")
+        self.assertEqual(result["results"]["reference_analyst"]["status"], "skipped")
+        self.assertEqual(result["results"]["framing_agent"]["status"], "ok")
         broken = run_agent_team({"settings": config(), "edl": sample_edl(), "render_report": {}})
         self.assertEqual(broken["status"], "blocked")
 

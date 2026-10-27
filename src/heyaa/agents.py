@@ -197,6 +197,80 @@ def planner(context: dict[str, Any]) -> AgentResult:
                         "frame_contiguous": True})
 
 
+def reference_analyst(data: dict[str, Any]) -> AgentResult:
+    """Report measured reference pacing only when a reference was actually analyzed."""
+    if data.get("enabled") is not True:
+        return AgentResult("reference_analyst", "skipped", None, 0.0,
+                           ("Reference pacing is disabled in params.json.",), (),
+                           {"enabled": False, "used_for_planning": False})
+    interval = data.get("median_cut_interval_seconds")
+    if data.get("available") is not True or not _finite_number(interval) or float(interval) <= 0:
+        return AgentResult("reference_analyst", "insufficient_evidence", None, 0.0,
+                           ("No usable reference pacing profile was measured; the renderer uses its default rhythm.",),
+                           ("Provide a valid reference.mp4 or disable reference pacing.",),
+                           {"enabled": True, "available": data.get("available") is True,
+                            "used_for_planning": False, "source": data.get("source")})
+    return AgentResult("reference_analyst", "ok", None, 0.8,
+                       ("Median reference cut interval was measured and used only as a rough pacing guide.",),
+                       ("Review the resulting rhythm against the actual soundtrack.",),
+                       {"enabled": True, "available": True, "used_for_planning": True,
+                        "source": data.get("source"),
+                        "median_cut_interval_seconds": round(float(interval), 4),
+                        "does_not_copy_reference_frames": True})
+
+
+def framing_agent(config: dict[str, Any], edl: dict[str, Any]) -> AgentResult:
+    """Check that the EDL framing can be represented by the current renderer."""
+    edit = config.get("edit_settings", {}) if isinstance(config, dict) else {}
+    clips = [item for item in edl.get("video", []) if item.get("type") == "clip"] if isinstance(edl, dict) else []
+    if not clips:
+        return AgentResult("framing_agent", "blocked", None, 0.0,
+                           ("No video clips were available to inspect for framing.",),
+                           ("Build a valid EDL before framing review.",), {"clip_count": 0})
+    unsupported = []
+    for index, item in enumerate(clips):
+        crop = item.get("crop", {})
+        if any(abs(float(crop.get(k, -1)) - v) > 1e-6 for k, v in
+               (("x", 0.0), ("y", 0.0), ("w", 1.0), ("h", 1.0))):
+            unsupported.append(index)
+    if unsupported:
+        return AgentResult("framing_agent", "needs_fix", None, 1.0,
+                           ("EDL contains per-shot crop rectangles the current FFmpeg renderer does not implement.",),
+                           ("Use the supported full-source crop or implement and test arbitrary EDL crop rectangles before rendering.",),
+                           {"unsupported_crop_indices": unsupported, "clip_count": len(clips)})
+    smart_crop = edit.get("smart_crop")
+    mirror = edit.get("mirror_enabled")
+    mode = "center_crop_9_16" if smart_crop is True else "blurred_background_legacy"
+    recs = []
+    findings = ["Every EDL clip uses the framing mode currently implemented by FFmpeg."]
+    if mirror is True:
+        recs.append("Mirroring is active; inspect any visible text because horizontal flipping reverses writing.")
+    findings.append("Framing mode is centered aspect crop, not face/subject tracking." if smart_crop is True
+                    else "Legacy blurred-background framing is explicitly selected.")
+    return AgentResult("framing_agent", "ok", None, 1.0, tuple(findings), tuple(recs),
+                       {"mode": mode, "mirror_enabled": mirror, "clip_count": len(clips),
+                        "subject_tracking": False, "arbitrary_crop_rectangles_supported": False})
+
+
+def hook_analyst(data: dict[str, Any]) -> AgentResult:
+    """Measure an opening-pacing proxy without pretending it understands semantic hooks."""
+    count = data.get("opening_scene_change_count")
+    window = data.get("window_seconds")
+    if (not isinstance(count, int) or isinstance(count, bool) or count < 0 or
+            not _finite_number(window) or float(window) <= 0):
+        return AgentResult("hook_analyst", "insufficient_evidence", None, 0.0,
+                           ("No valid opening-window analysis was supplied.",),
+                           ("Run the opening-window scene-change probe before review.",),
+                           {"semantic_hook_assessed": False})
+    return AgentResult("hook_analyst", "insufficient_evidence", None, 0.0,
+                       ("Opening scene changes were measured, but semantic hook strength was not assessed.",),
+                       ("Human-review the first seconds for a clear subject, readable action and immediate reason to keep watching.",
+                        "Do not use scene-change count alone as a hook score."),
+                       {"measurement": data.get("measurement", "ffmpeg_scene_change"),
+                        "window_seconds": float(window), "opening_scene_change_count": count,
+                        "semantic_hook_assessed": False, "hook_strength_score": None})
+
+
 def niche_analyst(metrics: dict[str, Any], tags: list[str] | None = None) -> AgentResult:
     """Score craft only when measured signals are supplied; never predict virality."""
     tags = tags or []
@@ -314,13 +388,20 @@ def run_agent_team(context: dict[str, Any],
     record(media, "media_analysis")
     beat = beat_sync_agent(context.get("beat_analysis", {}))
     record(beat, "beat_analysis")
+    reference = reference_analyst(context.get("reference_analysis", {}))
+    record(reference, "reference_analysis")
+    framing = framing_agent(settings, context.get("edl", {}))
+    record(framing, "framing_review")
+    hook = hook_analyst(context.get("hook_analysis", {}))
+    record(hook, "opening_hook_review")
     plan = planner(context)
     record(plan, "edl_planning")
     niche = niche_analyst(context.get("niche_metrics", {}), context.get("niche_tags", []))
     record(niche, "craft_review")
     qa = inspector(context.get("render_report", {}))
     record(qa, "render_qa")
-    blocked = setting_result.status != "ok" or plan.status != "ok" or qa.status != "ok"
+    blocked = (setting_result.status != "ok" or plan.status != "ok" or
+               framing.status in ("blocked", "needs_fix") or qa.status != "ok")
     status = "blocked" if blocked else "ready_for_human_review"
     return {
         "status": status,
@@ -329,10 +410,13 @@ def run_agent_team(context: dict[str, Any],
         "summary": ("Technical QA blocked export; inspect failures." if blocked else
                     "Technical render QA passed; visual/human review is still required."),
         "results": {"settings_agent": asdict(setting_result), "media_analyst": asdict(media),
-                    "beat_sync_agent": asdict(beat), "planner": asdict(plan),
-                    "niche_analyst": asdict(niche), "inspector": asdict(qa)},
+                    "beat_sync_agent": asdict(beat), "reference_analyst": asdict(reference),
+                    "framing_agent": asdict(framing), "hook_analyst": asdict(hook),
+                    "planner": asdict(plan), "niche_analyst": asdict(niche), "inspector": asdict(qa)},
         "render_report": dict(context.get("render_report", {})),
         "media_analysis": dict(context.get("media_analysis", {})),
         "beat_analysis": dict(context.get("beat_analysis", {})),
+        "reference_analysis": dict(context.get("reference_analysis", {})),
+        "hook_analysis": dict(context.get("hook_analysis", {})),
         "events": [asdict(event) for event in events],
     }
