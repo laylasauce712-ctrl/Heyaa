@@ -12,6 +12,12 @@ from src.heyaa.media_sources import parse_media_source_args
 
 
 class ProgressTraceTests(unittest.TestCase):
+    def test_local_settings_path_can_be_selected_without_editing_params_json(self):
+        with patch.dict("os.environ", {"HEYAA_PARAMS_PATH": "params.local.json"}):
+            self.assertEqual(renderer._settings_path(), "params.local.json")
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(renderer._settings_path(), "params.json")
+
     def test_reference_availability_comes_from_measured_pacing_evidence(self):
         # reference_pacing_profile() returns measured fields; it does not need an
         # additional "available" flag for progress reporting.
