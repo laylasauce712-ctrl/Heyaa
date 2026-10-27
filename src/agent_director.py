@@ -1090,11 +1090,11 @@ def measure_source_scene_features(path, scene_segments):
                 f"FFmpeg scene-feature analysis failed for segment {index}: {output[-800:]}"
             )
         loudness = re.findall(
-            r"RMS level dB:\s*(-?inf|-?(?:\\d+(?:\\.\\d*)?|\\.\\d+))",
+            r"RMS level dB:\s*(-?inf|-?(?:\d+(?:\.\d*)?|\.\d+))",
             output, re.IGNORECASE,
         )
         motion = re.findall(
-            r"lavfi\\.signalstats\\.YAVG\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)",
+            r"lavfi\.signalstats\.YAVG\s*=\s*([0-9]+(?:\.[0-9]+)?)",
             output,
         )
         if not loudness:
@@ -1229,8 +1229,8 @@ def plan_ranked_disjoint_source_ranges(source_durations_frames, scene_segments, 
             if dp[scene_index - 1][assigned] > dp[scene_index][assigned]:
                 dp[scene_index][assigned] = dp[scene_index - 1][assigned]
                 back[scene_index][assigned] = (assigned, 0)
-            lower_count = max(1, assigned - max_per_scene)
-            for count in range(lower_count, assigned + 1):
+            upper_count = min(assigned, max_per_scene)
+            for count in range(1, upper_count + 1):
                 previous_assigned = assigned - count
                 if dp[scene_index - 1][previous_assigned] == negative:
                     continue

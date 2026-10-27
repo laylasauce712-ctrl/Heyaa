@@ -1,6 +1,8 @@
 import math
 import statistics
+import subprocess
 import unittest
+from unittest.mock import patch
 
 from src import agent_director as renderer
 from src.heyaa.agents import settings_agent
@@ -161,6 +163,22 @@ class ContextPlanningTests(unittest.TestCase):
         cfg["edit_settings"]["min_shot_seconds"] = 0.75
         cfg["edit_settings"]["max_clips"] = 41
         self.assertEqual(settings_agent(cfg).status, "blocked")
+
+    def test_scene_feature_parser_reads_astats_rms_and_motion_metadata(self):
+        logs = (
+            "frame:0 pts:0 pts_time:0.0\\n"
+            "lavfi.signalstats.YAVG=3.25\\n"
+            "Overall\\nRMS level dB: -12.50\\n"
+        )
+        with patch(
+            "src.agent_director.subprocess.run",
+            return_value=subprocess.CompletedProcess(["ffmpeg"], 0, "", logs),
+        ):
+            measured = renderer.measure_source_scene_features(
+                "fixture.mp4", [{"start_seconds": 0.0, "end_seconds": 1.0}]
+            )
+        self.assertAlmostEqual(measured[0]["audio_loudness_db"], -12.5)
+        self.assertAlmostEqual(measured[0]["motion_score"], 3.25)
 
     def test_ranked_multiscene_assignment_is_chronological_disjoint_and_has_no_forced_shift(self):
         fps = 10
