@@ -9,6 +9,11 @@ from fractions import Fraction
 from pathlib import Path
 
 try:
+    from src.heyaa.media_sources import parse_media_source_args, prepare_media_sources
+except ModuleNotFoundError:
+    from heyaa.media_sources import parse_media_source_args, prepare_media_sources
+
+try:
     from src.heyaa.edl.validate import validate_edl
 except ModuleNotFoundError:
     from heyaa.edl.validate import validate_edl
@@ -529,8 +534,17 @@ def analyze_render_critique(path, duration):
     }
 
 
-def main():
-    global EDIT_DURATION, DURATION, FREEZE
+def main(argv=None):
+    global VIDEO, MUSIC, REFERENCE, EDIT_DURATION, DURATION, FREEZE
+    args = parse_media_source_args(argv)
+    VIDEO, MUSIC, REFERENCE = prepare_media_sources(
+        video_url=args.video_url,
+        music_url=args.music_url,
+        reference_url=args.reference_url,
+        video_path=VIDEO,
+        music_path=MUSIC,
+        reference_path=REFERENCE,
+    )
     load_settings()
     EDIT_DURATION = DURATION - FREEZE
     os.makedirs(OUTDIR, exist_ok=True)
