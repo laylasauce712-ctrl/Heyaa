@@ -19,7 +19,8 @@ The current repository runs deterministic Python modules—not an independent LL
 
 ## Not implemented yet
 
-- No independent LLM agents, online trend research agent, vision-model reviewer, face/subject tracking, AI upscaling, frontend/Agent Room, publish agent or autonomous publishing.
+- No independent LLM agents, online trend research agent, semantic vision-model reviewer, identity/action recognition, AI upscaling, frontend/Agent Room, publish agent or autonomous publishing. The renderer has an **optional OpenCV HOG appearance-track proxy** for framing/cut selection; it can be absent if OpenCV is not installed and it cannot identify Messi or verify that the same person continues across shots.
+- To enable that lightweight local detector in a Python environment, install the optional extra with `python3 -m pip install -r requirements-vision.txt`. This improves person-shaped detection/crop centering where HOG sees the subject; it is not a replacement for semantic video understanding.
 - No semantic hook score or complete aesthetic craft score. Technical metrics cannot determine whether framing, timing or style feels right for a human viewer.
 - No automatic retry loop yet. A failed technical gate blocks promotion and records findings for diagnosis.
 - EDL v1 supports one audio segment spanning the full timeline and the full-source crop rectangle; unsupported schedules/rectangles fail fast.
