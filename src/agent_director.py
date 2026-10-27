@@ -120,9 +120,35 @@ def detect_scenes(path, duration):
     return sorted(set(times))
 
 
+def _estimate_period_frames(envelope, min_lag=25, max_lag=100):
+    """Estimate a plausible beat period from onset-envelope autocorrelation."""
+    if len(envelope) < min_lag * 3:
+        return None
+    mean = sum(envelope) / len(envelope)
+    centered = [value - mean for value in envelope]
+    best_lag, best_score = None, 0.0
+    upper = min(max_lag, len(centered) // 3)
+    for lag in range(min_lag, upper + 1):
+        left = centered[lag:]
+        right = centered[:-lag]
+        numerator = sum(x * y for x, y in zip(left, right))
+        left_energy = sum(x * x for x in left)
+        right_energy = sum(y * y for y in right)
+        denominator = math.sqrt(left_energy * right_energy)
+        score = numerator / denominator if denominator > 1e-12 else 0.0
+        if score > best_score:
+            best_lag, best_score = lag, score
+    return best_lag if best_score >= 0.12 else None
+
+
 def detect_music_beats(path, limit):
-    """Estimate beat transients from low-frequency PCM energy using stdlib only."""
-    print("[analyze] Phonk beat/bass transients...")
+    """Estimate beat candidates from bass transients plus an autocorrelation tempo prior.
+
+    This remains a lightweight heuristic, not a downbeat detector. It combines
+    local onset novelty with periodicity so repeated loud bass noise is less
+    likely to be mistaken for a sequence of unrelated beats.
+    """
+    print("[analyze] Phonk beat/bass transients and tempo periodicity...")
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", path,
         "-vn", "-ac", "1", "-ar", "8000", "-af", "lowpass=f=160",
@@ -146,35 +172,49 @@ def detect_music_beats(path, limit):
             bucket = []
     if bucket:
         energies.append(math.sqrt(sum(bucket) / len(bucket)))
-    if len(energies) < 5:
+    if len(energies) < 8:
         return []
 
-    ordered = sorted(energies)
-    median = ordered[len(ordered) // 2]
-    peak_value = max(energies)
-    threshold = median + (peak_value - median) * 0.24
+    # Positive local energy changes approximate onset strength without NumPy.
+    novelty = [0.0] * len(energies)
+    for i in range(2, len(energies)):
+        local_floor = sorted(energies[max(0, i - 5):i])[len(energies[max(0, i - 5):i]) // 2]
+        novelty[i] = max(0.0, energies[i] - local_floor)
+
+    period_frames = _estimate_period_frames(novelty)
+    if period_frames:
+        bpm = 60.0 / (period_frames * 0.02)
+        min_spacing = max(0.24, period_frames * 0.02 * 0.52)
+        print(f"[analyze] Bass-onset periodicity suggests about {bpm:.0f} BPM (heuristic).")
+    else:
+        min_spacing = 0.24
+        print("[warn] No stable tempo periodicity; using onset-only candidates.")
+
+    ordered = sorted(novelty)
+    median_novelty = ordered[len(ordered) // 2]
+    peak_novelty = max(novelty)
+    threshold = median_novelty + (peak_novelty - median_novelty) * 0.24
     candidates = []
-    for i in range(2, len(energies) - 2):
-        value = energies[i]
-        if value < threshold:
+    for i in range(2, len(novelty) - 2):
+        value = novelty[i]
+        if value <= 0 or value < threshold:
             continue
-        if value >= max(energies[i - 2:i]) and value >= max(energies[i + 1:i + 3]):
+        if value >= max(novelty[i - 2:i]) and value >= max(novelty[i + 1:i + 3]):
             timestamp = i * 0.02
             if 0.08 <= timestamp < min(limit, len(energies) * 0.02):
                 candidates.append((value, timestamp))
 
-    # Keep the strongest transient in each short interval to avoid double hits.
+    # Keep the strongest onset per tempo-aware interval; reject near-duplicate peaks.
     chosen = []
     for value, timestamp in sorted(candidates, reverse=True):
-        if all(abs(timestamp - existing) >= 0.24 for existing in chosen):
+        if all(abs(timestamp - existing) >= min_spacing for existing in chosen):
             chosen.append(timestamp)
     beats = sorted(t for t in chosen if t < limit)
     if len(beats) < 3:
-        print("[warn] Few clear bass hits found; edit timing will use fallback beats.")
+        print("[warn] Few clear bass onsets found; edit timing will use fallback beats.")
         return []
-    print(f"[analyze] Detected {len(beats)} likely beat hits in the edit window.")
+    print(f"[analyze] Detected {len(beats)} likely beat/onset candidates in the edit window.")
     return beats
-
 
 def reference_cut_interval(reference_path):
     """Turn reference.mp4 cut rhythm into a rough pacing profile."""
