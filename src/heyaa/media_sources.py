@@ -170,8 +170,8 @@ def download_youtube(url: str, target_path: str | Path, kind: str) -> Path:
             ) from exc
         command = [sys.executable, "-m", "yt_dlp"]
     command += [
-        "--ignore-config", "--no-warnings", "--newline", "--progress", "--progress-delta", "1",
-        "--socket-timeout", "20", "--retries", "2", "--fragment-retries", "2",
+        "--ignore-config", "--no-playlist", "--newline", "--progress", "--progress-delta", "1",
+        "--force-ipv4", "--socket-timeout", "20", "--retries", "2", "--fragment-retries", "2",
         "--force-overwrites", "-o", str(target.parent / f"{target.stem}.%(ext)s"),
         "--print-to-file", "after_move:filepath", str(path_report),
     ]
