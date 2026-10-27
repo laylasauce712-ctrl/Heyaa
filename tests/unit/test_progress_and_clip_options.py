@@ -12,6 +12,20 @@ from src.heyaa.media_sources import parse_media_source_args
 
 
 class ProgressTraceTests(unittest.TestCase):
+    def test_reference_availability_comes_from_measured_pacing_evidence(self):
+        # reference_pacing_profile() returns measured fields; it does not need an
+        # additional "available" flag for progress reporting.
+        profile = {
+            "median_cut_interval_seconds": 0.55,
+            "shot_intervals_seconds": [0.5, 0.6, 0.5],
+        }
+        self.assertTrue(renderer._has_usable_reference_profile(profile))
+        self.assertFalse(renderer._has_usable_reference_profile({
+            "median_cut_interval_seconds": None,
+            "shot_intervals_seconds": [],
+        }))
+        self.assertFalse(renderer._has_usable_reference_profile(None))
+
     def test_variant_interrupt_stops_child_and_exits_with_130(self):
         child = unittest.mock.Mock()
         child.pid = 4321
