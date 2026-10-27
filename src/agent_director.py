@@ -82,6 +82,38 @@ AI_UPSCALE_MODELS = {
 }
 
 
+def reset_progress_log():
+    """Start a fresh durable JSONL event trace for this render."""
+    path = Path(OUTDIR) / "progress.jsonl"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("", encoding="utf-8")
+    except OSError as exc:
+        print(f"[progress] Could not initialize {path}: {exc}", flush=True)
+
+
+def progress_event(stage, status, summary, details=None, *, echo=True):
+    """Persist a truthful stage/agent event and optionally stream it to the terminal."""
+    event = {
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "stage": str(stage),
+        "status": str(status),
+        "summary": str(summary),
+        "details": details if details is not None else {},
+    }
+    if echo:
+        print(f"[progress:{event['stage']}] {event['status']}: {event['summary']}", flush=True)
+    path = Path(OUTDIR) / "progress.jsonl"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(event, ensure_ascii=False, default=str) + "\n")
+    except OSError as exc:
+        if echo:
+            print(f"[progress] Could not append {path}: {exc}", flush=True)
+    return event
+
+
 def load_settings():
     """Load and strictly validate params.json; unsupported values fail fast."""
     global DURATION, FPS, WIDTH, HEIGHT, CRF, PRESET, SPEED, FREEZE, EDIT_DURATION
@@ -525,7 +557,17 @@ def reference_cut_interval(reference_path):
     return profile.get("median_cut_interval_seconds") if profile else None
 
 
-def choose_clip_count(reference_interval):
+def choose_clip_count(reference_interval, requested_count=None):
+    """Choose the measured-reference count unless the user requests an allowed exact count."""
+    if requested_count is not None:
+        if isinstance(requested_count, bool) or not isinstance(requested_count, int):
+            raise ValueError("clip_count must be an integer.")
+        if not MIN_CLIPS <= requested_count <= MAX_CLIPS:
+            raise ValueError(
+                f"Requested clip_count={requested_count} is outside params.json bounds "
+                f"{MIN_CLIPS}–{MAX_CLIPS}."
+            )
+        return requested_count
     # Bound the workload for mobile rendering while letting the reference affect pacing.
     if reference_interval is None:
         return MIN_CLIPS
@@ -941,6 +983,12 @@ def print_pre_render_review(review):
     print("[agent conference: pre-render] Evidence-linked planning review (rule-based, not independent LLM chat):", flush=True)
     for turn in review:
         print(f"[preflight {turn['turn']}] {turn['speaker']} -> {turn['to']}: {turn['message']}", flush=True)
+        progress_event(
+            "pre_render_agent_review", "completed", turn["message"],
+            {"turn": turn["turn"], "speaker": turn["speaker"], "to": turn["to"],
+             "evidence": turn.get("evidence", {})},
+            echo=False,
+        )
 
 
 def make_flash_filter(beats):
@@ -1061,6 +1109,37 @@ def _run_variant_batch(args):
     """Render independent, reviewable variants without redownloading source media."""
     output_root = Path("output") / "variants"
     output_root.mkdir(parents=True, exist_ok=True)
+    if args.clip_count_options is not None:
+        if len(args.clip_count_options) != args.variants:
+            progress_event("clip_count_options", "blocked",
+                           f"{len(args.clip_count_options)} clip counts supplied for {args.variants} variants.")
+            raise SystemExit(
+                "--clip-count-options must contain exactly one count per variant; "
+                "for example use --variants 3 --clip-count-options 8,12,16."
+            )
+        try:
+            settings = json.loads(Path("params.json").read_text(encoding="utf-8"))
+            edit_settings = settings["edit_settings"]
+            min_clips, max_clips = int(edit_settings["min_clips"]), int(edit_settings["max_clips"])
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            progress_event("clip_count_options", "blocked", f"Could not validate clip options against params.json: {exc}")
+            raise SystemExit(f"Cannot validate clip-count alternatives against params.json: {exc}") from exc
+        outside = [count for count in args.clip_count_options if not min_clips <= count <= max_clips]
+        if outside:
+            progress_event(
+                "clip_count_options", "blocked",
+                f"Clip counts {outside} are outside configured bounds {min_clips}–{max_clips}.",
+                {"requested": list(args.clip_count_options), "min_clips": min_clips, "max_clips": max_clips},
+            )
+            raise SystemExit(
+                f"Every --clip-count-options value must be within params.json bounds {min_clips}–{max_clips}; "
+                f"invalid: {outside}."
+            )
+    progress_event(
+        "variant_batch", "running",
+        f"Preparing {args.variants} candidate render(s).",
+        {"variants": args.variants, "clip_count_options": list(args.clip_count_options) if args.clip_count_options else None},
+    )
     results = []
     for index in range(1, args.variants + 1):
         variant_dir = output_root / f"variant_{index:02d}"
@@ -1083,8 +1162,17 @@ def _run_variant_batch(args):
             ):
                 if value:
                     command.extend([flag, value])
+        selected_clip_count = args.clip_count_options[index - 1] if args.clip_count_options else None
+        variant_label = VARIANT_LABELS.get(index, "Reference-timed source variation")
+        if selected_clip_count is not None:
+            variant_label = f"{selected_clip_count} clips | {variant_label}"
+            command.extend(["--clip-count", str(selected_clip_count)])
+        progress_event(
+            "variant_start", "running", f"Rendering candidate {index}/{args.variants}: {variant_label}",
+            {"index": index, "clip_count": selected_clip_count, "video_path": str(final_path)},
+        )
         print()
-        print(f"[variants] Rendering {index}/{args.variants}: {VARIANT_LABELS.get(index, 'Reference-timed source variation')}", flush=True)
+        print(f"[variants] Rendering {index}/{args.variants}: {variant_label}", flush=True)
         completed = subprocess.run(command, check=False)
         report = {}
         if report_path.is_file():
@@ -1099,7 +1187,8 @@ def _run_variant_batch(args):
         success = completed.returncode == 0 and fresh_final and fresh_report and status_ok
         results.append({
             "index": index,
-            "label": VARIANT_LABELS.get(index, "Reference-timed source variation"),
+            "label": variant_label,
+            "clip_count": selected_clip_count if selected_clip_count is not None else report.get("clip_selection", {}).get("selected_clip_count"),
             "status": "ok" if success else "failed",
             "exit_code": completed.returncode,
             "video": str(final_path) if final_path.is_file() else None,
@@ -1107,6 +1196,11 @@ def _run_variant_batch(args):
             "director_status": report.get("status"),
             "export_status": export_status,
         })
+        progress_event(
+            "variant_complete", "success" if success else "error",
+            f"Candidate {index}/{args.variants}: {'approved for human review' if success else 'failed QA or render checks'}.",
+            results[-1],
+        )
         if index == 1 and not success:
             # If the first run could not prepare inputs, subsequent runs would only
             # repeat the same missing-input failure. Record them as unattempted.
@@ -1122,13 +1216,21 @@ def _run_variant_batch(args):
         "requested_variants": args.variants,
         "minimum_requested": 3,
         "same_reference_timing_and_soundtrack": True,
-        "differences": "Only the progression through source timestamps varies; added effects, reference cut pacing and audio source remain shared.",
+        "clip_count_options": list(args.clip_count_options) if args.clip_count_options else None,
+        "differences": (
+            "Motion clip count and source-time progression vary; effects, reference pacing and soundtrack remain shared."
+            if args.clip_count_options else
+            "Only the progression through source timestamps varies; added effects, reference cut pacing and audio source remain shared."
+        ),
         "variants": results,
     }
     manifest_path = output_root / "index.json"
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     print()
     print(f"[variants] Comparison manifest: {manifest_path}", flush=True)
+    progress_event("variant_batch", "completed" if all(item["status"] == "ok" for item in results) else "error",
+                   f"Comparison manifest written to {manifest_path}.",
+                   {"manifest_path": str(manifest_path), "variants": results})
     for result in results:
         print(f"[variants] {result['index']}: {result['status']} | {result.get('video') or result.get('reason', '')}", flush=True)
     if len(results) != args.variants or any(item["status"] != "ok" for item in results):
@@ -1139,7 +1241,14 @@ def main(argv=None):
     global VIDEO, MUSIC, REFERENCE, EDIT_DURATION, DURATION, FREEZE, SUBJECT_OBSERVATIONS
     global OUTDIR, WORK, FINAL, VARIANT_INDEX
     args = parse_media_source_args(argv)
+    if args.clip_count_options is not None and args.variant_index is None and args.variants == 1:
+        if len(args.clip_count_options) != 1:
+            raise SystemExit("--variants 1 requires exactly one --clip-count-options value.")
+        args.clip_count = args.clip_count_options[0]
     if args.variant_index is None and args.variants > 1:
+        Path(OUTDIR).mkdir(parents=True, exist_ok=True)
+        reset_progress_log()
+        progress_event("run", "started", "Starting comparison render batch.")
         _run_variant_batch(args)
         return
     VARIANT_INDEX = args.variant_index
@@ -1147,9 +1256,25 @@ def main(argv=None):
         OUTDIR = str(Path("output") / "variants" / f"variant_{VARIANT_INDEX:02d}")
         WORK = str(Path(OUTDIR) / "work")
         FINAL = str(Path(OUTDIR) / "final_phonk.mp4")
-    # Validate configuration and required AI tools before downloading source media.
+    reset_progress_log()
+    progress_event("run", "started", "Heyaa render pipeline started.",
+                   {"variant_index": VARIANT_INDEX, "variants_requested": args.variants,
+                    "clip_count_override": args.clip_count})
+    progress_event("settings", "running", "Validating params.json.")
     load_settings()
+    progress_event("settings", "completed", "Settings validated.",
+                   {"resolution": f"{WIDTH}x{HEIGHT}", "fps": FPS,
+                    "duration_seconds": DURATION, "freeze_seconds": FREEZE,
+                    "min_clips": MIN_CLIPS, "max_clips": MAX_CLIPS})
+    progress_event("ai_upscale_preflight", "running", "Checking configured Real-ESRGAN executable and model weights.")
     resolve_ai_upscaler()
+    progress_event(
+        "ai_upscale_preflight", "completed" if AI_UPSCALE_ENABLED else "skipped",
+        (f"Real-ESRGAN ready ({AI_UPSCALE_MODEL} x{AI_UPSCALE_SCALE})."
+         if AI_UPSCALE_ENABLED else "AI restoration disabled by settings."),
+        {"enabled": AI_UPSCALE_ENABLED, "model": AI_UPSCALE_MODEL, "scale": AI_UPSCALE_SCALE},
+    )
+    progress_event("source_preparation", "running", "Preparing and validating source video, music, and optional reference.")
     VIDEO, MUSIC, REFERENCE = prepare_media_sources(
         video_url=args.video_url,
         music_url=args.music_url,
@@ -1158,6 +1283,9 @@ def main(argv=None):
         music_path=MUSIC,
         reference_path=REFERENCE,
     )
+    progress_event("source_preparation", "completed", "Required source files validated.",
+                   {"video": VIDEO, "music": MUSIC,
+                    "reference": REFERENCE if Path(REFERENCE).is_file() else None})
     EDIT_DURATION = DURATION - FREEZE
     os.makedirs(OUTDIR, exist_ok=True)
     os.makedirs(WORK, exist_ok=True)
@@ -1172,10 +1300,18 @@ def main(argv=None):
     print(f"[source] Video {source_duration:.2f}s | Music {music_duration:.2f}s")
     print(f"[target] {WIDTH}x{HEIGHT}, {FPS} FPS, {DURATION:.1f}s, Phonk/Montagem")
 
+    progress_event("media_analysis", "running", "Detecting source scene changes.")
     scenes = detect_scenes(VIDEO, source_duration)
+    progress_event("media_analysis", "completed", f"Measured {len(scenes)} source scene-change candidate(s).",
+                   {"scene_change_count": len(scenes), "source_duration_seconds": source_duration})
     available_edit_duration = DURATION - FREEZE
+    progress_event("beat_analysis", "running", "Measuring bass-onset / beat candidates.")
     raw_beats = detect_music_beats(MUSIC, available_edit_duration) if BEAT_SYNC else []
     beats = extend_looped_beats(raw_beats, music_duration, available_edit_duration, MUSIC_LOOP)
+    progress_event("beat_analysis", "completed" if BEAT_SYNC else "skipped",
+                   f"Prepared {len(beats)} timing candidate(s).",
+                   {"beat_sync_enabled": BEAT_SYNC, "candidate_count": len(beats),
+                    "music_loop_enabled": MUSIC_LOOP})
     drop_beat_time = choose_drop_beat(music_duration, available_edit_duration, MUSIC_LOOP)
     total_frames, freeze_frames = round(DURATION * FPS), round(FREEZE * FPS)
     drop_freeze_frames = max(1, round(DROP_FREEZE_DURATION * FPS)) if drop_beat_time is not None else 0
@@ -1185,9 +1321,25 @@ def main(argv=None):
         round(beat if drop_beat_time is None or beat <= drop_beat_time else beat - drop_freeze_duration, 6)
         for beat in beats if beat < available_edit_duration
     ]
+    progress_event("reference_analysis", "running" if REFERENCE_PACING else "skipped",
+                   "Measuring reference shot pacing." if REFERENCE_PACING else "Reference pacing is disabled.")
     ref_profile = reference_pacing_profile(REFERENCE) if REFERENCE_PACING else None
     ref_interval = ref_profile.get("median_cut_interval_seconds") if ref_profile else None
-    clip_count = choose_clip_count(ref_interval)
+    progress_event("reference_analysis", "completed" if ref_interval is not None else ("skipped" if not REFERENCE_PACING else "needs_review"),
+                   "Reference pacing profile ready." if ref_interval is not None else "No usable measured reference interval; configured fallback will be used.",
+                   {"median_cut_interval_seconds": ref_interval,
+                    "reference_available": bool(ref_profile and ref_profile.get("available"))})
+    clip_count = choose_clip_count(ref_interval, args.clip_count)
+    clip_selection_mode = (
+        "explicit_user_choice" if args.clip_count is not None
+        else "reference_pacing" if ref_interval is not None
+        else "configured_minimum_fallback"
+    )
+    progress_event("clip_planning", "completed",
+                   f"Selected {clip_count} motion clips ({clip_selection_mode.replace('_', ' ')}).",
+                   {"selected_clip_count": clip_count, "selection_mode": clip_selection_mode,
+                    "requested_clip_count": args.clip_count, "min_clips": MIN_CLIPS,
+                    "max_clips": MAX_CLIPS, "reference_median_cut_interval_seconds": ref_interval})
     boundaries_seconds = make_boundaries(clip_count, adjusted_beats, ref_profile)
     planned_drop_position = None
     if drop_beat_time is not None:
@@ -1314,9 +1466,14 @@ def main(argv=None):
     DURATION = total_frames / FPS
     with open(os.path.join(OUTDIR, "edit_decision_list.json"), "w", encoding="utf-8") as handle:
         json.dump(edl, handle, ensure_ascii=False, indent=2)
-    print(f"[edl] Validated {len([item for item in edl_video if item['type'] == 'clip'])} clips + "
+    actual_motion_clip_count = len([item for item in edl_video if item["type"] == "clip"])
+    print(f"[edl] Validated {actual_motion_clip_count} clips + "
           f"{len([item for item in edl_video if item['type'] == 'freeze'])} freeze segments; "
           f"{total_frames} frames, no gaps.")
+    progress_event("edl_validation", "completed",
+                   f"EDL validated: {actual_motion_clip_count} motion clips and {total_frames} frames, no gaps.",
+                   {"motion_clip_count": actual_motion_clip_count, "total_frames": total_frames,
+                    "clip_selection_mode": clip_selection_mode})
     pre_render_review = build_pre_render_review(
         edl, len(beats), drop_beat_time, drop_freeze_duration, ref_profile, context, subject_analysis
     )
@@ -1334,17 +1491,29 @@ def main(argv=None):
             clip_number += 1
             length = item["dur_f"] / FPS
             center = item["source_start_f"] / FPS + (item["source_dur_f"] / FPS) / 2
+            progress_event("render_clip", "running", f"Rendering motion clip {clip_number}/{clip_total}.",
+                           {"clip_number": clip_number, "clip_total": clip_total,
+                            "source_center_seconds": round(center, 4),
+                            "output_duration_seconds": round(length, 4)})
             print(f"  EDL clip {clip_number}/{clip_total}: source {center:.2f}s, output {length:.3f}s")
             clip_path = make_clip(index, item, source_duration)
+            progress_event("render_clip", "completed", f"Motion clip {clip_number}/{clip_total} rendered.",
+                           {"clip_number": clip_number, "clip_total": clip_total,
+                            "output_duration_seconds": round(length, 4)})
         else:
+            progress_event("drop_impact_freeze", "running",
+                           f"Rendering the {item['dur_f'] / FPS:.3f}s drop-impact hold.")
             print(f"  [impact] Holding the preceding shot for {item['dur_f'] / FPS:.3f}s in black-and-white with a brief shake.")
             if previous_clip is None:
                 raise RuntimeError("Drop-impact freeze appeared before the first rendered shot.")
             clip_path = make_freeze_clip(index, item, previous_clip)
+            progress_event("drop_impact_freeze", "completed", "Drop-impact hold rendered.")
         clips.append(clip_path)
         previous_clip = clip_path
 
+    progress_event("clip_render", "completed", f"Rendered {clip_total} motion clips.")
     print("[render 2/4] Joining clips and the impact hold...")
+    progress_event("timeline_assembly", "running", "Joining all rendered clips and the drop-impact hold.")
     concat_file = f"{WORK}/concat.txt"
     with open(concat_file, "w", encoding="utf-8") as handle:
         for clip in clips:
@@ -1356,8 +1525,10 @@ def main(argv=None):
         "-f", "concat", "-safe", "0", "-i", concat_file,
         "-c", "copy", joined
     ])
+    progress_event("timeline_assembly", "completed", "Rendered clips joined without re-encoding.")
 
     print("[render 3/4] Adding bass-hit flashes, cinematic skull freeze, and Phonk audio...")
+    progress_event("final_render", "running", "Applying configured flashes, skull freeze, audio processing and final encoding.")
     final_video = f"{WORK}/final_render.mp4"
     flash_filter = make_flash_filter(beats)
     # Pad first, then split: the impact branch reads the cloned tail frames.
@@ -1428,9 +1599,15 @@ def main(argv=None):
             "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
             "-threads", "2", final_video]
     run(cmd)
+    progress_event("final_render", "completed", "FFmpeg final encode finished.")
 
     print("[render 4/4] Verifying the rendered file...")
+    progress_event("render_inspection", "running", "Inspector is verifying video streams, exact frame count, duration and full decode.")
     actual, video_codec, audio_codec, render_report = verify_output(final_video)
+    progress_event("render_inspection", "completed", "Inspector file-integrity checks finished.",
+                   {"width": render_report.get("width"), "height": render_report.get("height"),
+                    "fps": render_report.get("fps"), "frame_count": render_report.get("frame_count"),
+                    "duration_seconds": render_report.get("duration_seconds")})
     source_streams = probe(VIDEO).get("streams", [])
     source_video = next((stream for stream in source_streams if stream.get("codec_type") == "video"), {})
     media_analysis = {
@@ -1515,10 +1692,18 @@ def main(argv=None):
     }
     render_critique = analyze_render_critique(final_video, actual)
 
+    progress_event("render_critique", "completed", "Render Critic has measured black intervals and output audio levels.",
+                   {"black_segment_count": len(render_critique.get("black_segments", [])),
+                    "mean_volume_db": render_critique.get("mean_volume_db"),
+                    "max_volume_db": render_critique.get("max_volume_db")})
+
     def print_agent_event(event):
-        # Stream each finished stage immediately so the terminal shows the
-        # inspection sequence as it happens rather than after every agent returns.
+        # Stream each structured agent result to the terminal and durable JSONL trace.
         print(f"[agent:{event['agent']}] {event['status']}: {event['summary']}", flush=True)
+        progress_event(
+            f"agent:{event['agent']}", event["status"], event["summary"],
+            {"agent_event": event}, echo=False,
+        )
 
     agent_report = run_agent_team({
         "settings": CONFIG, "edl": edl,
@@ -1529,6 +1714,16 @@ def main(argv=None):
         "render_report": render_report,
     }, emit=print_agent_event)
     agent_report["pre_render_review"] = pre_render_review
+    agent_report["clip_selection"] = {
+        "selected_clip_count": actual_motion_clip_count,
+        "requested_clip_count": args.clip_count,
+        "selection_mode": clip_selection_mode,
+        "min_clips": MIN_CLIPS,
+        "max_clips": MAX_CLIPS,
+        "reference_median_cut_interval_seconds": ref_interval,
+        "comparison_clip_count_options": list(args.clip_count_options) if args.clip_count_options else None,
+    }
+    agent_report["progress_log"] = str(Path(OUTDIR) / "progress.jsonl")
     if VARIANT_INDEX is not None:
         agent_report["variant"] = {
             "index": VARIANT_INDEX,
@@ -1542,6 +1737,10 @@ def main(argv=None):
     for turn in agent_report.get("agent_dialogue", []):
         print(f"[conference {turn['turn']}] {turn['speaker']} -> {turn['to']}: {turn['message']}")
     report_path = os.path.join(OUTDIR, "agent_report.json")
+    progress_event("director_decision", "blocked" if agent_report["status"] == "blocked" else "ready_for_human_review",
+                   agent_report.get("summary", "Director decision recorded."),
+                   {"blockers": agent_report.get("results", {}).get("director", {}).get("evidence", {}).get("blockers", []),
+                    "human_review_required": True})
     if agent_report["status"] == "blocked":
         storage_result = export_storage_agent(final_video, FINAL, technical_qa_passed=False)
         storage_entry = {
@@ -1576,6 +1775,9 @@ def main(argv=None):
         "evidence": export_result_obj.evidence,
     }
     agent_report["results"]["export_storage"] = export_result
+    progress_event("export_storage", export_result["status"],
+                   export_result["findings"][0],
+                   {"final_path": FINAL, "technical_qa_passed": export_result_obj.status == "ok"})
     export_event = {
         "agent": "export_storage", "stage": "export_promotion", "status": export_result["status"],
         "summary": export_result["findings"][0],
@@ -1622,6 +1824,7 @@ if __name__ == "__main__":
     try:
         main()
     except (subprocess.CalledProcessError, OSError, ValueError, KeyError, RuntimeError) as exc:
+        progress_event("fatal_error", "error", str(exc))
         print(f"[ERROR] {exc}")
         print("Check FFmpeg/FFprobe availability, AI-upscaler/model paths, input files, and available storage.")
         sys.exit(1)
