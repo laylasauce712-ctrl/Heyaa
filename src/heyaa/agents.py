@@ -738,10 +738,15 @@ def run_agent_team(context: dict[str, Any],
             "message": (
                 f"Source duration={media_payload.get('source_duration_seconds')}s; "
                 f"context strategy={media_payload.get('context_window', {}).get('method', 'not available')}. "
-                "Current context selection is temporal and does not identify the same person across shots."
+                + (
+                    "Optional OpenCV found a recurring person-shaped appearance track and used nearby observations for source timing/crop; it is not identity recognition."
+                    if media_payload.get("context_window", {}).get("subject_tracking", {}).get("detected") is True
+                    else "No stable optional person track was available; source continuity falls back to scene-cut density and centered crop."
+                )
             ),
             "evidence": {"context_window": media_payload.get("context_window"),
-                        "context_caveat": media_payload.get("context_caveat")}
+                        "context_caveat": media_payload.get("context_caveat"),
+                        "subject_tracking": media_payload.get("context_window", {}).get("subject_tracking")}
         },
     ]
     director = director_agent({
