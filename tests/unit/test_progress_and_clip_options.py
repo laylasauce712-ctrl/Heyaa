@@ -18,6 +18,24 @@ class ProgressTraceTests(unittest.TestCase):
         with patch.dict("os.environ", {}, clear=True):
             self.assertEqual(renderer._settings_path(), "params.json")
 
+    def test_reference_pacing_reports_when_clip_count_stretches_cadence(self):
+        diagnostics = renderer._reference_pacing_diagnostics(
+            {
+                "median_cut_interval_seconds": 0.55,
+                "shot_intervals_seconds": [0.5, 0.6, 0.5, 1.001],
+            },
+            [1.74, 1.74, 2.09, 2.09, 1.74, 1.74, 3.30, 3.30],
+        )
+        self.assertIsNotNone(diagnostics)
+        self.assertEqual(diagnostics["planned_clip_count"], 8)
+        self.assertEqual(diagnostics["reference_median_seconds"], 0.55)
+        self.assertGreater(diagnostics["cadence_stretch_ratio"], 3.0)
+
+        self.assertIsNone(renderer._reference_pacing_diagnostics(None, [1.0]))
+        self.assertIsNone(renderer._reference_pacing_diagnostics(
+            {"median_cut_interval_seconds": 0.0}, [1.0]
+        ))
+
     def test_reference_availability_comes_from_measured_pacing_evidence(self):
         # reference_pacing_profile() returns measured fields; it does not need an
         # additional "available" flag for progress reporting.
