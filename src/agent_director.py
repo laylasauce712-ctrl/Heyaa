@@ -7,7 +7,10 @@ import struct
 import subprocess
 from pathlib import Path
 
-from src.heyaa.agents import run_agent_team
+try:
+    from src.heyaa.agents import run_agent_team
+except ModuleNotFoundError:
+    from heyaa.agents import run_agent_team
 
 VIDEO = "input/test_video.mp4"
 MUSIC = "input/phonk.mp3"
