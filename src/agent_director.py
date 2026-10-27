@@ -50,13 +50,16 @@ MAX_CLIPS = None
 MUSIC_LOOP = None
 CODEC = None
 CONFIG = None
+DROP_FREEZE_DURATION = 0.25
+DROP_BEAT_TIME = None
+DROP_BEAT_STRENGTH = None
 
 
 def load_settings():
     """Load and strictly validate params.json; unsupported values fail fast."""
     global DURATION, FPS, WIDTH, HEIGHT, CRF, PRESET, SPEED, FREEZE, EDIT_DURATION
     global BEAT_SYNC, BEAT_FLASH, BASS_BOOST, REFERENCE_PACING, MIRROR_ENABLED, SMART_CROP_ENABLED
-    global MIN_CLIPS, MAX_CLIPS, MUSIC_LOOP, CODEC, CONFIG
+    global MIN_CLIPS, MAX_CLIPS, MUSIC_LOOP, CODEC, CONFIG, DROP_FREEZE_DURATION
     path = "params.json"
     if not os.path.isfile(path):
         raise FileNotFoundError("params.json is required; renderer defaults are disabled.")
@@ -95,8 +98,13 @@ def load_settings():
             not math.isfinite(float(freeze_value))):
         raise ValueError("edit_settings.freeze_duration must be a finite number.")
     FREEZE = float(freeze_value)
-    if not 0.35 <= FREEZE <= 1.2 or FREEZE >= DURATION:
-        raise ValueError("freeze_duration must be 0.35–1.2 seconds and shorter than duration.")
+    if not 1.7 <= FREEZE <= 3.0 or FREEZE >= DURATION:
+        raise ValueError("freeze_duration must be 1.7–3.0 seconds and shorter than duration.")
+    drop_freeze_value = edit.get("drop_freeze_duration", 0.25)
+    if (isinstance(drop_freeze_value, bool) or not isinstance(drop_freeze_value, (int, float)) or
+            not math.isfinite(float(drop_freeze_value)) or not 0.1 <= float(drop_freeze_value) <= 0.6):
+        raise ValueError("edit_settings.drop_freeze_duration must be between 0.1 and 0.6 seconds.")
+    DROP_FREEZE_DURATION = float(drop_freeze_value)
     speed_value = edit["speed"]
     if (isinstance(speed_value, bool) or not isinstance(speed_value, (int, float)) or
             not math.isfinite(float(speed_value))):
@@ -130,7 +138,7 @@ def load_settings():
     DURATION = total_frames / FPS
     EDIT_DURATION = (total_frames - freeze_frames) / FPS
     CONFIG = config
-    print(f"[settings] {WIDTH}x{HEIGHT}@{FPS} | {DURATION:.3f}s | speed={SPEED:.2f}x | freeze={FREEZE:.3f}s | mirror={MIRROR_ENABLED} | smart_crop={SMART_CROP_ENABLED} | music_loop={MUSIC_LOOP} | EDL=on")
+    print(f"[settings] {WIDTH}x{HEIGHT}@{FPS} | {DURATION:.3f}s | speed={SPEED:.2f}x | final_freeze={FREEZE:.3f}s (minimum 1.7s) | drop_freeze={DROP_FREEZE_DURATION:.3f}s | mirror={MIRROR_ENABLED} | smart_crop={SMART_CROP_ENABLED} | music_loop={MUSIC_LOOP} | EDL=on")
     return config
 
 def run(cmd, capture=False, binary=False):
@@ -228,12 +236,12 @@ def extend_looped_beats(beats, music_duration, limit, loop_enabled):
 
 
 def detect_music_beats(path, limit):
-    """Estimate beat candidates from bass transients plus an autocorrelation tempo prior.
+    """Estimate beat candidates and retain the strongest onset as a drop proxy.
 
-    This remains a lightweight heuristic, not a downbeat detector. It combines
-    local onset novelty with periodicity so repeated loud bass noise is less
-    likely to be mistaken for a sequence of unrelated beats.
+    This remains a lightweight heuristic, not a semantic drop/downbeat detector.
     """
+    global DROP_BEAT_TIME, DROP_BEAT_STRENGTH
+    DROP_BEAT_TIME, DROP_BEAT_STRENGTH = None, None
     print("[analyze] Phonk beat/bass transients and tempo periodicity...")
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", path,
@@ -299,6 +307,15 @@ def detect_music_beats(path, limit):
     if len(beats) < 3:
         print("[warn] Few clear bass onsets found; edit timing will use fallback beats.")
         return []
+    if candidates:
+        strongest_value, strongest_time = max(candidates, key=lambda pair: pair[0])
+        DROP_BEAT_TIME = float(strongest_time)
+        spread = max(1e-12, peak_novelty - median_novelty)
+        DROP_BEAT_STRENGTH = max(0.0, min(1.0, (strongest_value - median_novelty) / spread))
+        print(
+            f"[analyze] Strongest bass-onset proxy at {DROP_BEAT_TIME:.2f}s "
+            f"(relative onset strength={DROP_BEAT_STRENGTH:.2f}; not a semantic drop detector)."
+        )
     print(f"[analyze] Detected {len(beats)} likely beat/onset candidates in the edit window.")
     return beats
 
@@ -330,6 +347,92 @@ def choose_clip_count(reference_interval):
     if reference_interval is None:
         return MIN_CLIPS
     return max(MIN_CLIPS, min(MAX_CLIPS, round(EDIT_DURATION / max(0.75, min(2.4, reference_interval)))))
+
+
+def choose_drop_beat(music_duration, available_edit_duration, loop_enabled):
+    """Choose a repeated strongest bass-onset proxy near the first major edit section."""
+    if not BEAT_SYNC or DROP_BEAT_TIME is None:
+        return None
+    try:
+        duration = float(music_duration)
+        limit = float(available_edit_duration)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(duration) or duration <= 0 or not math.isfinite(limit) or limit <= 0:
+        return None
+    candidates = []
+    if loop_enabled and duration < limit:
+        for cycle in range(math.ceil(limit / duration)):
+            value = DROP_BEAT_TIME + cycle * duration
+            if 0.7 <= value <= limit - DROP_FREEZE_DURATION - 0.75:
+                candidates.append(value)
+    elif 0.7 <= DROP_BEAT_TIME <= limit - DROP_FREEZE_DURATION - 0.75:
+        candidates.append(DROP_BEAT_TIME)
+    if not candidates:
+        return None
+    target = limit * 0.38
+    return min(candidates, key=lambda value: abs(value - target))
+
+
+def insert_drop_boundary(boundaries, desired_time, min_gap=0.75):
+    """Use the drop time as a cut boundary while preserving the planned clip count."""
+    if desired_time is None or len(boundaries) < 3:
+        return boundaries, None
+    limit = boundaries[-1]
+    if not 0.7 <= desired_time <= limit - 0.7:
+        return boundaries, None
+    original_count = len(boundaries)
+    candidates = sorted(range(1, len(boundaries) - 1),
+                        key=lambda index: abs(boundaries[index] - desired_time))
+    for index in candidates:
+        if (desired_time - boundaries[index - 1] >= min_gap and
+                boundaries[index + 1] - desired_time >= min_gap):
+            updated = list(boundaries)
+            updated[index] = desired_time
+            updated.sort()
+            return updated, desired_time
+    # If the strongest onset would create a very short adjacent shot, keep pacing
+    # stable and freeze at the nearest already-validated cut instead.
+    nearest = min(boundaries[1:-1], key=lambda value: abs(value - desired_time))
+    return list(boundaries), nearest
+
+
+def choose_context_window(source_duration, scene_cuts, target_duration):
+    """Prefer a coherent temporal window over sampling across an entire long recording.
+
+    This is a scene-cut-density proxy only; it does not identify a person or
+    understand the semantics of a 20-minute scene.
+    """
+    if not math.isfinite(float(source_duration)) or source_duration <= 0:
+        return {"start_seconds": 0.0, "end_seconds": 0.0, "scene_cuts": 0, "method": "unavailable"}
+    window = min(float(source_duration), max(8.0, float(target_duration) * 2.0))
+    max_start = max(0.0, float(source_duration) - window)
+    candidates = {0.0, max_start}
+    for cut in scene_cuts:
+        candidates.add(max(0.0, min(max_start, float(cut) - window / 2.0)))
+    target_cut_count = max(2, round(window / 2.5))
+    best_start = 0.0
+    best_key = None
+    best_count = 0
+    for start in sorted(candidates):
+        end = start + window
+        count = sum(1 for cut in scene_cuts if start <= cut < end)
+        # Prefer a moderately active sequence; penalize both empty windows and
+        # unusually frantic cut density instead of blindly maximizing cut count.
+        score = -abs(count - target_cut_count) - max(0, count - target_cut_count * 1.8) * 0.5
+        key = (score, count, -start)
+        if best_key is None or key > best_key:
+            best_key, best_start, best_count = key, start, count
+    end = min(float(source_duration), best_start + window)
+    print(
+        f"[context] Selected source window {best_start:.2f}s–{end:.2f}s "
+        f"({best_count} scene cuts; temporal continuity proxy only)."
+    )
+    print("[context] Same-person tracking/semantic action understanding is not available in this build.")
+    return {"start_seconds": round(best_start, 3), "end_seconds": round(end, 3),
+            "scene_cuts": best_count, "window_seconds": round(end - best_start, 3),
+            "target_cut_count": target_cut_count, "method": "moderate-scene-cut-density-window",
+            "same_person_tracking": False}
 
 
 def make_boundaries(clip_count, beats):
@@ -419,6 +522,45 @@ def make_clip(index, item, source_duration):
     ]
     run(cmd)
     return path
+
+def make_freeze_clip(index, item, previous_clip):
+    """Hold the actual last decoded frame of the preceding shot for a drop impact."""
+    if not previous_clip or not os.path.isfile(previous_clip):
+        raise RuntimeError("A drop-impact freeze needs a preceding rendered shot.")
+    previous_info = probe(previous_clip)
+    previous_video = next((stream for stream in previous_info.get("streams", [])
+                           if stream.get("codec_type") == "video"), {})
+    frame_count = int(previous_video.get("nb_frames") or 0)
+    if frame_count <= 0:
+        try:
+            frame_count = int(round(float(previous_info["format"]["duration"]) * FPS))
+        except (KeyError, TypeError, ValueError):
+            frame_count = 0
+    if frame_count <= 0:
+        raise RuntimeError("Could not determine the preceding shot's frame count for drop freeze.")
+    still_path = f"{WORK}/drop_freeze_{index:02d}.png"
+    output_path = f"{WORK}/drop_freeze_{index:02d}.mp4"
+    run([
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", previous_clip,
+        "-vf", f"select='eq(n,{frame_count - 1})'", "-vsync", "0", "-frames:v", "1", still_path
+    ])
+    duration_frames = int(item["dur_f"])
+    freeze_filter = (
+        "scale=1188:2112:flags=lanczos,"
+        "crop=1080:1920:x='(iw-ow)/2+5*sin(t*90)':y='(ih-oh)/2+5*cos(t*73)',"
+        "eq=contrast=1.38:saturation=0,"
+        "drawbox=x=0:y=0:w=iw:h=ih:color=white@0.55:t=fill:enable='lt(t,0.05)',"
+        f"fps={FPS},trim=end_frame={duration_frames},setpts=PTS-STARTPTS"
+    )
+    run([
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+        "-loop", "1", "-framerate", str(FPS), "-i", still_path,
+        "-vf", freeze_filter, "-an", "-frames:v", str(duration_frames),
+        "-c:v", CODEC, "-preset", PRESET, "-crf", str(CRF),
+        "-pix_fmt", "yuv420p", "-r", str(FPS), "-threads", "2", output_path
+    ])
+    return output_path
+
 
 def make_flash_filter(beats):
     # Brief white impacts on selected bass hits; keep the filter graph bounded.
