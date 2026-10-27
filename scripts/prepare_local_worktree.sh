@@ -4,10 +4,41 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SOURCE_ARG="${1:-"$ROOT/../Heyaa-ai-upscale-run"}"
+SOURCE_ARG="$ROOT/../Heyaa-ai-upscale-run"
+DISABLE_AI_UPSCALE=0
+while (($#)); do
+    case "$1" in
+        --disable-ai-upscale)
+            DISABLE_AI_UPSCALE=1
+            shift
+            ;;
+        --source-worktree)
+            if [[ $# -lt 2 ]]; then
+                echo "[setup] --source-worktree needs a path." >&2
+                exit 2
+            fi
+            SOURCE_ARG="$2"
+            shift 2
+            ;;
+        --help|-h)
+            echo "Usage: bash scripts/prepare_local_worktree.sh [--disable-ai-upscale] [--source-worktree PATH]"
+            echo "The default source path is ../Heyaa-ai-upscale-run relative to this worktree."
+            exit 0
+            ;;
+        -*)
+            echo "[setup] Unknown option: $1" >&2
+            exit 2
+            ;;
+        *)
+            # Backward-compatible positional source path.
+            SOURCE_ARG="$1"
+            shift
+            ;;
+    esac
+done
 if [[ ! -d "$SOURCE_ARG" ]]; then
     echo "[setup] Source worktree not found: $SOURCE_ARG" >&2
-    echo "[setup] Pass the existing worktree path as the first argument." >&2
+    echo "[setup] Pass --source-worktree PATH or the existing worktree path as the first argument." >&2
     exit 2
 fi
 SOURCE="$(cd "$SOURCE_ARG" && pwd)"
@@ -32,13 +63,38 @@ for file in params.json input/test_video.mp4 input/phonk.mp3; do
     fi
 done
 
-# Do not overwrite any independent local settings in the destination worktree.
-if ! cmp -s "$SOURCE/params.json" "$ROOT/params.json"; then
-    if ! git -C "$ROOT" diff --quiet -- params.json ||
-       ! git -C "$ROOT" diff --cached --quiet -- params.json; then
-        echo "[setup] Destination params.json has local changes and differs from the source." >&2
-        echo "[setup] Nothing was overwritten. Review both files before retrying." >&2
-        exit 3
+# Check whether the Python venv can actually be created before changing local paths.
+if [[ ! -x "$ROOT/.venv/bin/python" ]]; then
+    VENV_PROBE="$(mktemp -d)"
+    if ! "$PYTHON_BIN" -m venv "$VENV_PROBE/probe" >/dev/null 2>&1; then
+        rm -rf "$VENV_PROBE"
+        echo "[setup] Python venv support is missing. Install it first with: apt install -y python3-venv" >&2
+        echo "[setup] No input symlinks or settings have been changed." >&2
+        exit 4
+    fi
+    rm -rf "$VENV_PROBE"
+fi
+
+# Accept only the source settings or the exact settings produced by this helper.
+# This makes --disable-ai-upscale repeatable without permitting unrelated edits to be overwritten.
+if [[ -f "$ROOT/params.json" ]]; then
+    if ! "$PYTHON_BIN" - "$SOURCE/params.json" "$ROOT/params.json" "$DISABLE_AI_UPSCALE" <<'PY'
+import json, pathlib, sys
+source_path, target_path, disable = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
+source = json.loads(pathlib.Path(source_path).read_text(encoding="utf-8"))
+target = json.loads(pathlib.Path(target_path).read_text(encoding="utf-8"))
+desired = json.loads(json.dumps(source))
+if disable:
+    desired.setdefault("video_settings", {})["ai_upscale_enabled"] = False
+raise SystemExit(0 if target == desired else 1)
+PY
+    then
+        if ! git -C "$ROOT" diff --quiet -- params.json ||
+           ! git -C "$ROOT" diff --cached --quiet -- params.json; then
+            echo "[setup] Destination params.json has independent local edits; refusing to overwrite it." >&2
+            echo "[setup] Nothing in params.json was changed. Review the two files first." >&2
+            exit 3
+        fi
     fi
 fi
 
@@ -79,19 +135,38 @@ else
     echo "[setup] Real-ESRGAN directory not found in source worktree; AI-upscale preflight may require installation." >&2
 fi
 
-if ! cmp -s "$SOURCE/params.json" "$ROOT/params.json"; then
+if [[ ! -f "$ROOT/params.json" ]] ||
+   ! "$PYTHON_BIN" - "$SOURCE/params.json" "$ROOT/params.json" "$DISABLE_AI_UPSCALE" <<'PY'
+import json, pathlib, sys
+source_path, target_path, disable = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
+source = json.loads(pathlib.Path(source_path).read_text(encoding="utf-8"))
+target = json.loads(pathlib.Path(target_path).read_text(encoding="utf-8")) if pathlib.Path(target_path).exists() else None
+desired = json.loads(json.dumps(source))
+if disable:
+    desired.setdefault("video_settings", {})["ai_upscale_enabled"] = False
+raise SystemExit(0 if target == desired else 1)
+PY
+then
     cp "$SOURCE/params.json" "$ROOT/params.json"
-    echo "[setup] Copied the local params.json into the new worktree; the source copy is untouched."
+    if [[ "$DISABLE_AI_UPSCALE" -eq 1 ]]; then
+        "$PYTHON_BIN" - "$ROOT/params.json" <<'PY'
+import json, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+data = json.loads(path.read_text(encoding="utf-8"))
+data.setdefault("video_settings", {})["ai_upscale_enabled"] = False
+path.write_text(json.dumps(data, indent=2) + "\\n", encoding="utf-8")
+PY
+        echo "[setup] Copied local settings and disabled AI upscaling in this worktree only."
+    else
+        echo "[setup] Copied the local params.json into the new worktree; the source copy is untouched."
+    fi
 else
-    echo "[setup] params.json already matches the source settings."
+    echo "[setup] params.json already matches the requested local setup."
 fi
 
 # Keep vision dependencies isolated from the OS Python / other projects.
 if [[ ! -x "$ROOT/.venv/bin/python" ]]; then
-    if ! "$PYTHON_BIN" -m venv "$ROOT/.venv"; then
-        echo "[setup] Could not create .venv. On Ubuntu/WSL install python3-venv, then rerun this script." >&2
-        exit 4
-    fi
+    "$PYTHON_BIN" -m venv "$ROOT/.venv"
 fi
 "$ROOT/.venv/bin/python" -m pip install --disable-pip-version-check -r "$ROOT/requirements-vision.txt"
 "$ROOT/.venv/bin/python" -c 'import cv2; print("[setup] OpenCV ready:", cv2.__version__)'
