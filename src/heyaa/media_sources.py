@@ -13,8 +13,20 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be", "www.youtu.be"}
-VIDEO_FORMAT = "bv*+ba/b"
-DOWNLOAD_TIMEOUT_SECONDS = 180
+# Bound source formats to 1080p landscape or 1080x1920 portrait. This avoids
+# downloading enormous 1440p/4K originals when the output is 1080x1920.
+SOURCE_VIDEO_FORMAT = (
+    "bv*[height<=1080][width<=1920]+ba/b[height<=1080][width<=1920]"
+    "/bv*[height<=1920][width<=1080]+ba/b[height<=1920][width<=1080]"
+)
+# Pacing references only need usable cut timing, so cap them at 720p / 720x1280.
+REFERENCE_VIDEO_FORMAT = (
+    "bv*[height<=720][width<=1280]+ba/b[height<=720][width<=1280]"
+    "/bv*[height<=1280][width<=720]+ba/b[height<=1280][width<=720]"
+)
+VIDEO_DOWNLOAD_TIMEOUT_SECONDS = 2700
+REFERENCE_DOWNLOAD_TIMEOUT_SECONDS = 900
+MUSIC_DOWNLOAD_TIMEOUT_SECONDS = 900
 DIRECT_CONNECT_TIMEOUT_SECONDS = 25
 MAX_DIRECT_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024
 
@@ -176,23 +188,29 @@ def download_youtube(url: str, target_path: str | Path, kind: str) -> Path:
         "--print-to-file", "after_move:filepath", str(path_report),
     ]
     if kind == "music":
+        timeout_seconds = MUSIC_DOWNLOAD_TIMEOUT_SECONDS
         command += ["-f", "ba/b", "-x", "--audio-format", "mp3", "--audio-quality", "0"]
+    elif kind == "reference":
+        timeout_seconds = REFERENCE_DOWNLOAD_TIMEOUT_SECONDS
+        command += ["-f", REFERENCE_VIDEO_FORMAT, "--merge-output-format", "mp4", "--remux-video", "mp4"]
     else:
-        command += ["-f", VIDEO_FORMAT, "--merge-output-format", "mp4", "--remux-video", "mp4"]
+        timeout_seconds = VIDEO_DOWNLOAD_TIMEOUT_SECONDS
+        command += ["-f", SOURCE_VIDEO_FORMAT, "--merge-output-format", "mp4", "--remux-video", "mp4"]
     command.append(url)
     print(
         f"[sources] Downloading YouTube {kind}; live progress enabled "
-        f"(timeout: {DOWNLOAD_TIMEOUT_SECONDS}s)...",
+        f"(timeout: {timeout_seconds}s; max format: "
+        f"{'audio-only' if kind == 'music' else '720p' if kind == 'reference' else '1080p'})...",
         flush=True,
     )
     try:
         # Inherit stdout/stderr so progress and extractor errors stream immediately
         # to the terminal (and to a caller's tee logfile) instead of being hidden
         # in a captured buffer until the subprocess exits.
-        result = subprocess.run(command, check=False, timeout=DOWNLOAD_TIMEOUT_SECONDS)
+        result = subprocess.run(command, check=False, timeout=timeout_seconds)
     except subprocess.TimeoutExpired as exc:
         raise MediaSourceError(
-            f"YouTube {kind} download timed out after {DOWNLOAD_TIMEOUT_SECONDS}s. "
+            f"YouTube {kind} download timed out after {timeout_seconds}s. "
             "Read the live yt-dlp output above; if network/CDN access failed, use a permitted local file "
             "or a direct HTTPS media URL instead."
         ) from exc
