@@ -11,12 +11,13 @@
   "edit_settings": {
     "duration_seconds": 20,
     "speed": 1.1,
-    "freeze_seconds": 0.7,
     "min_clips": 8,
     "max_clips": 16,
     "reference_pacing": true,
     "mirror_enabled": true,
-    "smart_crop": true
+    "smart_crop": true,
+    "freeze_duration": 0.7,
+    "edl_mode": "on"
   },
   "audio_settings": {
     "beat_sync": true,
