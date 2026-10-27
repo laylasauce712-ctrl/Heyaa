@@ -267,12 +267,25 @@ def reference_analyst(data: dict[str, Any]) -> AgentResult:
                            ("Provide a valid reference.mp4 or disable reference pacing.",),
                            {"enabled": True, "available": data.get("available") is True,
                             "used_for_planning": False, "source": data.get("source")})
+    shot_intervals = data.get("shot_intervals_seconds", [])
+    if not isinstance(shot_intervals, list):
+        shot_intervals = []
+    validated_intervals = [
+        round(float(value), 4) for value in shot_intervals
+        if _finite_number(value) and 0.25 <= float(value) <= 4.0
+    ]
     return AgentResult("reference_analyst", "ok", None, 0.8,
-                       ("Median reference cut interval was measured and used only as a rough pacing guide.",),
-                       ("Review the resulting rhythm against the actual soundtrack.",),
+                       ("Reference shot intervals were measured and passed to the Planner as a variable cut-length pattern.",
+                        "This analyzes visual cut timing only; it does not understand reference people, story meaning or semantic effects."),
+                       ("Review the resulting rhythm against the actual soundtrack.",
+                        "Use the reference's cut-length sequence as pacing guidance rather than copying its footage."),
                        {"enabled": True, "available": True, "used_for_planning": True,
                         "source": data.get("source"),
                         "median_cut_interval_seconds": round(float(interval), 4),
+                        "scene_cut_count": data.get("scene_cut_count"),
+                        "shot_intervals_seconds": validated_intervals,
+                        "pattern_passed_to_planner": bool(validated_intervals),
+                        "semantic_reference_understanding": False,
                         "does_not_copy_reference_frames": True})
 
 
@@ -665,12 +678,14 @@ def run_agent_team(context: dict[str, Any],
             "turn": 2, "speaker": "Reference Analyst", "to": "Planner",
             "message": (
                 f"Reference pacing available={reference_payload.get('available')}; "
-                f"median cut interval={reference_payload.get('median_cut_interval_seconds')}s. "
-                "I can support rhythm matching only; reference meaning/effects are not semantically recognized yet."
+                f"median cut interval={reference_payload.get('median_cut_interval_seconds')}s; "
+                f"measured intervals={reference_payload.get('shot_intervals_seconds', [])[:8]}. "
+                "I passed the shot-length pattern to the Planner; reference meaning/people are not semantically recognized."
             ),
             "evidence": {"source": reference_payload.get("source"),
                         "available": reference_payload.get("available"),
-                        "median_cut_interval_seconds": reference_payload.get("median_cut_interval_seconds")}
+                        "median_cut_interval_seconds": reference_payload.get("median_cut_interval_seconds"),
+                        "shot_intervals_seconds": reference_payload.get("shot_intervals_seconds", [])}
         },
         {
             "turn": 3, "speaker": "Hook Analyst", "to": "Niche Analyst",
