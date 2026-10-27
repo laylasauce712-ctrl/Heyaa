@@ -106,8 +106,11 @@ def inspector(render_report: dict[str, Any]) -> AgentResult:
     if render_report.get("width") != 1080 or render_report.get("height") != 1920:
         failures.append("Output must be 1080x1920 (9:16).")
     duration = render_report.get("duration_seconds")
-    if not isinstance(duration, (int, float)) or isinstance(duration, bool) or abs(duration - 20.0) > 0.3:
-        failures.append("Output duration is outside the 20s target tolerance.")
+    expected_duration = render_report.get("expected_duration_seconds", 20.0)
+    if not isinstance(expected_duration, (int, float)) or isinstance(expected_duration, bool):
+        expected_duration = 20.0
+    if not isinstance(duration, (int, float)) or isinstance(duration, bool) or abs(duration - expected_duration) > 0.3:
+        failures.append(f"Output duration is outside the {expected_duration:g}s target tolerance.")
     if render_report.get("has_audio") is not True:
         failures.append("Audio stream is missing.")
     return AgentResult("inspector", "reject" if failures else "ok", None,

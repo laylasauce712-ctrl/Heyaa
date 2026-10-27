@@ -427,7 +427,7 @@ def main():
     print(f"[OK] Video codec: {video_codec} | Audio codec: {audio_codec}")
     settings = {"resolution": f"{WIDTH}x{HEIGHT}", "speed": SPEED, "smart_crop": SMART_CROP_ENABLED}
     render_report = {
-        "width": WIDTH, "height": HEIGHT, "duration_seconds": actual,
+        "width": WIDTH, "height": HEIGHT, "duration_seconds": actual, "expected_duration_seconds": DURATION,
         "has_audio": True, "video_codec": video_codec, "audio_codec": audio_codec,
         "file": FINAL,
     }
