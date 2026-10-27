@@ -72,6 +72,9 @@ def settings_agent(config: dict[str, Any]) -> AgentResult:
     for path_key in ("ai_upscale_binary", "ai_upscale_model_dir"):
         if path_key in video and not isinstance(video[path_key], str):
             findings.append(f"video_settings.{path_key} must be a path string.")
+    upscale_timeout = video.get("ai_upscale_batch_timeout_seconds", 600)
+    if isinstance(upscale_timeout, bool) or not isinstance(upscale_timeout, int) or not 30 <= upscale_timeout <= 1800:
+        findings.append("video_settings.ai_upscale_batch_timeout_seconds must be an integer from 30 to 1800.")
     fps = video.get("fps")
     if not isinstance(fps, int) or isinstance(fps, bool) or not 24 <= fps <= 60:
         findings.append("video_settings.fps must be an integer from 24 to 60.")

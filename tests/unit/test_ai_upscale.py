@@ -58,6 +58,23 @@ class AIUpscaleTests(unittest.TestCase):
         renderer.AI_UPSCALER_EXECUTABLE = self.old["executable"]
         renderer.AI_UPSCALER_MODEL_DIR = self.old["resolved_model_dir"]
 
+    def test_ai_extraction_command_crops_before_upscale_at_source_frame_rate(self):
+        command = renderer.build_ai_frame_extract_command(
+            "input/video.mp4", 1.0, 2.0, 60, 30.0, "/tmp/frame_%08d.png",
+            pre_upscale_crop_filter="crop=w='if(gte(iw/ih,0.5625),ih*0.5625,iw)':h=ih:x=0:y=0",
+        )
+        vf = command[command.index("-vf") + 1]
+        self.assertLess(vf.index("crop="), vf.index("fps=30.000000"))
+        self.assertEqual(command[command.index("-frames:v") + 1], "60")
+        self.assertEqual(command[command.index("-t") + 1], f"{2.0 + 1.0 / 30.0:.6f}")
+
+    def test_ai_upscale_timeout_setting_accepts_configured_bounds(self):
+        cfg = valid_config()
+        cfg["video_settings"]["ai_upscale_batch_timeout_seconds"] = 900
+        self.assertEqual(settings_agent(cfg).status, "ok")
+        cfg["video_settings"]["ai_upscale_batch_timeout_seconds"] = 10
+        self.assertEqual(settings_agent(cfg).status, "blocked")
+
     def test_settings_agent_accepts_explicit_real_esrgan_options(self):
         result = settings_agent(valid_config())
         self.assertEqual(result.status, "ok")

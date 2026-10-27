@@ -10,7 +10,8 @@
     "ai_upscale_model": "realesrgan-x4plus",
     "ai_upscale_scale": 2,
     "ai_upscale_binary": "tools/realesrgan/realesrgan-ncnn-vulkan",
-    "ai_upscale_model_dir": "tools/realesrgan/models"
+    "ai_upscale_model_dir": "tools/realesrgan/models",
+    "ai_upscale_batch_timeout_seconds": 600
   },
   "edit_settings": {
     "duration_seconds": 20,

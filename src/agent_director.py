@@ -90,6 +90,8 @@ AI_UPSCALE_MODEL = "realesrgan-x4plus"
 AI_UPSCALE_SCALE = 2
 AI_UPSCALE_BINARY = "tools/realesrgan/realesrgan-ncnn-vulkan"
 AI_UPSCALE_MODEL_DIR = "tools/realesrgan/models"
+AI_UPSCALE_BATCH_TIMEOUT_SECONDS = 600
+SOURCE_FPS = None
 AI_UPSCALER_EXECUTABLE = None
 AI_UPSCALER_MODEL_DIR = None
 AI_UPSCALE_MODELS = {
@@ -143,7 +145,7 @@ def load_settings():
     global ENDING_SKULL_SIZE_PX, ENDING_SKULL_POSITION_X, ENDING_SKULL_POSITION_Y
     global ENDING_SKULL_POP_SECONDS, ENDING_IMPACT_SFX_ENABLED
     global AI_UPSCALE_ENABLED, AI_UPSCALE_MODEL, AI_UPSCALE_SCALE
-    global AI_UPSCALE_BINARY, AI_UPSCALE_MODEL_DIR
+    global AI_UPSCALE_BINARY, AI_UPSCALE_MODEL_DIR, AI_UPSCALE_BATCH_TIMEOUT_SECONDS
     path = _settings_path()
     if not os.path.isfile(path):
         raise FileNotFoundError(f"Settings file {path!r} is required; renderer defaults are disabled.")
@@ -179,6 +181,10 @@ def load_settings():
     AI_UPSCALE_MODEL_DIR = video.get("ai_upscale_model_dir", "tools/realesrgan/models")
     if not isinstance(AI_UPSCALE_MODEL_DIR, str):
         raise ValueError("video_settings.ai_upscale_model_dir must be a path string (empty means auto-detect).")
+    timeout_value = video.get("ai_upscale_batch_timeout_seconds", 600)
+    if isinstance(timeout_value, bool) or not isinstance(timeout_value, int) or not 30 <= timeout_value <= 1800:
+        raise ValueError("video_settings.ai_upscale_batch_timeout_seconds must be an integer from 30 to 1800.")
+    AI_UPSCALE_BATCH_TIMEOUT_SECONDS = timeout_value
     CODEC = str(video["codec"])
     if CODEC != "libx264":
         raise ValueError("Only video_settings.codec='libx264' is implemented.")
@@ -341,7 +347,62 @@ def build_ai_upscale_command(executable, input_dir, output_dir, model, scale, mo
     ]
 
 
-def prepare_ai_upscaled_frames(clip_index, source_start_seconds, source_duration_seconds, source_frame_count):
+def build_ai_frame_extract_command(video, source_start_seconds, source_duration_seconds,
+                                   source_frame_count, source_fps, output_pattern,
+                                   pre_upscale_crop_filter=None):
+    """Build lossless source-rate extraction; crop to 9:16 before restoration when requested."""
+    rate = float(source_fps)
+    if not math.isfinite(rate) or rate <= 0 or source_frame_count < 1:
+        raise ValueError("Source frame rate and frame count must be positive.")
+    filters = []
+    if pre_upscale_crop_filter:
+        filters.append(pre_upscale_crop_filter)
+    filters.append(f"fps={rate:.6f}")
+    return [
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+        "-ss", f"{source_start_seconds:.6f}",
+        "-t", f"{source_duration_seconds + 1.0 / rate:.6f}",
+        "-i", str(video), "-vf", ",".join(filters),
+        "-frames:v", str(source_frame_count),
+        "-start_number", "1", str(output_pattern),
+    ]
+
+
+def get_source_frame_rate(video_path, fallback_fps=30):
+    """Read the source video's nominal frame rate, with a validated fallback."""
+    info = probe(video_path)
+    for stream in info.get("streams", []):
+        if stream.get("codec_type") != "video":
+            continue
+        for key in ("avg_frame_rate", "r_frame_rate"):
+            try:
+                rate = float(Fraction(str(stream.get(key))))
+            except (ValueError, ZeroDivisionError, TypeError):
+                continue
+            if math.isfinite(rate) and 1.0 <= rate <= 240.0:
+                return rate
+    return float(fallback_fps)
+
+
+def build_pre_upscale_crop_filter(dynamic_crop=None, center_x=0.5, center_y=0.5):
+    """Generate a bounded source-resolution crop with the target 9:16 aspect ratio."""
+    if dynamic_crop and isinstance(dynamic_crop, dict) and dynamic_crop.get("points"):
+        x_path = _piecewise_linear_expression(dynamic_crop["points"], "x")
+        y_path = _piecewise_linear_expression(dynamic_crop["points"], "y")
+    else:
+        x_path = f"{float(center_x):.6f}"
+        y_path = f"{float(center_y):.6f}"
+    return (
+        "crop=w='if(gte(iw/ih,0.5625),ih*0.5625,iw)':"
+        "h='if(gte(iw/ih,0.5625),ih,iw/0.5625)':"
+        f"x='max(0,min(iw-ow,({x_path})*iw-ow/2))':"
+        f"y='max(0,min(ih-oh,({y_path})*ih-oh/2))'"
+    )
+
+
+def prepare_ai_upscaled_frames(clip_index, source_start_seconds, source_duration_seconds,
+                               source_frame_count, source_fps=None,
+                               pre_upscale_crop_filter=None):
     """Extract one clip to lossless frames, restore detail with Real-ESRGAN, then return its frame sequence."""
     if not AI_UPSCALE_ENABLED or not AI_UPSCALER_EXECUTABLE or not AI_UPSCALER_MODEL_DIR:
         raise RuntimeError("AI-upscaled frame preparation was requested without a resolved Real-ESRGAN executable.")
@@ -355,18 +416,17 @@ def prepare_ai_upscaled_frames(clip_index, source_start_seconds, source_duration
     input_pattern = input_dir / "frame_%08d.png"
     output_pattern = output_dir / "frame_%08d.png"
 
+    rate = float(source_fps or SOURCE_FPS or FPS or 30.0)
     progress_event(
         "upscale_extract", "running",
-        f"Extracting {source_frame_count} lossless source frames for clip {clip_index + 1}.",
-        {"clip_index": clip_index, "frame_count": source_frame_count, "fps": FPS},
+        f"Extracting {source_frame_count} lossless source-rate frames for clip {clip_index + 1}.",
+        {"clip_index": clip_index, "frame_count": source_frame_count, "source_fps": rate,
+         "pre_upscale_crop": bool(pre_upscale_crop_filter)},
     )
-    extract = [
-        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-        "-ss", f"{source_start_seconds:.6f}",
-        "-t", f"{source_duration_seconds + 1.0 / FPS:.6f}",
-        "-i", VIDEO, "-vf", f"fps={FPS}", "-frames:v", str(source_frame_count),
-        "-start_number", "1", str(input_pattern),
-    ]
+    extract = build_ai_frame_extract_command(
+        VIDEO, source_start_seconds, source_duration_seconds,
+        source_frame_count, rate, input_pattern, pre_upscale_crop_filter,
+    )
     result = subprocess.run(extract, check=False, capture_output=True, text=True)
     if result.returncode != 0:
         progress_event("upscale_extract", "error", f"Frame extraction failed for clip {clip_index + 1}.",
@@ -397,12 +457,15 @@ def prepare_ai_upscaled_frames(clip_index, source_start_seconds, source_duration
          "model": AI_UPSCALE_MODEL, "scale": AI_UPSCALE_SCALE},
     )
     try:
-        result = subprocess.run(upscale, check=False, capture_output=True, text=True, timeout=600)
+        result = subprocess.run(upscale, check=False, capture_output=True, text=True,
+                                timeout=AI_UPSCALE_BATCH_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired as exc:
-        progress_event("upscale_batch", "error", f"Real-ESRGAN timed out for clip {clip_index + 1} after 600 seconds.",
-                       {"clip_index": clip_index, "timeout_seconds": 600})
+        timeout_seconds = AI_UPSCALE_BATCH_TIMEOUT_SECONDS
+        progress_event("upscale_batch", "error",
+                       f"Real-ESRGAN timed out for clip {clip_index + 1} after {timeout_seconds} seconds.",
+                       {"clip_index": clip_index, "timeout_seconds": timeout_seconds})
         raise RuntimeError(
-            f"Real-ESRGAN timed out after 600 seconds for clip {clip_index + 1}; "
+            f"Real-ESRGAN timed out after {timeout_seconds} seconds for clip {clip_index + 1}; "
             "check Vulkan/GPU availability, model files, and system load."
         ) from exc
     if result.returncode != 0:
@@ -1552,11 +1615,19 @@ def make_clip(index, item, source_duration):
     ai_root = None
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
     if AI_UPSCALE_ENABLED:
+        source_rate = float(SOURCE_FPS or FPS or 30.0)
+        source_frame_count = max(1, round(input_duration * source_rate))
+        pre_crop = None
+        if LAYOUT_MODE == "fill":
+            center_x = float(subject_observation["center_x"]) if subject_observation else 0.5
+            center_y = float(subject_observation["center_y"]) if subject_observation else 0.5
+            pre_crop = build_pre_upscale_crop_filter(dynamic_crop, center_x, center_y)
         pattern, ai_root = prepare_ai_upscaled_frames(
-            index, start, input_duration, item["source_dur_f"]
+            index, start, input_duration, source_frame_count,
+            source_fps=source_rate, pre_upscale_crop_filter=pre_crop,
         )
         cmd += [
-            "-framerate", str(FPS), "-start_number", "1",
+            "-framerate", f"{source_rate:.6f}", "-start_number", "1",
             "-i", str(pattern),
         ]
     else:
@@ -2042,7 +2113,7 @@ def _run_variant_batch(args):
 
 
 def main(argv=None):
-    global VIDEO, MUSIC, REFERENCE, EDIT_DURATION, DURATION, FREEZE, SUBJECT_OBSERVATIONS
+    global VIDEO, MUSIC, REFERENCE, EDIT_DURATION, DURATION, FREEZE, SUBJECT_OBSERVATIONS, SOURCE_FPS
     global OUTDIR, WORK, FINAL, VARIANT_INDEX
     args = parse_media_source_args(argv)
     if args.clip_count_options is not None and args.clip_count is not None:
@@ -2106,6 +2177,7 @@ def main(argv=None):
             raise SystemExit(f"[ERROR] Missing required file: {path}")
 
     source_duration = duration_of(VIDEO)
+    SOURCE_FPS = get_source_frame_rate(VIDEO, fallback_fps=FPS)
     music_duration = duration_of(MUSIC)
     if source_duration < 0.8:
         raise SystemExit("[ERROR] Source video is too short to edit.")
