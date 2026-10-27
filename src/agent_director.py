@@ -494,6 +494,20 @@ def main():
                    "gain_db": 0.0, "fade_out_f": min(total_frames, round(0.8 * FPS))}]
     }
     validate_edl(edl)
+    # Fail before expensive clip rendering if the contract contains features the
+    # current FFmpeg renderer explicitly does not implement.
+    if edl["video"][-1]["type"] != "freeze" or sum(1 for item in edl["video"] if item["type"] == "freeze") != 1:
+        raise RuntimeError("EDL must contain exactly one freeze segment at the end.")
+    if len(edl["audio"]) != 1:
+        raise RuntimeError("Current FFmpeg renderer supports exactly one EDL audio segment.")
+    if edl["audio"][0]["start_f"] != 0 or edl["audio"][0]["dur_f"] != edl["total_frames"]:
+        raise RuntimeError("Current renderer requires audio to span the full EDL timeline.")
+    for index, item in enumerate(edl["video"]):
+        if item["type"] == "clip":
+            crop = item["crop"]
+            if any(abs(float(crop[key]) - value) > 1e-6 for key, value in
+                   (("x", 0.0), ("y", 0.0), ("w", 1.0), ("h", 1.0))):
+                raise RuntimeError(f"EDL video[{index}] requests a crop rectangle not implemented by the current renderer.")
     # From this point on, read final segment boundaries back from the validated EDL,
     # rather than independently re-deriving the timeline for the FFmpeg stage.
     total_frames = edl["total_frames"]
@@ -568,11 +582,7 @@ def main():
         f"[baseout][impact]overlay=0:0:enable='gte(t,{EDIT_DURATION:.5f})',"
         f"trim=end_frame={total_frames},setsar=1[outv]"
     )
-    if len(edl["audio"]) != 1:
-        raise RuntimeError("Current FFmpeg renderer supports exactly one EDL audio segment.")
     edl_audio = edl["audio"][0]
-    if edl_audio["start_f"] != 0 or edl_audio["dur_f"] != total_frames:
-        raise RuntimeError("Current renderer requires the audio EDL segment to span the full output timeline.")
     audio_source = edl_audio["source"]
     audio_start_seconds = edl_audio["source_start_f"] / FPS
     fade_out_seconds = edl_audio.get("fade_out_f", 0) / FPS

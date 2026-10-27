@@ -81,6 +81,12 @@ def settings_agent(config: dict[str, Any]) -> AgentResult:
             not isinstance(maximum, int) or isinstance(maximum, bool) or
             not 6 <= minimum <= 12 or not minimum <= maximum <= 18):
         findings.append("Clip bounds must satisfy 6 <= min_clips <= 12 and min_clips <= max_clips <= 18.")
+    crf = video.get("crf")
+    if not isinstance(crf, int) or isinstance(crf, bool) or not 16 <= crf <= 26:
+        findings.append("video_settings.crf must be an integer from 16 to 26.")
+    preset = video.get("preset")
+    if preset not in {"ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow"}:
+        findings.append("video_settings.preset is not an implemented x264 preset.")
     if video.get("codec") != "libx264":
         findings.append("Only video_settings.codec='libx264' is currently implemented.")
     if findings:
@@ -176,8 +182,11 @@ def planner(context: dict[str, Any]) -> AgentResult:
         if (edl.get("width"), edl.get("height")) != expected_size:
             mismatches["dimensions"] = {"expected": expected_size, "actual": (edl.get("width"), edl.get("height"))}
     fps = video.get("fps")
-    if isinstance(fps, int) and not isinstance(fps, bool) and edl.get("fps_num") != fps:
-        mismatches["fps_num"] = {"expected": fps, "actual": edl.get("fps_num")}
+    if isinstance(fps, int) and not isinstance(fps, bool):
+        if edl.get("fps_num") != fps:
+            mismatches["fps_num"] = {"expected": fps, "actual": edl.get("fps_num")}
+        if edl.get("fps_den") != 1:
+            mismatches["fps_den"] = {"expected": 1, "actual": edl.get("fps_den")}
     duration = edit.get("duration_seconds")
     if _finite_number(duration) and isinstance(fps, int) and not isinstance(fps, bool):
         expected_frames = round(float(duration) * fps)

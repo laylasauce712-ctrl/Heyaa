@@ -18,24 +18,26 @@ def config():
 
 
 def sample_edl():
+    clips = []
+    cursor = 0
+    durations = [26, 25, 25, 26, 25, 25]
+    for i, duration in enumerate(durations):
+        source_duration = round(duration * 1.1)
+        clips.append({
+            "type": "clip", "source": "input/test_video.mp4",
+            "source_start_f": i * 30, "source_dur_f": source_duration,
+            "start_f": cursor, "dur_f": duration, "speed": 1.1,
+            "crop": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0},
+        })
+        cursor += duration
+    clips.append({"type": "freeze", "source": "timeline:last_frame", "source_frame_f": cursor - 1,
+                  "start_f": cursor, "dur_f": 192 - cursor, "effect": "phonk-freeze"})
     return {
         "version": 1, "fps_num": 24, "fps_den": 1, "width": 1080, "height": 1920, "total_frames": 192,
-        "video": [
-            {"type": "clip", "source": "input/test_video.mp4", "source_start_f": 0, "source_dur_f": 42,
-             "start_f": 0, "dur_f": 38, "speed": 1.1, "crop": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}},
-            {"type": "clip", "source": "input/test_video.mp4", "source_start_f": 42, "source_dur_f": 42,
-             "start_f": 38, "dur_f": 38, "speed": 1.1, "crop": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}},
-            {"type": "clip", "source": "input/test_video.mp4", "source_start_f": 84, "source_dur_f": 42,
-             "start_f": 76, "dur_f": 38, "speed": 1.1, "crop": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}},
-            {"type": "clip", "source": "input/test_video.mp4", "source_start_f": 126, "source_dur_f": 42,
-             "start_f": 114, "dur_f": 38, "speed": 1.1, "crop": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}},
-            {"type": "freeze", "source": "timeline:last_frame", "source_frame_f": 151,
-             "start_f": 152, "dur_f": 40, "effect": "phonk-freeze"},
-        ],
+        "video": clips,
         "audio": [{"source": "input/phonk.mp3", "source_start_f": 0, "start_f": 0, "dur_f": 192,
                    "gain_db": 0.0, "fade_out_f": 19}],
     }
-
 
 def render_report():
     return {"width": 1080, "height": 1920, "duration_seconds": 8.0, "expected_duration_seconds": 8.0,
@@ -85,6 +87,19 @@ class AgentTests(unittest.TestCase):
         ctx = {"settings": config(), "edl": sample_edl()}
         result = planner(ctx)
         self.assertEqual(result.status, "ok", result.findings)
+
+
+    def test_planner_rejects_unimplemented_crop_and_wrong_clip_count(self):
+        edl = sample_edl()
+        edl["video"][0]["crop"] = {"x": 0.1, "y": 0.0, "w": 0.9, "h": 1.0}
+        result = planner({"settings": config(), "edl": edl})
+        self.assertEqual(result.status, "needs_fix")
+        self.assertIn("unsupported_crop_indices", result.evidence["mismatches"])
+        edl = sample_edl()
+        edl["video"].pop(0)
+        result = planner({"settings": config(), "edl": edl})
+        self.assertEqual(result.status, "needs_fix")
+        self.assertIn("clip_count", result.evidence["mismatches"])
 
     def test_media_and_beat_agents_report_evidence(self):
         media = media_analyst({"source_duration_seconds": 10.0, "source_width": 640, "source_height": 360,
