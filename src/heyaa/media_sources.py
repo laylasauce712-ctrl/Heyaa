@@ -253,8 +253,51 @@ def parse_media_source_args(argv=None):
     )
     parser.add_argument("--video-url", help="HTTPS video URL (YouTube page or direct media URL) used as source footage.")
     parser.add_argument("--music-url", help="HTTPS audio URL (YouTube page or direct media URL) used as the soundtrack.")
-    parser.add_argument("--reference-url", help="Optional HTTPS video URL (YouTube page or direct media URL) used for pacing reference.")
+    parser.add_argument("--reference-url", help="HTTPS video URL (YouTube page or direct media URL) used as the visual timing reference.")
+    parser.add_argument(
+        "--variants", type=int, choices=(1, 2, 3, 4, 5), default=3,
+        help="Render 3 comparison variants by default (1–5 supported)."
+    )
+    parser.add_argument(
+        "--variant-index", type=int, choices=(1, 2, 3, 4, 5), default=None,
+        help=argparse.SUPPRESS
+    )
     return parser.parse_args(argv)
+
+
+def extract_reference_audio(reference_path: str | Path, music_path: str | Path) -> Path:
+    """Extract the reference soundtrack losslessly through FFmpeg's audio decode/encode path."""
+    reference = Path(reference_path)
+    target = Path(music_path)
+    info = _ffprobe(reference)
+    streams = info.get("streams", [])
+    if not any(isinstance(stream, dict) and stream.get("codec_type") == "audio" for stream in streams):
+        raise MediaSourceError(
+            "The reference video has no audio track to use as music. Supply --music-url or a local input/phonk.mp3."
+        )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(f".{target.stem}.reference-audio{target.suffix or '.mp3'}")
+    temporary.unlink(missing_ok=True)
+    try:
+        command = [
+            shutil.which("ffmpeg") or "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            "-i", str(reference), "-map", "0:a:0", "-vn", "-ac", "2", "-ar", "44100",
+            "-c:a", "libmp3lame", "-q:a", "0", str(temporary),
+        ]
+        result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=600)
+        if result.returncode != 0 or not temporary.is_file() or temporary.stat().st_size <= 0:
+            detail = (result.stderr or "").strip()[-1000:]
+            raise MediaSourceError(f"Could not extract the reference soundtrack with FFmpeg. {detail}")
+        validate_media_file(temporary, "music")
+        temporary.replace(target)
+        print(f"[sources] Using the reference video's own soundtrack: {target}", flush=True)
+        return target
+    except subprocess.TimeoutExpired as exc:
+        raise MediaSourceError("Extracting audio from the reference video timed out.") from exc
+    except OSError as exc:
+        raise MediaSourceError(f"Could not extract reference audio: {exc}") from exc
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def prepare_media_sources(video_url, music_url, reference_url, video_path, music_path, reference_path):
@@ -268,10 +311,14 @@ def prepare_media_sources(video_url, music_url, reference_url, video_path, music
     resolved_video, resolved_music, resolved_reference = Path(video_path), Path(music_path), Path(reference_path)
     if video_url:
         resolved_video = download_media_source(video_url, resolved_video, "video")
-    if music_url:
-        resolved_music = download_media_source(music_url, resolved_music, "music")
     if reference_url:
         resolved_reference = download_media_source(reference_url, resolved_reference, "reference")
+    if music_url:
+        resolved_music = download_media_source(music_url, resolved_music, "music")
+    elif reference_url:
+        # When a URL reference is supplied without a separate music URL, use its soundtrack.
+        # Explicit --music-url always takes precedence.
+        resolved_music = extract_reference_audio(resolved_reference, resolved_music)
     validate_media_file(resolved_video, "video")
     validate_media_file(resolved_music, "music")
     if resolved_reference.is_file():
