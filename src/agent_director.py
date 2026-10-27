@@ -512,46 +512,46 @@ def _reference_boundaries(clip_count, total_duration, profile):
              and math.isfinite(float(value)) and float(value) > 0]
     if len(valid) < 2:
         return [total_duration * index / clip_count for index in range(clip_count + 1)]
-    raw = [
-        min(3.3, max(0.75, valid[round(index * (len(valid) - 1) / max(1, clip_count - 1))]))
+    minimum, maximum = 0.75, 3.3
+    if (clip_count * minimum > total_duration + 1e-8 or
+            clip_count * maximum < total_duration - 1e-8):
+        print("[warn] Reference pacing cannot fit the requested duration inside the supported shot-length range; using even pacing.")
+        return [total_duration * index / clip_count for index in range(clip_count + 1)]
+
+    # Resample the reference rhythm, then solve for one scale factor whose
+    # clamped interval lengths add up exactly to the requested duration.
+    # Bisection avoids the old simultaneous clamp/rebalance edge case, which
+    # could lose the reference pattern and force all shots to an even duration.
+    weights = [
+        max(1e-6, valid[round(index * (len(valid) - 1) / max(1, clip_count - 1))])
         for index in range(clip_count)
     ]
-    # Normalize reference rhythm, with bounded redistribution so each selected
-    # shot remains within the renderer's normal 0.75–3.3s pacing envelope.
-    lengths = list(raw)
-    fixed = {}
-    free = set(range(clip_count))
-    for _ in range(clip_count + 2):
-        current = sum(fixed.values()) + sum(lengths[i] for i in free)
-        if not free or current <= 0:
-            break
-        scale = (total_duration - sum(fixed.values())) / sum(lengths[i] for i in free)
-        changed = False
-        for i in list(free):
-            candidate = lengths[i] * scale
-            if candidate < 0.75:
-                fixed[i] = 0.75
-                free.remove(i)
-                changed = True
-            elif candidate > 3.3:
-                fixed[i] = 3.3
-                free.remove(i)
-                changed = True
-            else:
-                lengths[i] = candidate
-        if not changed:
-            break
-    for i, value in fixed.items():
-        lengths[i] = value
+    low, high = 0.0, maximum / min(weights)
+    for _ in range(80):
+        scale = (low + high) / 2.0
+        trial = [min(maximum, max(minimum, scale * weight)) for weight in weights]
+        if sum(trial) < total_duration:
+            low = scale
+        else:
+            high = scale
+    scale = (low + high) / 2.0
+    lengths = [min(maximum, max(minimum, scale * weight)) for weight in weights]
+
+    # Remove the tiny floating-point remainder without crossing shot bounds.
     remainder = total_duration - sum(lengths)
-    if abs(remainder) > 1e-5:
-        adjustable = [i for i in range(clip_count) if 0.75 < lengths[i] < 3.3]
-        if adjustable:
-            delta = remainder / len(adjustable)
-            for i in adjustable:
-                lengths[i] = min(3.3, max(0.75, lengths[i] + delta))
-    scale_tail = total_duration - sum(lengths)
-    if abs(scale_tail) > 1e-4:
+    for index in sorted(
+        range(clip_count),
+        key=lambda i: (maximum - lengths[i]) if remainder > 0 else (lengths[i] - minimum),
+        reverse=True,
+    ):
+        if abs(remainder) <= 1e-8:
+            break
+        capacity = (maximum - lengths[index]) if remainder > 0 else (lengths[index] - minimum)
+        change = math.copysign(min(abs(remainder), max(0.0, capacity)), remainder)
+        lengths[index] += change
+        remainder -= change
+    if abs(total_duration - sum(lengths)) > 1e-5:
+        print("[warn] Could not satisfy the reference pacing constraints; using even pacing.")
         return [total_duration * index / clip_count for index in range(clip_count + 1)]
     boundaries = [0.0]
     for value in lengths:
@@ -561,8 +561,9 @@ def _reference_boundaries(clip_count, total_duration, profile):
 
 
 def make_boundaries(clip_count, beats, reference_profile=None):
-    """Use the reference's shot-length pattern, then snap cuts to real beat candidates."""
-    boundaries = _reference_boundaries(clip_count, EDIT_DURATION, reference_profile)
+    """Keep reference-derived shot lengths and accept only beat snaps that stay render-safe."""
+    reference_boundaries = _reference_boundaries(clip_count, EDIT_DURATION, reference_profile)
+    boundaries = list(reference_boundaries)
     if beats:
         for index in range(1, clip_count):
             target = boundaries[index]
@@ -576,11 +577,18 @@ def make_boundaries(clip_count, beats, reference_profile=None):
             if 0.75 <= previous_gap <= 3.3 and 0.75 <= next_gap <= 3.3:
                 boundaries[index] = candidate
     lengths = [b - a for a, b in zip(boundaries, boundaries[1:])]
-    if min(lengths) < 0.75 or max(lengths) > 3.3:
+    if min(lengths) < 0.75 - 1e-8 or max(lengths) > 3.3 + 1e-8:
+        print("[warn] Beat snapping would break safe shot lengths; reverting to reference-derived boundaries.")
+        boundaries = list(reference_boundaries)
+        lengths = [b - a for a, b in zip(boundaries, boundaries[1:])]
+    if min(lengths) < 0.75 - 1e-8 or max(lengths) > 3.3 + 1e-8:
+        print("[warn] Reference-derived boundaries are outside the safe range; using even pacing.")
         boundaries = [EDIT_DURATION * index / clip_count for index in range(clip_count + 1)]
         lengths = [b - a for a, b in zip(boundaries, boundaries[1:])]
     if reference_profile:
+        variation = max(lengths) - min(lengths)
         print("[edit] Reference-derived shot lengths: " + ", ".join(f"{x:.2f}" for x in lengths) + " seconds")
+        print(f"[edit] Reference pacing retained: range={min(lengths):.2f}–{max(lengths):.2f}s; variation={variation:.2f}s.")
     else:
         print("[edit] Segment lengths: " + ", ".join(f"{x:.2f}" for x in lengths) + " seconds")
     return boundaries
