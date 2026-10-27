@@ -3,21 +3,22 @@
 ## Current implemented state (feature branch)
 
 - Output settings are read from `params.json`; supported output is 1080x1920 (9:16), configurable 24–60 FPS, 8–60 seconds, speed 1.0–1.35x, and a frame-quantized final freeze. Unsupported types/ranges fail fast.
-- Smart Crop now means a centered aspect-ratio crop to fill the 9:16 frame; it is not face/subject tracking or AI upscaling. Setting `smart_crop: false` selects the legacy blurred-background layout.
+- Smart Crop currently means a centered aspect-ratio crop to fill the 9:16 frame; it is not face/subject tracking or AI upscaling. The planner now selects a contiguous source-time context window based on moderate scene-cut density rather than sampling evenly across an entire long recording. This is a temporal continuity proxy, not identity tracking or semantic understanding of who is protecting/following whom. Setting `smart_crop: false` selects the legacy blurred-background layout.
 - Mirror is an explicit `edit_settings.mirror_enabled` boolean; it no longer alternates on a per-clip rule. A horizontal flip can reverse visible text.
 - The validated, frame-based EDL now drives source ranges, clip durations, freeze placement and the supported full-timeline audio segment. The renderer rejects unsupported crop rectangles or unsupported audio schedules instead of silently ignoring them.
 - The synthetic CI render checks EDL continuity, exact decoded frame count, output dimensions/FPS/duration, audio and full-file decoding.
-- Deterministic Python agents now run real settings, media, beat, reference, framing, opening-scene-change, planning, niche-evidence, Inspector and Render Critic stages. The Critic checks FFmpeg black intervals and audio volume; the Director records an explicit allow/block decision; Export Storage performs atomic promotion only after that decision.
+- Deterministic Python agents run real settings, media, beat, reference, framing, opening-scene-change, planning, niche-evidence, Inspector and Render Critic stages. Hook Analyst supplies an opening cut-cadence proxy, and Niche Analyst supplies a low-confidence craft proxy composite only when required inputs exist; neither claims semantic hook understanding or predicts virality. A structured evidence-linked review conference is stored in the report and printed in the terminal; it is rule-based cross-review, not independent LLM-to-LLM conversation.
+- The final skull freeze is configured to 1.7–3.0 seconds. When a sufficiently strong bass-onset proxy is detected, the EDL may include a short internal drop-impact hold (black-and-white with a brief shake) followed by continued footage, while retaining the final Phonk freeze. The final freeze uses the custom skull SVG icon at a larger scale.
 - Missing evidence remains visible. Scene-change counts are not semantic scene understanding; beat timing is a bass-onset/autocorrelation heuristic; the hook agent does not assign semantic hook strength; niche craft scoring remains unavailable until all required metrics are measured.
 - CI on code commit d2ab640 passed 41 unit tests and the synthetic render, including measured Render Critic output, the explicit Director decision, Export Storage operation, and an 8-second 1080x1920, 24-FPS output with exactly 192 decoded frames and audio.
 - No real user footage has been visually reviewed in this repository's CI.
 
 ## Remaining stages
 
-1. **Real-footage visual QA:** test framing, subject visibility, mirrored text, skull scale/position, flash timing, video-to-music impact and audio level using the user's own sample clips.
+1. **Real-footage visual QA:** test framing, subject visibility, mirrored text, skull scale/position, flash timing, drop-freeze placement, and audio level using the user's own sample clips.
 2. **Critic improvements:** add representative-frame checks, frozen-frame detection and bounded retries. Current Render Critic measures black intervals and audio volume risk, but does not analyze aesthetics or run an automatic retry.
 3. **Beat timing:** test the full music loop and multiple timebases, quantify confidence and map candidates over a looped soundtrack; keep even pacing on low confidence.
-4. **Subject-aware crop:** add optional, tested subject/face detection only when the dependency/model is available; keep deterministic center crop as a clearly labeled fallback.
+4. **Semantic subject tracking:** add an optional tested detector/tracker (and, where permitted, a vision-language step) to follow the same person/action across a long source. The current context-window selector deliberately does not claim to recognize identities or narrative meaning.
 5. **Agent Room/UI:** wire real structured events to an actual UI if/when the frontend exists. The current repository contains no frontend, so it cannot display a live Agent Room yet.
 6. **True LLM collaboration and trend research:** add explicit providers, prompts, cost/timeout controls and evidence citations before describing the system as independent AI agents. Do not fabricate inter-agent chat or promise virality.
 7. **Termux performance:** benchmark render time, memory and storage on a real Android device before claiming performance optimization.
