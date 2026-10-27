@@ -71,6 +71,14 @@ CONFIG = None
 DROP_FREEZE_DURATION = 0.25
 DROP_BEAT_TIME = None
 DROP_BEAT_STRENGTH = None
+BEAT_GRID_ANALYSIS = {
+    "method": "not_run",
+    "confidence": None,
+    "period_seconds": None,
+    "phase_seconds": None,
+    "candidate_count": 0,
+    "onset_candidate_count": 0,
+}
 SUBJECT_OBSERVATIONS = []
 AI_UPSCALE_ENABLED = False
 AI_UPSCALE_MODEL = "realesrgan-x4plus"
@@ -466,6 +474,56 @@ def _estimate_period_frames(envelope, min_lag=15, max_lag=60):
     return best_lag if best_score >= 0.12 else None
 
 
+def _build_beat_grid(envelope, period_frames, hop_seconds=0.02, limit=None):
+    """Build a periodic grid from the strongest envelope phase for an estimated period.
+
+    Returns None when the period/envelope is not usable. Confidence measures how
+    concentrated positive onset energy is in the selected phase modulo the period;
+    it is a timing-consistency proxy, not a guarantee of musical downbeats.
+    """
+    if (isinstance(period_frames, bool) or not isinstance(period_frames, int)
+            or period_frames < 1 or len(envelope) < period_frames * 3
+            or isinstance(hop_seconds, bool) or not isinstance(hop_seconds, (int, float))
+            or not math.isfinite(float(hop_seconds)) or hop_seconds <= 0):
+        return None
+    values = [
+        max(0.0, float(value)) if isinstance(value, (int, float))
+        and not isinstance(value, bool) and math.isfinite(float(value)) else 0.0
+        for value in envelope
+    ]
+    phase_scores = [
+        sum(values[phase::period_frames]) for phase in range(period_frames)
+    ]
+    total_energy = sum(phase_scores)
+    if total_energy <= 1e-12:
+        return None
+    phase = max(range(period_frames), key=lambda item: phase_scores[item])
+    concentration = phase_scores[phase] / total_energy
+    uniform_concentration = 1.0 / period_frames
+    confidence = max(0.0, min(
+        1.0,
+        (concentration - uniform_concentration) / (1.0 - uniform_concentration),
+    ))
+    envelope_duration = len(values) * float(hop_seconds)
+    effective_limit = envelope_duration if limit is None else min(envelope_duration, float(limit))
+    if not math.isfinite(effective_limit) or effective_limit <= 0:
+        return None
+    period_seconds = period_frames * float(hop_seconds)
+    beats = [
+        round(frame * float(hop_seconds), 6)
+        for frame in range(phase, len(values), period_frames)
+        if 0.08 <= frame * float(hop_seconds) < effective_limit
+    ]
+    return {
+        "beats": beats,
+        "period_frames": period_frames,
+        "period_seconds": period_seconds,
+        "phase_frames": phase,
+        "phase_seconds": phase * float(hop_seconds),
+        "confidence": confidence,
+    }
+
+
 def extend_looped_beats(beats, music_duration, limit, loop_enabled):
     """Map measured beat candidates into repeated music cycles when the soundtrack loops."""
     if not beats:
@@ -556,16 +614,42 @@ def detect_music_beats(path, limit):
             if 0.08 <= timestamp < min(limit, len(energies) * 0.02):
                 candidates.append((value, timestamp))
 
-    # Keep the strongest onset per tempo-aware interval; reject near-duplicate peaks.
+    # Preserve the onset-only path as a fallback when the estimated period or
+    # phase concentration is too weak to justify a periodic grid.
     chosen = []
     for value, timestamp in sorted(candidates, reverse=True):
         if all(abs(timestamp - existing) >= min_spacing for existing in chosen):
             chosen.append(timestamp)
-    beats = sorted(t for t in chosen if t < limit)
-    if len(beats) < 3:
-        print("[warn] Few clear bass onsets found; edit timing will use fallback beats.")
-        return []
-    if candidates:
+    onset_beats = sorted(t for t in chosen if t < limit)
+    grid = _build_beat_grid(novelty, period_frames, hop_seconds=0.02, limit=limit) if period_frames else None
+    use_grid = bool(
+        grid and len(grid["beats"]) >= 3 and grid["confidence"] >= 0.15
+    )
+    if use_grid:
+        beats = grid["beats"]
+        BEAT_GRID_ANALYSIS.update({
+            "method": "period_phase_grid",
+            "confidence": round(grid["confidence"], 4),
+            "period_seconds": round(grid["period_seconds"], 6),
+            "phase_seconds": round(grid["phase_seconds"], 6),
+            "candidate_count": len(beats),
+            "onset_candidate_count": len(onset_beats),
+        })
+        print(
+            f"[analyze] Beat grid: period={grid['period_seconds']:.3f}s, "
+            f"phase={grid['phase_seconds']:.3f}s, confidence={grid['confidence']:.2f}."
+        )
+    else:
+        beats = onset_beats
+        BEAT_GRID_ANALYSIS.update({
+            "method": "onset_peak_fallback" if period_frames else "onset_only_fallback",
+            "confidence": round(grid["confidence"], 4) if grid else None,
+            "period_seconds": round(grid["period_seconds"], 6) if grid else None,
+            "phase_seconds": round(grid["phase_seconds"], 6) if grid else None,
+            "candidate_count": len(beats),
+            "onset_candidate_count": len(onset_beats),
+        })
+    if len(onset_beats) >= 3 and candidates:
         strongest_value, strongest_time = max(candidates, key=lambda pair: pair[0])
         DROP_BEAT_TIME = float(strongest_time)
         spread = max(1e-12, peak_novelty - median_novelty)
@@ -574,7 +658,11 @@ def detect_music_beats(path, limit):
             f"[analyze] Strongest bass-onset proxy at {DROP_BEAT_TIME:.2f}s "
             f"(relative onset strength={DROP_BEAT_STRENGTH:.2f}; not a semantic drop detector)."
         )
-    print(f"[analyze] Detected {len(beats)} likely beat/onset candidates in the edit window.")
+    if len(beats) < 3:
+        BEAT_GRID_ANALYSIS["method"] = "even_pacing_fallback"
+        print("[warn] Few clear bass onsets / grid points found; edit timing will use even pacing.")
+        return []
+    print(f"[analyze] Prepared {len(beats)} beat-grid/onset timing candidates in the edit window.")
     return beats
 
 def reference_pacing_profile(reference_path):
@@ -854,7 +942,11 @@ def make_boundaries(clip_count, beats, reference_profile=None):
     if beats:
         for index in range(1, clip_count):
             target = boundaries[index]
-            snap_window = 0.16 if reference_profile and reference_profile.get("cut_timestamps_seconds") else 0.42
+            if BEAT_GRID_ANALYSIS.get("method") == "period_phase_grid":
+                grid_period = BEAT_GRID_ANALYSIS.get("period_seconds")
+                snap_window = min(0.42, max(0.16, float(grid_period or 0.0) / 2.0))
+            else:
+                snap_window = 0.16 if reference_profile and reference_profile.get("cut_timestamps_seconds") else 0.42
             nearby = [beat for beat in beats if abs(beat - target) <= snap_window]
             if not nearby:
                 continue
@@ -1561,12 +1653,23 @@ def main(argv=None):
                    {"scene_change_count": len(scenes), "source_duration_seconds": source_duration})
     available_edit_duration = DURATION - FREEZE
     progress_event("beat_analysis", "running", "Measuring bass-onset / beat candidates.")
-    raw_beats = detect_music_beats(MUSIC, available_edit_duration) if BEAT_SYNC else []
+    if BEAT_SYNC:
+        raw_beats = detect_music_beats(MUSIC, available_edit_duration)
+    else:
+        raw_beats = []
+        BEAT_GRID_ANALYSIS.update({
+            "method": "disabled", "confidence": None, "period_seconds": None,
+            "phase_seconds": None, "candidate_count": 0, "onset_candidate_count": 0,
+        })
     beats = extend_looped_beats(raw_beats, music_duration, available_edit_duration, MUSIC_LOOP)
     progress_event("beat_analysis", "completed" if BEAT_SYNC else "skipped",
                    f"Prepared {len(beats)} timing candidate(s).",
                    {"beat_sync_enabled": BEAT_SYNC, "candidate_count": len(beats),
-                    "music_loop_enabled": MUSIC_LOOP})
+                    "music_loop_enabled": MUSIC_LOOP,
+                    "grid_method": BEAT_GRID_ANALYSIS["method"],
+                    "grid_confidence": BEAT_GRID_ANALYSIS["confidence"],
+                    "grid_period_seconds": BEAT_GRID_ANALYSIS["period_seconds"],
+                    "grid_phase_seconds": BEAT_GRID_ANALYSIS["phase_seconds"]})
     drop_beat_time = choose_drop_beat(music_duration, available_edit_duration, MUSIC_LOOP)
     total_frames, freeze_frames = round(DURATION * FPS), round(FREEZE * FPS)
     drop_freeze_frames = max(1, round(DROP_FREEZE_DURATION * FPS)) if drop_beat_time is not None else 0
@@ -1895,7 +1998,13 @@ def main(argv=None):
         "source_candidate_count": len(raw_beats),
         "loop_expanded": len(beats) > len(raw_beats),
         "fallback": "even_pacing" if BEAT_SYNC and len(beats) < 3 else None,
-        "method": "bass-lowpass-rms-novelty-autocorrelation-heuristic" if BEAT_SYNC else "disabled",
+        "method": BEAT_GRID_ANALYSIS["method"],
+        "grid_method": BEAT_GRID_ANALYSIS["method"],
+        "grid_confidence": BEAT_GRID_ANALYSIS["confidence"],
+        "grid_period_seconds": BEAT_GRID_ANALYSIS["period_seconds"],
+        "grid_phase_seconds": BEAT_GRID_ANALYSIS["phase_seconds"],
+        "grid_candidate_count": BEAT_GRID_ANALYSIS["candidate_count"],
+        "onset_candidate_count": BEAT_GRID_ANALYSIS["onset_candidate_count"],
         "drop_beat_time_seconds": drop_beat_time,
         "drop_beat_strength_proxy": DROP_BEAT_STRENGTH if drop_beat_time is not None else None,
         "drop_freeze_frames": drop_freeze_frames,

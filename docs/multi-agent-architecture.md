@@ -6,7 +6,7 @@ The current repository runs deterministic Python modules—not an independent LL
 
 1. **Settings Agent** — validates the actual `params.json` structure, numeric types/ranges, supported codec/preset, clip limits (up to 40), explicit booleans and EDL mode. `edit_settings.min_shot_seconds` defaults to 0.75s and supports 0.3–3.0s; when no exact `--clip-count` is provided, the selected count is derived from measured reference cadence and bounded by the configured limits.
 2. **Media Analyst** — reports measured source duration, dimensions, detected scene-change count and music duration. Scene cuts are visual-change heuristics, not semantic scene understanding.
-3. **Beat Sync Agent** — reports whether beat sync is enabled, how many onset candidates were measured, and whether even-pacing fallback was used. It is a bass-onset/autocorrelation heuristic, not guaranteed downbeat detection. When looping is enabled, valid candidates repeat at music-cycle offsets.
+3. **Beat Sync Agent** — estimates a period from the low-frequency onset envelope and phase-locks a beat grid when phase concentration is strong enough; otherwise it retains the previous onset-peak/even-pacing fallback. The report records grid method, period, phase, candidate count and a phase-concentration confidence proxy. This is not guaranteed downbeat/drop detection. When looping is enabled, valid grid candidates repeat at music-cycle offsets.
 4. **Reference Analyst** — reports measured median cut pacing only when a usable reference exists. Missing or invalid references lead to default pacing; frames are not copied.
 5. **Framing Agent** — checks EDL crop compatibility with the current renderer, reports center-crop versus legacy blurred-background mode, and warns that mirroring reverses visible text. Unsupported per-shot crop rectangles block export.
 6. **Hook Analyst** — measures opening scene-change count as a pacing proxy. It deliberately returns `insufficient_evidence` for semantic hook strength; scene changes do not reveal what the content means.
@@ -57,4 +57,4 @@ params.json
    -> human visual review (required)
 ```
 
-CI on code commit `d2ab640` passed 41 unit tests and the synthetic end-to-end render test. CI uses generated synthetic media, not the user's actual footage. `main` remains untouched; the PR is a draft targeting `improve/phonk-renderer-v1`, not `main`.
+The latest CI runs validate the beat-grid helper with synthetic 130 BPM pulses and a synthetic FFmpeg smoke render. Synthetic media does not establish beat-grid accuracy on the user's soundtrack or the visual quality of the real edit. `main` remains untouched; this PR is still a draft.

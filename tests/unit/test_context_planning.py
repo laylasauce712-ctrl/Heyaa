@@ -14,6 +14,7 @@ class ContextPlanningTests(unittest.TestCase):
         self.old_min_shot_seconds = renderer.MIN_SHOT_SECONDS
         self.old_min_clips = renderer.MIN_CLIPS
         self.old_max_clips = renderer.MAX_CLIPS
+        self.old_beat_grid_analysis = dict(renderer.BEAT_GRID_ANALYSIS)
 
     def tearDown(self):
         renderer.EDIT_DURATION = self.old_edit_duration
@@ -23,6 +24,8 @@ class ContextPlanningTests(unittest.TestCase):
         renderer.MIN_SHOT_SECONDS = self.old_min_shot_seconds
         renderer.MIN_CLIPS = self.old_min_clips
         renderer.MAX_CLIPS = self.old_max_clips
+        renderer.BEAT_GRID_ANALYSIS.clear()
+        renderer.BEAT_GRID_ANALYSIS.update(self.old_beat_grid_analysis)
 
     def test_reference_profile_generates_non_uniform_bounded_shot_lengths(self):
         renderer.EDIT_DURATION = 16.0
@@ -81,6 +84,43 @@ class ContextPlanningTests(unittest.TestCase):
         self.assertAlmostEqual(boundaries[-1], renderer.EDIT_DURATION)
         self.assertGreaterEqual(min(lengths), 0.75)
         self.assertLessEqual(max(lengths), 3.3)
+
+    def test_synthetic_130_bpm_pulses_produce_confident_phase_locked_grid(self):
+        hop_seconds = 0.02
+        expected_period_frames = round(60.0 / 130.0 / hop_seconds)
+        envelope = [0.0] * 500
+        for frame in range(7, len(envelope), expected_period_frames):
+            envelope[frame] = 1.0
+            if frame > 0:
+                envelope[frame - 1] = 0.2
+            if frame + 1 < len(envelope):
+                envelope[frame + 1] = 0.1
+
+        period_frames = renderer._estimate_period_frames(envelope)
+        self.assertIsNotNone(period_frames)
+        estimated_bpm = 60.0 / (period_frames * hop_seconds)
+        self.assertAlmostEqual(estimated_bpm, 130.0, delta=8.0)
+
+        grid = renderer._build_beat_grid(envelope, period_frames, hop_seconds, limit=8.0)
+        self.assertIsNotNone(grid)
+        self.assertGreaterEqual(grid["confidence"], 0.5)
+        self.assertAlmostEqual(grid["phase_seconds"], 7 * hop_seconds, delta=hop_seconds)
+        intervals = [right - left for left, right in zip(grid["beats"], grid["beats"][1:])]
+        self.assertTrue(intervals)
+        self.assertTrue(all(abs(interval - expected_period_frames * hop_seconds) < 1e-6
+                            for interval in intervals))
+
+        renderer.EDIT_DURATION = 4.0
+        renderer.MIN_SHOT_SECONDS = 0.75
+        renderer.BEAT_GRID_ANALYSIS.update({
+            "method": "period_phase_grid", "period_seconds": grid["period_seconds"]
+        })
+        boundaries = renderer.make_boundaries(4, grid["beats"], {
+            "shot_intervals_seconds": [1.0, 1.0, 1.0, 1.0],
+            "median_cut_interval_seconds": 1.0,
+        })
+        self.assertTrue(any(abs(boundary - beat) < 1e-8
+                            for boundary in boundaries[1:-1] for beat in grid["beats"]))
 
     def test_short_reference_auto_derives_clip_count_to_match_fast_pacing(self):
         renderer.EDIT_DURATION = 17.75
