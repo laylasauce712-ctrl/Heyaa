@@ -2,6 +2,7 @@ import json
 import math
 import os
 import re
+import shutil
 import statistics
 import struct
 import subprocess
@@ -68,6 +69,17 @@ DROP_FREEZE_DURATION = 0.25
 DROP_BEAT_TIME = None
 DROP_BEAT_STRENGTH = None
 SUBJECT_OBSERVATIONS = []
+AI_UPSCALE_ENABLED = False
+AI_UPSCALE_MODEL = "realesrgan-x4plus"
+AI_UPSCALE_SCALE = 2
+AI_UPSCALE_BINARY = "tools/realesrgan/realesrgan-ncnn-vulkan"
+AI_UPSCALE_MODEL_DIR = "tools/realesrgan/models"
+AI_UPSCALER_EXECUTABLE = None
+AI_UPSCALER_MODEL_DIR = None
+AI_UPSCALE_MODELS = {
+    "realesrgan-x4plus", "realesrgan-x4plus-anime",
+    "realesrnet-x4plus", "realesr-animevideov3",
+}
 
 
 def load_settings():
@@ -75,6 +87,8 @@ def load_settings():
     global DURATION, FPS, WIDTH, HEIGHT, CRF, PRESET, SPEED, FREEZE, EDIT_DURATION
     global BEAT_SYNC, BEAT_FLASH, BASS_BOOST, REFERENCE_PACING, MIRROR_ENABLED, SMART_CROP_ENABLED
     global MIN_CLIPS, MAX_CLIPS, MUSIC_LOOP, CODEC, CONFIG, DROP_FREEZE_DURATION
+    global AI_UPSCALE_ENABLED, AI_UPSCALE_MODEL, AI_UPSCALE_SCALE
+    global AI_UPSCALE_BINARY, AI_UPSCALE_MODEL_DIR
     path = "params.json"
     if not os.path.isfile(path):
         raise FileNotFoundError("params.json is required; renderer defaults are disabled.")
@@ -95,6 +109,21 @@ def load_settings():
     CRF = video["crf"]
     if isinstance(CRF, bool) or not isinstance(CRF, int) or not 16 <= CRF <= 26:
         raise ValueError("video_settings.crf must be an integer from 16 to 26.")
+    AI_UPSCALE_ENABLED = video.get("ai_upscale_enabled", False)
+    if not isinstance(AI_UPSCALE_ENABLED, bool):
+        raise ValueError("video_settings.ai_upscale_enabled must be an explicit boolean.")
+    AI_UPSCALE_MODEL = video.get("ai_upscale_model", "realesrgan-x4plus")
+    if AI_UPSCALE_MODEL not in AI_UPSCALE_MODELS:
+        raise ValueError("video_settings.ai_upscale_model is not a supported Real-ESRGAN ncnn-vulkan model.")
+    AI_UPSCALE_SCALE = video.get("ai_upscale_scale", 2)
+    if isinstance(AI_UPSCALE_SCALE, bool) or not isinstance(AI_UPSCALE_SCALE, int) or AI_UPSCALE_SCALE not in (2, 3, 4):
+        raise ValueError("video_settings.ai_upscale_scale must be 2, 3 or 4.")
+    AI_UPSCALE_BINARY = video.get("ai_upscale_binary", "tools/realesrgan/realesrgan-ncnn-vulkan")
+    if not isinstance(AI_UPSCALE_BINARY, str) or not AI_UPSCALE_BINARY.strip():
+        raise ValueError("video_settings.ai_upscale_binary must be a non-empty executable name or path.")
+    AI_UPSCALE_MODEL_DIR = video.get("ai_upscale_model_dir", "tools/realesrgan/models")
+    if not isinstance(AI_UPSCALE_MODEL_DIR, str):
+        raise ValueError("video_settings.ai_upscale_model_dir must be a path string (empty means auto-detect).")
     CODEC = str(video["codec"])
     if CODEC != "libx264":
         raise ValueError("Only video_settings.codec='libx264' is implemented.")
@@ -153,8 +182,112 @@ def load_settings():
     DURATION = total_frames / FPS
     EDIT_DURATION = (total_frames - freeze_frames) / FPS
     CONFIG = config
-    print(f"[settings] {WIDTH}x{HEIGHT}@{FPS} | {DURATION:.3f}s | speed={SPEED:.2f}x | final_freeze={FREEZE:.3f}s (minimum 1.7s) | drop_freeze={DROP_FREEZE_DURATION:.3f}s | mirror={MIRROR_ENABLED} | smart_crop={SMART_CROP_ENABLED} | music_loop={MUSIC_LOOP} | EDL=on")
+    print(f"[settings] {WIDTH}x{HEIGHT}@{FPS} | {DURATION:.3f}s | speed={SPEED:.2f}x | final_freeze={FREEZE:.3f}s (minimum 1.7s) | drop_freeze={DROP_FREEZE_DURATION:.3f}s | mirror={MIRROR_ENABLED} | smart_crop={SMART_CROP_ENABLED} | ai_upscale={AI_UPSCALE_ENABLED} ({AI_UPSCALE_MODEL} x{AI_UPSCALE_SCALE}) | music_loop={MUSIC_LOOP} | EDL=on")
     return config
+
+
+def resolve_ai_upscaler():
+    """Resolve the optional external Real-ESRGAN ncnn-vulkan executable and model directory."""
+    global AI_UPSCALER_EXECUTABLE, AI_UPSCALER_MODEL_DIR
+    if not AI_UPSCALE_ENABLED:
+        AI_UPSCALER_EXECUTABLE = None
+        AI_UPSCALER_MODEL_DIR = None
+        return None
+    configured = AI_UPSCALE_BINARY.strip()
+    resolved = shutil.which(configured)
+    candidate = Path(configured).expanduser()
+    if resolved is None and candidate.is_file():
+        resolved = str(candidate.resolve())
+    if resolved is None:
+        raise FileNotFoundError(
+            "AI upscaling is enabled, but Real-ESRGAN was not found. Run "
+            "bash scripts/install_realesrgan_linux.sh or set video_settings.ai_upscale_binary "
+            "to the installed executable. No silent Lanczos fallback is used when AI upscaling is required."
+        )
+    executable = Path(resolved).resolve()
+    model_dir_value = AI_UPSCALE_MODEL_DIR.strip()
+    if model_dir_value:
+        model_dir = Path(model_dir_value).expanduser()
+        if not model_dir.is_absolute():
+            model_dir = Path.cwd() / model_dir
+        if not model_dir.is_dir():
+            raise FileNotFoundError(f"Real-ESRGAN model directory does not exist: {model_dir}")
+    else:
+        candidates = [executable.parent / "models", Path.cwd() / "models"]
+        model_dir = next((item.resolve() for item in candidates if item.is_dir()), None)
+        if model_dir is None:
+            raise FileNotFoundError(
+                "AI upscaling is enabled but the Real-ESRGAN models folder was not found. "
+                "Set video_settings.ai_upscale_model_dir to the folder containing the model files."
+            )
+    AI_UPSCALER_EXECUTABLE = str(executable)
+    AI_UPSCALER_MODEL_DIR = str(model_dir.resolve())
+    print(f"[upscale] Real-ESRGAN ready: {AI_UPSCALER_EXECUTABLE}; models={AI_UPSCALER_MODEL_DIR}; model={AI_UPSCALE_MODEL}; scale={AI_UPSCALE_SCALE}x")
+    return AI_UPSCALER_EXECUTABLE
+
+
+def build_ai_upscale_command(executable, input_dir, output_dir, model, scale, model_dir):
+    """Build a Real-ESRGAN directory-to-directory image batch command."""
+    return [
+        str(executable), "-i", str(input_dir), "-o", str(output_dir),
+        "-n", str(model), "-s", str(scale), "-m", str(model_dir), "-f", "png",
+    ]
+
+
+def prepare_ai_upscaled_frames(clip_index, source_start_seconds, source_duration_seconds, source_frame_count):
+    """Extract one clip to lossless frames, restore detail with Real-ESRGAN, then return its frame sequence."""
+    if not AI_UPSCALE_ENABLED or not AI_UPSCALER_EXECUTABLE or not AI_UPSCALER_MODEL_DIR:
+        raise RuntimeError("AI-upscaled frame preparation was requested without a resolved Real-ESRGAN executable.")
+    root = Path(WORK) / f"ai_upscale_clip_{clip_index:02d}"
+    if root.exists():
+        shutil.rmtree(root)
+    input_dir = root / "input"
+    output_dir = root / "upscaled"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    input_pattern = input_dir / "frame_%08d.png"
+    output_pattern = output_dir / "frame_%08d.png"
+
+    extract = [
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+        "-ss", f"{source_start_seconds:.6f}",
+        "-t", f"{source_duration_seconds + 1.0 / FPS:.6f}",
+        "-i", VIDEO, "-vf", f"fps={FPS}", "-frames:v", str(source_frame_count),
+        "-start_number", "1", str(input_pattern),
+    ]
+    result = subprocess.run(extract, check=False, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"Could not extract frames for AI upscaling: {result.stderr[-2000:]}")
+    expected_names = [f"frame_{frame:08d}.png" for frame in range(1, source_frame_count + 1)]
+    missing_input = [name for name in expected_names if not (input_dir / name).is_file()]
+    if missing_input:
+        raise RuntimeError(
+            f"AI upscale extraction produced {source_frame_count - len(missing_input)}/{source_frame_count} frames; "
+            f"first missing: {missing_input[0]}"
+        )
+
+    upscale = build_ai_upscale_command(
+        AI_UPSCALER_EXECUTABLE, input_dir, output_dir,
+        AI_UPSCALE_MODEL, AI_UPSCALE_SCALE, AI_UPSCALER_MODEL_DIR,
+    )
+    result = subprocess.run(upscale, check=False, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"Real-ESRGAN failed for clip {clip_index}: {result.stderr[-2000:]}")
+    missing_output = [
+        name for name in expected_names
+        if not (output_dir / name).is_file() or (output_dir / name).stat().st_size <= 0
+    ]
+    if missing_output:
+        raise RuntimeError(
+            f"Real-ESRGAN returned only {source_frame_count - len(missing_output)}/{source_frame_count} usable frames; "
+            f"first missing: {missing_output[0]}"
+        )
+    print(
+        f"  [upscale] AI-restored {source_frame_count} source frames with "
+        f"{AI_UPSCALE_MODEL} at {AI_UPSCALE_SCALE}x; detail is model-generated, not verified source truth."
+    )
+    return output_pattern, root
+
 
 def run(cmd, capture=False, binary=False):
     return subprocess.run(
@@ -658,18 +791,33 @@ def make_clip(index, item, source_duration):
             f"fps={FPS},setpts=PTS/{SPEED},fps={FPS},trim=end_frame={output_frames},setpts=PTS-STARTPTS[v]"
         )
 
-    # Loop only when the selected range cannot supply the requested source time.
+    # AI mode upscales the selected source frames losslessly before the normal
+    # composition crop. Standard mode keeps the existing direct FFmpeg path.
+    ai_root = None
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
-    if source_duration < input_duration + start:
-        cmd += ["-stream_loop", "-1"]
+    if AI_UPSCALE_ENABLED:
+        pattern, ai_root = prepare_ai_upscaled_frames(
+            index, start, input_duration, item["source_dur_f"]
+        )
+        cmd += [
+            "-framerate", str(FPS), "-start_number", "1",
+            "-i", str(pattern),
+        ]
+    else:
+        if source_duration < input_duration + start:
+            cmd += ["-stream_loop", "-1"]
+        cmd += [
+            "-ss", f"{start:.6f}", "-t", f"{input_duration:.6f}", "-i", VIDEO,
+        ]
     cmd += [
-        "-ss", f"{start:.6f}", "-t", f"{input_duration:.6f}", "-i", VIDEO,
         "-filter_complex", vf, "-map", "[v]", "-an",
         "-c:v", CODEC, "-preset", PRESET, "-crf", str(CRF),
         "-pix_fmt", "yuv420p", "-r", str(FPS), "-frames:v", str(output_frames),
         "-threads", "2", path
     ]
     run(cmd)
+    if ai_root is not None:
+        shutil.rmtree(ai_root)
     return path
 
 def make_freeze_clip(index, item, previous_clip):
@@ -993,6 +1141,7 @@ def main(argv=None):
         reference_path=REFERENCE,
     )
     load_settings()
+    resolve_ai_upscaler()
     EDIT_DURATION = DURATION - FREEZE
     os.makedirs(OUTDIR, exist_ok=True)
     os.makedirs(WORK, exist_ok=True)
