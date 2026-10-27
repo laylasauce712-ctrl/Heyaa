@@ -41,6 +41,9 @@ def _finite_number(value: Any) -> bool:
 def settings_agent(config: dict[str, Any]) -> AgentResult:
     """Validate actual params.json values, not a hard-coded preferred profile."""
     findings: list[str] = []
+    if not isinstance(config, dict):
+        return AgentResult("settings_agent", "blocked", None, 0.0,
+                           ("Settings payload must be an object.",), ("Repair params.json before rendering.",), {})
     video = config.get("video_settings", {})
     edit = config.get("edit_settings", {})
     audio = config.get("audio_settings", {})
@@ -95,6 +98,8 @@ def settings_agent(config: dict[str, Any]) -> AgentResult:
 
 def media_analyst(media: dict[str, Any]) -> AgentResult:
     """Report measured source metadata; do not interpret scene cuts as semantics."""
+    if not isinstance(media, dict):
+        media = {}
     required = ("source_duration_seconds", "source_width", "source_height", "scene_cut_count",
                 "music_duration_seconds")
     missing = [key for key in required if key not in media or media[key] is None]
@@ -115,6 +120,8 @@ def media_analyst(media: dict[str, Any]) -> AgentResult:
 
 
 def beat_sync_agent(analysis: dict[str, Any]) -> AgentResult:
+    if not isinstance(analysis, dict):
+        analysis = {}
     enabled = analysis.get("enabled") is True
     count = analysis.get("candidate_count", 0)
     fallback = analysis.get("fallback")
@@ -141,6 +148,8 @@ def beat_sync_agent(analysis: dict[str, Any]) -> AgentResult:
 
 def planner(context: dict[str, Any]) -> AgentResult:
     """Check the actual EDL against the requested config and integer-frame target."""
+    if not isinstance(context, dict):
+        context = {}
     config = context.get("settings", {})
     video = config.get("video_settings", {}) if isinstance(config, dict) else {}
     edit = config.get("edit_settings", {}) if isinstance(config, dict) else {}
@@ -167,10 +176,10 @@ def planner(context: dict[str, Any]) -> AgentResult:
         if (edl.get("width"), edl.get("height")) != expected_size:
             mismatches["dimensions"] = {"expected": expected_size, "actual": (edl.get("width"), edl.get("height"))}
     fps = video.get("fps")
-    if isinstance(fps, int) and edl.get("fps_num") != fps:
+    if isinstance(fps, int) and not isinstance(fps, bool) and edl.get("fps_num") != fps:
         mismatches["fps_num"] = {"expected": fps, "actual": edl.get("fps_num")}
     duration = edit.get("duration_seconds")
-    if _finite_number(duration) and isinstance(fps, int):
+    if _finite_number(duration) and isinstance(fps, int) and not isinstance(fps, bool):
         expected_frames = round(float(duration) * fps)
         if edl.get("total_frames") != expected_frames:
             mismatches["total_frames"] = {"expected": expected_frames, "actual": edl.get("total_frames")}
@@ -199,6 +208,8 @@ def planner(context: dict[str, Any]) -> AgentResult:
 
 def reference_analyst(data: dict[str, Any]) -> AgentResult:
     """Report measured reference pacing only when a reference was actually analyzed."""
+    if not isinstance(data, dict):
+        data = {}
     if data.get("enabled") is not True:
         return AgentResult("reference_analyst", "skipped", None, 0.0,
                            ("Reference pacing is disabled in params.json.",), (),
@@ -222,7 +233,10 @@ def reference_analyst(data: dict[str, Any]) -> AgentResult:
 def framing_agent(config: dict[str, Any], edl: dict[str, Any]) -> AgentResult:
     """Check that the EDL framing can be represented by the current renderer."""
     edit = config.get("edit_settings", {}) if isinstance(config, dict) else {}
-    clips = [item for item in edl.get("video", []) if item.get("type") == "clip"] if isinstance(edl, dict) else []
+    if not isinstance(edl, dict) or not isinstance(edl.get("video"), list):
+        return AgentResult("framing_agent", "blocked", None, 0.0,
+                           ("EDL video list is missing or invalid.",), ("Build a valid EDL before framing review.",), {})
+    clips = [item for item in edl["video"] if isinstance(item, dict) and item.get("type") == "clip"]
     if not clips:
         return AgentResult("framing_agent", "blocked", None, 0.0,
                            ("No video clips were available to inspect for framing.",),
@@ -230,8 +244,12 @@ def framing_agent(config: dict[str, Any], edl: dict[str, Any]) -> AgentResult:
     unsupported = []
     for index, item in enumerate(clips):
         crop = item.get("crop", {})
-        if any(abs(float(crop.get(k, -1)) - v) > 1e-6 for k, v in
-               (("x", 0.0), ("y", 0.0), ("w", 1.0), ("h", 1.0))):
+        if not isinstance(crop, dict):
+            unsupported.append(index)
+            continue
+        expected = (("x", 0.0), ("y", 0.0), ("w", 1.0), ("h", 1.0))
+        malformed = any(not _finite_number(crop.get(key)) for key, _ in expected)
+        if malformed or any(abs(float(crop[key]) - value) > 1e-6 for key, value in expected):
             unsupported.append(index)
     if unsupported:
         return AgentResult("framing_agent", "needs_fix", None, 1.0,
@@ -254,6 +272,8 @@ def framing_agent(config: dict[str, Any], edl: dict[str, Any]) -> AgentResult:
 
 def hook_analyst(data: dict[str, Any]) -> AgentResult:
     """Measure an opening-pacing proxy without pretending it understands semantic hooks."""
+    if not isinstance(data, dict):
+        data = {}
     count = data.get("opening_scene_change_count")
     window = data.get("window_seconds")
     if (not isinstance(count, int) or isinstance(count, bool) or count < 0 or
@@ -273,7 +293,9 @@ def hook_analyst(data: dict[str, Any]) -> AgentResult:
 
 def niche_analyst(metrics: dict[str, Any], tags: list[str] | None = None) -> AgentResult:
     """Score craft only when measured signals are supplied; never predict virality."""
-    tags = tags or []
+    if not isinstance(metrics, dict):
+        metrics = {}
+    tags = tags if isinstance(tags, list) else []
     required = ("beat_alignment", "visual_clarity", "hook_strength", "drop_impact", "motion_energy")
     parsed = {}
     invalid = []
@@ -324,6 +346,8 @@ def niche_analyst(metrics: dict[str, Any], tags: list[str] | None = None) -> Age
 
 def inspector(report: dict[str, Any]) -> AgentResult:
     """Require actual render evidence; missing QA data is a failure, not a pass."""
+    if not isinstance(report, dict):
+        report = {}
     required = ("width", "height", "duration_seconds", "expected_duration_seconds", "fps", "expected_fps",
                 "frame_count", "expected_frame_count", "has_audio", "decode_ok", "file_exists",
                 "video_codec", "expected_video_codec")
@@ -368,6 +392,8 @@ def inspector(report: dict[str, Any]) -> AgentResult:
 def run_agent_team(context: dict[str, Any],
                    emit: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
     """Run each deterministic agent against the same real render context."""
+    if not isinstance(context, dict):
+        context = {}
     events: list[AgentEvent] = []
 
     def record(result: AgentResult, stage: str) -> None:

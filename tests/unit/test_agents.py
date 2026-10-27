@@ -40,7 +40,7 @@ def sample_edl():
 def render_report():
     return {"width": 1080, "height": 1920, "duration_seconds": 8.0, "expected_duration_seconds": 8.0,
             "fps": 24.0, "expected_fps": 24, "video_codec": "h264", "expected_video_codec": "h264",
-            "frame_count": 192, "expected_frame_count": 192, "has_audio": True, "decode_ok": True, "file_exists": True, "video_codec": "h264", "audio_codec": "aac"}
+            "frame_count": 192, "expected_frame_count": 192, "has_audio": True, "decode_ok": True, "file_exists": True, "audio_codec": "aac"}
 
 
 class AgentTests(unittest.TestCase):
@@ -111,6 +111,13 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(result.status, "insufficient_evidence")
         self.assertIsNone(result.score)
         self.assertFalse(result.evidence["semantic_hook_assessed"])
+
+
+    def test_agents_fail_closed_on_malformed_context(self):
+        self.assertEqual(settings_agent(None).status, "blocked")
+        self.assertEqual(media_analyst(None).status, "insufficient_evidence")
+        self.assertEqual(hook_analyst(None).status, "insufficient_evidence")
+        self.assertEqual(inspector(None).status, "reject")
 
     def test_team_emits_all_actual_structured_stages_and_blocks_missing_qa(self):
         emitted = []

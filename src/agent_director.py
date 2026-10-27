@@ -134,11 +134,13 @@ def duration_of(path):
     return float(probe(path)["format"]["duration"])
 
 
-def detect_scenes(path, duration):
+def detect_scenes(path, duration, scan_duration=None):
     """Use FFmpeg scene-change scores as an inexpensive cut detector."""
     print(f"[analyze] Scene changes: {Path(path).name}")
-    cmd = [
-        "ffmpeg", "-hide_banner", "-i", path,
+    cmd = ["ffmpeg", "-hide_banner"]
+    if scan_duration is not None:
+        cmd += ["-t", f"{max(0.1, float(scan_duration)):.3f}"]
+    cmd += ["-i", path,
         "-vf", "select='gt(scene,0.22)',showinfo",
         "-an", "-f", "null", "-"
     ]
@@ -431,8 +433,8 @@ def verify_output(path):
     return actual_duration, details["video_codec"], details["audio_codec"], details
 
 def main():
+    global EDIT_DURATION, DURATION, FREEZE
     load_settings()
-    global EDIT_DURATION
     EDIT_DURATION = DURATION - FREEZE
     os.makedirs(OUTDIR, exist_ok=True)
     os.makedirs(WORK, exist_ok=True)
@@ -625,10 +627,11 @@ def main():
         "median_cut_interval_seconds": ref_interval,
         "source": REFERENCE if os.path.isfile(REFERENCE) else None,
     }
-    final_scenes = detect_scenes(final_video, actual)
+    hook_window = min(2.0, actual)
+    final_scenes = detect_scenes(final_video, actual, scan_duration=hook_window)
     hook_analysis = {
-        "window_seconds": min(2.0, actual),
-        "opening_scene_change_count": sum(1 for time in final_scenes if 0.0 < time <= min(2.0, actual)),
+        "window_seconds": hook_window,
+        "opening_scene_change_count": sum(1 for time in final_scenes if 0.0 < time <= hook_window),
         "measurement": "ffmpeg_scene_change",
     }
     cut_times = [item["start_f"] / FPS for item in edl_video[:-1] if item["start_f"] > 0]
