@@ -1147,6 +1147,9 @@ def main(argv=None):
         OUTDIR = str(Path("output") / "variants" / f"variant_{VARIANT_INDEX:02d}")
         WORK = str(Path(OUTDIR) / "work")
         FINAL = str(Path(OUTDIR) / "final_phonk.mp4")
+    # Validate configuration and required AI tools before downloading source media.
+    load_settings()
+    resolve_ai_upscaler()
     VIDEO, MUSIC, REFERENCE = prepare_media_sources(
         video_url=args.video_url,
         music_url=args.music_url,
@@ -1155,8 +1158,6 @@ def main(argv=None):
         music_path=MUSIC,
         reference_path=REFERENCE,
     )
-    load_settings()
-    resolve_ai_upscaler()
     EDIT_DURATION = DURATION - FREEZE
     os.makedirs(OUTDIR, exist_ok=True)
     os.makedirs(WORK, exist_ok=True)
@@ -1622,4 +1623,5 @@ if __name__ == "__main__":
         main()
     except (subprocess.CalledProcessError, OSError, ValueError, KeyError, RuntimeError) as exc:
         print(f"[ERROR] {exc}")
-        print("Check FFmpeg/FFprobe availability, input files, and available storage.")
+        print("Check FFmpeg/FFprobe availability, AI-upscaler/model paths, input files, and available storage.")
+        sys.exit(1)
