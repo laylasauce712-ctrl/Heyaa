@@ -201,6 +201,32 @@ def planner(context: dict[str, Any]) -> AgentResult:
                      abs(float(item.get("speed")) - float(target_speed)) > 1e-6]
         if bad_speed:
             mismatches["clip_speed_indices"] = bad_speed
+    clip_items = [item for item in edl.get("video", []) if item.get("type") == "clip"]
+    freeze_indices = [i for i, item in enumerate(edl.get("video", [])) if item.get("type") == "freeze"]
+    if (not edl.get("video") or edl["video"][-1].get("type") != "freeze" or
+            len(freeze_indices) != 1):
+        mismatches["freeze_structure"] = {
+            "expected": "exactly one final freeze segment",
+            "freeze_indices": freeze_indices,
+        }
+    minimum, maximum = edit.get("min_clips"), edit.get("max_clips")
+    if (isinstance(minimum, int) and not isinstance(minimum, bool) and
+            isinstance(maximum, int) and not isinstance(maximum, bool) and
+            not minimum <= len(clip_items) <= maximum):
+        mismatches["clip_count"] = {
+            "expected_range": [minimum, maximum], "actual": len(clip_items),
+        }
+    unsupported_crops = []
+    for index, item in enumerate(clip_items):
+        crop = item.get("crop", {})
+        expected_crop = (("x", 0.0), ("y", 0.0), ("w", 1.0), ("h", 1.0))
+        if (not isinstance(crop, dict) or any(
+                not _finite_number(crop.get(key)) or abs(float(crop[key]) - expected) > 1e-6
+                for key, expected in expected_crop)):
+            unsupported_crops.append(index)
+    if unsupported_crops:
+        mismatches["unsupported_crop_indices"] = unsupported_crops
+
     if mismatches:
         return AgentResult("planner", "needs_fix", None, 1.0,
                            ("The validated EDL does not match params.json.",),
