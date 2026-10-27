@@ -94,6 +94,20 @@ class AIUpscaleTests(unittest.TestCase):
             with self.assertRaisesRegex(FileNotFoundError, "AI upscaling is enabled"):
                 renderer.resolve_ai_upscaler()
 
+    def test_enabled_upscale_fails_fast_when_selected_model_weights_are_missing(self):
+        with tempfile.TemporaryDirectory() as temp:
+            executable = Path(temp) / "realesrgan-ncnn-vulkan"
+            executable.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
+            executable.chmod(0o755)
+            empty_models = Path(temp) / "models"
+            empty_models.mkdir()
+            renderer.AI_UPSCALE_ENABLED = True
+            renderer.AI_UPSCALE_BINARY = str(executable)
+            renderer.AI_UPSCALE_MODEL_DIR = str(empty_models)
+            renderer.AI_UPSCALE_MODEL = "realesrgan-x4plus"
+            with self.assertRaisesRegex(FileNotFoundError, "model files are missing"):
+                renderer.resolve_ai_upscaler()
+
     def test_frame_extraction_and_upscaler_output_are_count_checked(self):
         with tempfile.TemporaryDirectory() as temp:
             renderer.WORK = temp
