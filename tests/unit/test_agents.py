@@ -196,7 +196,7 @@ class AgentTests(unittest.TestCase):
             "media_analysis": {"source_duration_seconds": 10.0, "source_width": 640, "source_height": 360,
                                "scene_cut_count": 5, "music_duration_seconds": 9.0},
             "beat_analysis": {"enabled": False, "candidate_count": 0},
-            "render_report": render_report(),
+            "render_report": render_report(), "render_critique": render_critique(),
         })
         director = result["results"]["director"]
         self.assertEqual(director["status"], "ready_for_human_review")

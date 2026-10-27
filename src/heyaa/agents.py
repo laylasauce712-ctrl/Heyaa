@@ -517,7 +517,7 @@ def director_agent(results: dict[str, AgentResult]) -> AgentResult:
             "findings": list(framing.findings) if framing else ["Agent did not return a result."],
         })
     critic = results.get("render_critic")
-    if critic is None or critic.status in ("reject", "blocked"):
+    if critic is None or critic.status in ("reject", "blocked", "insufficient_evidence"):
         blockers.append({"agent": "render_critic", "status": critic.status if critic else "missing",
                          "findings": list(critic.findings) if critic else ["Render Critic did not return a result."]})
     if blockers:
