@@ -15,7 +15,7 @@
     "reference_pacing": true,
     "mirror_enabled": true,
     "smart_crop": true,
-    "freeze_duration": 1.7,
+    "freeze_duration": 2.0,
     "drop_freeze_duration": 0.25,
     "edl_mode": "on"
   },
