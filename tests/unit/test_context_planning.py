@@ -88,6 +88,31 @@ class ContextPlanningTests(unittest.TestCase):
         self.assertGreaterEqual(min(lengths), 0.75)
         self.assertLessEqual(max(lengths), 3.3)
 
+    def test_dynamic_crop_path_is_bounded_smoothed_and_piecewise_linear(self):
+        observations = []
+        for index, center_x in enumerate([0.1, 0.9, 0.1, 0.9, 0.1, 0.9]):
+            observations.append({
+                "time_seconds": index * 0.2,
+                "center_x": center_x,
+                "center_y": 1.2 if index % 2 else -0.2,
+            })
+        path = renderer.build_dynamic_crop_path(
+            observations, 0.0, 1.0, max_distance_seconds=0.5, smoothing_tau_seconds=0.65
+        )
+        self.assertIsNotNone(path)
+        points = path["points"]
+        self.assertGreaterEqual(len(points), 4)
+        self.assertTrue(all(0.0 <= point["x"] <= 1.0 for point in points))
+        self.assertTrue(all(0.0 <= point["y"] <= 1.0 for point in points))
+        unsmoothed_x = [0.1, 0.9, 0.1, 0.9, 0.1, 0.9]
+        raw_max_step = max(abs(right - left) for left, right in zip(unsmoothed_x, unsmoothed_x[1:]))
+        smooth_max_step = max(abs(right["x"] - left["x"]) for left, right in zip(points, points[1:]))
+        self.assertLess(smooth_max_step, raw_max_step)
+        self.assertIn("max(0,min(iw-ow", path["x_expression"])
+        self.assertIn("max(0,min(ih-oh", path["y_expression"])
+        self.assertIn("if(lt(t,", path["x_expression"])
+        self.assertIn("if(lt(t,", path["y_expression"])
+
     def test_synthetic_130_bpm_pulses_produce_confident_phase_locked_grid(self):
         hop_seconds = 0.02
         expected_period_frames = round(60.0 / 130.0 / hop_seconds)

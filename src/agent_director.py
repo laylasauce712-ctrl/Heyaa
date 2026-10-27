@@ -1284,6 +1284,123 @@ def plan_ranked_disjoint_source_ranges(source_durations_frames, scene_segments, 
     return assignments
 
 
+def _interpolate_subject_center(observations, timestamp, max_distance_seconds):
+    """Interpolate a normalized tracked centroid only across a short observed gap."""
+    before = [item for item in observations if item["time_seconds"] <= timestamp]
+    after = [item for item in observations if item["time_seconds"] >= timestamp]
+    if before and after:
+        left, right = before[-1], after[0]
+        left_t, right_t = left["time_seconds"], right["time_seconds"]
+        if right_t - left_t <= max(1e-6, 2.0 * max_distance_seconds):
+            if abs(right_t - left_t) <= 1e-8:
+                return left["center_x"], left["center_y"]
+            fraction = (timestamp - left_t) / (right_t - left_t)
+            return (
+                left["center_x"] + fraction * (right["center_x"] - left["center_x"]),
+                left["center_y"] + fraction * (right["center_y"] - left["center_y"]),
+            )
+    nearest = min(observations, key=lambda item: abs(item["time_seconds"] - timestamp))
+    if abs(nearest["time_seconds"] - timestamp) <= max_distance_seconds:
+        return nearest["center_x"], nearest["center_y"]
+    return None
+
+
+def _piecewise_linear_expression(points, key):
+    """Create an FFmpeg expression for a normalized centroid path over clip-local t."""
+    if not points:
+        raise ValueError("At least one crop point is required.")
+    expression = f"{float(points[-1][key]):.6f}"
+    for left, right in reversed(list(zip(points, points[1:]))):
+        delta_t = float(right["t"]) - float(left["t"])
+        if delta_t <= 1e-8:
+            continue
+        start_value = float(left[key])
+        delta_value = float(right[key]) - start_value
+        interpolation = (
+            f"({start_value:.6f}+({delta_value:.6f})*"
+            f"(t-{float(left['t']):.6f})/{delta_t:.6f})"
+        )
+        expression = f"if(lt(t,{float(right['t']):.6f}),{interpolation},{expression})"
+    return expression
+
+
+def build_dynamic_crop_path(observations, source_start_seconds, source_duration_seconds,
+                            max_distance_seconds=1.0, smoothing_tau_seconds=0.65):
+    """Return a low-pass filtered, piecewise-linear subject-centroid crop trajectory.
+
+    x/y remain normalized in [0, 1]. The returned FFmpeg crop expressions clamp
+    the actual pixel crop against iw-ow and ih-oh, so the crop cannot leave the
+    scaled source bounds. Returns None when a nearby, continuous track is unavailable.
+    """
+    numeric = (source_start_seconds, source_duration_seconds, max_distance_seconds, smoothing_tau_seconds)
+    if any(isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value))
+           for value in numeric):
+        return None
+    start = float(source_start_seconds)
+    duration = float(source_duration_seconds)
+    max_distance = float(max_distance_seconds)
+    tau = float(smoothing_tau_seconds)
+    if start < 0 or duration <= 0 or max_distance < 0 or tau <= 0:
+        return None
+    valid = []
+    for item in observations or []:
+        try:
+            timestamp = float(item["time_seconds"])
+            center_x = float(item["center_x"])
+            center_y = float(item["center_y"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not all(math.isfinite(value) for value in (timestamp, center_x, center_y)):
+            continue
+        valid.append({
+            "time_seconds": timestamp,
+            "center_x": max(0.0, min(1.0, center_x)),
+            "center_y": max(0.0, min(1.0, center_y)),
+        })
+    if not valid:
+        return None
+    valid.sort(key=lambda item: item["time_seconds"])
+    deduped = {}
+    for item in valid:
+        deduped[item["time_seconds"]] = item
+    valid = [deduped[key] for key in sorted(deduped)]
+    end = start + duration
+    start_center = _interpolate_subject_center(valid, start, max_distance)
+    end_center = _interpolate_subject_center(valid, end, max_distance)
+    if start_center is None or end_center is None:
+        return None
+    raw_points = [{"t": 0.0, "x": start_center[0], "y": start_center[1]}]
+    for item in valid:
+        if start + 1e-8 < item["time_seconds"] < end - 1e-8:
+            raw_points.append({
+                "t": item["time_seconds"] - start,
+                "x": item["center_x"], "y": item["center_y"],
+            })
+    raw_points.append({"t": duration, "x": end_center[0], "y": end_center[1]})
+    raw_points.sort(key=lambda item: item["t"])
+    points = [dict(raw_points[0])]
+    for raw_point in raw_points[1:]:
+        delta_t = float(raw_point["t"]) - float(points[-1]["t"])
+        if delta_t <= 1e-8:
+            continue
+        alpha = 1.0 - math.exp(-delta_t / tau)
+        previous = points[-1]
+        points.append({
+            "t": float(raw_point["t"]),
+            "x": max(0.0, min(1.0, previous["x"] + alpha * (raw_point["x"] - previous["x"]))),
+            "y": max(0.0, min(1.0, previous["y"] + alpha * (raw_point["y"] - previous["y"]))),
+        })
+    x_path = _piecewise_linear_expression(points, "x")
+    y_path = _piecewise_linear_expression(points, "y")
+    return {
+        "points": points,
+        "x_expression": f"max(0,min(iw-ow,({x_path})*iw-ow/2))",
+        "y_expression": f"max(0,min(ih-oh,({y_path})*ih-oh/2))",
+        "method": "piecewise_linear_low_pass",
+        "smoothing_tau_seconds": tau,
+    }
+
+
 def make_clip(index, item, source_duration):
     """Render exactly the source range and output frame count declared by one EDL clip."""
     start = item["source_start_f"] / FPS
@@ -1300,7 +1417,25 @@ def make_clip(index, item, source_duration):
         max_distance_seconds=max(1.0, input_duration / 2.0)
     )
     crop_filter = "crop=1080:1920,"
-    if subject_observation is not None and LAYOUT_MODE == "fill":
+    dynamic_crop = None
+    if LAYOUT_MODE == "fill" and SUBJECT_OBSERVATIONS:
+        dynamic_crop = build_dynamic_crop_path(
+            SUBJECT_OBSERVATIONS, start, input_duration,
+            max_distance_seconds=max(1.0, input_duration / 2.0),
+        )
+    if dynamic_crop is not None:
+        crop_filter = (
+            "crop=1080:1920:"
+            f"x='{dynamic_crop['x_expression']}':"
+            f"y='{dynamic_crop['y_expression']}',"
+        )
+        print(
+            f"  [framing] Smoothed dynamic 9:16 crop for source {start:.2f}–"
+            f"{start + input_duration:.2f}s using {len(dynamic_crop['points'])} path points."
+        )
+    elif subject_observation is not None and LAYOUT_MODE == "fill":
+        # If the track cannot anchor both clip edges, preserve the previous
+        # bounded constant-centroid crop rather than extrapolating wildly.
         subject_x = float(subject_observation["center_x"])
         subject_y = float(subject_observation["center_y"])
         crop_filter = (
@@ -1309,8 +1444,8 @@ def make_clip(index, item, source_duration):
             f"y='max(0,min(ih-oh,{subject_y:.5f}*ih-oh/2))',"
         )
         print(
-            f"  [framing] Subject-track crop applied near source {clip_center_seconds:.2f}s "
-            f"(center={subject_x:.2f},{subject_y:.2f}; appearance proxy, not identity recognition)."
+            f"  [framing] Constant subject-proxy crop fallback near source {clip_center_seconds:.2f}s "
+            f"(center={subject_x:.2f},{subject_y:.2f}; not identity recognition)."
         )
 
     # If optional OpenCV tracking found no stable person-shaped track, this remains
@@ -1976,6 +2111,12 @@ def main(argv=None):
     SUBJECT_OBSERVATIONS = subject_analysis.get("observations", []) if subject_analysis.get("detected") else []
     context["subject_tracking"] = {
         key: value for key, value in subject_analysis.items() if key != "observations"
+    }
+    context["dynamic_crop"] = {
+        "configured_method": "piecewise_linear_low_pass" if LAYOUT_MODE == "fill" else "blur_fit_full_frame",
+        "enabled_when_near_track_observations": bool(subject_analysis.get("detected") and LAYOUT_MODE == "fill"),
+        "smoothing_tau_seconds": 0.65,
+        "bounds_clamped_by_ffmpeg": True,
     }
     if subject_analysis.get("detected"):
         print(
