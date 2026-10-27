@@ -28,6 +28,7 @@ ffmpeg -hide_banner -loglevel error -y \
   -map 0:v:0 -map 1:a:0 -shortest -c:v libx264 -pix_fmt yuv420p -c:a aac input/reference.mp4
 python - <<'PY'
 from pathlib import Path
+from src import agent_director
 from src.heyaa.media_sources import extract_reference_audio, parse_media_source_args, validate_media_file
 
 args = parse_media_source_args([])
@@ -36,7 +37,15 @@ assert parse_media_source_args(["--variants", "1"]).variants == 1
 music = extract_reference_audio("input/reference.mp4", "input/reference-extracted.mp3")
 assert music == Path("input/reference-extracted.mp3") and music.is_file()
 validate_media_file(music, "music")
-print("Reference soundtrack extraction and three-variant defaults passed.")
+profile = {
+    "duration_seconds": 5.0,
+    "shot_intervals_seconds": [1.0, 1.0, 1.0, 1.0],
+    "cut_timestamps_seconds": [1.0, 2.0, 3.0, 4.0],
+}
+boundaries = agent_director._reference_boundaries(5, 5.0, profile)
+assert boundaries == [0.0, 1.0, 2.0, 3.0, 4.0, 5.0], boundaries
+assert agent_director.REFERENCE_CUT_TIMESTAMPS_USED is True
+print("Reference soundtrack extraction, three-variant defaults and timestamp mapping passed.")
 PY
 # Exercise the exact subject-aware 9:16 crop expression used when the optional
 # HOG tracker supplies a normalized center; no OpenCV/person model is needed here.
