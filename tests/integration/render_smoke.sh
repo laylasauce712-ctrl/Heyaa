@@ -28,7 +28,7 @@ assert report["results"]["settings_agent"]["status"] == "ok", report
 assert report["results"]["planner"]["status"] == "ok", report
 assert report["results"]["director"]["status"] == "ready_for_human_review", report
 assert report["results"]["framing_agent"]["status"] == "ok", report
-assert report["results"]["hook_analyst"]["status"] == "insufficient_evidence", report
+assert report["results"]["hook_analyst"]["status"] == "needs_review", report
 assert report["results"]["inspector"]["status"] == "ok", report
 assert report["results"]["render_critic"]["status"] in ("ok", "needs_review"), report
 assert report["render_critique"]["measurement_errors"] == [], report["render_critique"]
@@ -55,6 +55,7 @@ for item in edl["video"]:
     cursor += item["dur_f"]
 assert cursor == edl["total_frames"] == 192, (cursor, edl["total_frames"])
 assert edl["video"][-1]["type"] == "freeze"
+assert edl["video"][-1]["dur_f"] >= round(1.7 * edl["fps_num"] / edl["fps_den"])
 assert edl["fps_num"] == 24
 assert len(report["events"]) == 12
 print("Render smoke test passed: exact frame count, continuous EDL, audio, full decode, render Critic, Director decision and atomic export.")
