@@ -349,7 +349,15 @@ def prepare_ai_upscaled_frames(clip_index, source_start_seconds, source_duration
         {"clip_index": clip_index, "frame_count": source_frame_count,
          "model": AI_UPSCALE_MODEL, "scale": AI_UPSCALE_SCALE},
     )
-    result = subprocess.run(upscale, check=False, capture_output=True, text=True)
+    try:
+        result = subprocess.run(upscale, check=False, capture_output=True, text=True, timeout=600)
+    except subprocess.TimeoutExpired as exc:
+        progress_event("upscale_batch", "error", f"Real-ESRGAN timed out for clip {clip_index + 1} after 600 seconds.",
+                       {"clip_index": clip_index, "timeout_seconds": 600})
+        raise RuntimeError(
+            f"Real-ESRGAN timed out after 600 seconds for clip {clip_index + 1}; "
+            "check Vulkan/GPU availability, model files, and system load."
+        ) from exc
     if result.returncode != 0:
         progress_event("upscale_batch", "error", f"Real-ESRGAN failed for clip {clip_index + 1}.",
                        {"clip_index": clip_index, "returncode": result.returncode})

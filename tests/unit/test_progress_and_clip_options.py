@@ -67,6 +67,41 @@ class ProgressTraceTests(unittest.TestCase):
                 ("upscale_batch", "completed"),
             ])
 
+    def test_ai_upscaling_timeout_emits_error_and_fails_clearly(self):
+        events = []
+        with tempfile.TemporaryDirectory() as temporary:
+            def fake_run(command, **kwargs):
+                if command[0] == "ffmpeg":
+                    pattern = Path(command[-1])
+                    for frame in range(1, 3):
+                        Path(str(pattern).replace("%08d", f"{frame:08d}")).write_bytes(b"fake-png")
+                    return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+                self.assertEqual(kwargs.get("timeout"), 600)
+                raise subprocess.TimeoutExpired(command, timeout=600)
+
+            def record(stage, status, summary, details=None, **kwargs):
+                events.append((stage, status, summary, details or {}))
+
+            with patch.object(renderer, "WORK", temporary), \
+                 patch.object(renderer, "VIDEO", "input/test_video.mp4"), \
+                 patch.object(renderer, "FPS", 24), \
+                 patch.object(renderer, "AI_UPSCALE_ENABLED", True), \
+                 patch.object(renderer, "AI_UPSCALER_EXECUTABLE", "fake-realesrgan"), \
+                 patch.object(renderer, "AI_UPSCALER_MODEL_DIR", "fake-models"), \
+                 patch.object(renderer, "AI_UPSCALE_MODEL", "realesrgan-x4plus"), \
+                 patch.object(renderer, "AI_UPSCALE_SCALE", 2), \
+                 patch.object(renderer, "progress_event", side_effect=record), \
+                 patch("src.agent_director.subprocess.run", side_effect=fake_run):
+                with self.assertRaisesRegex(RuntimeError, "timed out after 600 seconds"):
+                    renderer.prepare_ai_upscaled_frames(0, 0.0, 1.0, 2)
+
+            self.assertEqual([(stage, status) for stage, status, _, _ in events], [
+                ("upscale_extract", "running"),
+                ("upscale_extract", "completed"),
+                ("upscale_batch", "running"),
+                ("upscale_batch", "error"),
+            ])
+
     def test_exact_clip_count_override_respects_settings_bounds(self):
         with patch.object(renderer, "MIN_CLIPS", 8), patch.object(renderer, "MAX_CLIPS", 16):
             self.assertEqual(renderer.choose_clip_count(1.1, 12), 12)
