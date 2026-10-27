@@ -1,6 +1,6 @@
 """Resolve and validate local or YouTube-linked media before rendering."""
 from __future__ import annotations
-import argparse, json, math, shutil, subprocess
+import argparse, json, math, shutil, subprocess, sys
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -78,9 +78,18 @@ def download_youtube(url: str, target_path: str | Path, kind: str) -> Path:
     target = Path(target_path)
     target.parent.mkdir(parents=True, exist_ok=True)
     executable = shutil.which("yt-dlp")
-    if not executable:
-        raise MediaSourceError("yt-dlp is required for YouTube links. Install it with: python3 -m pip install --user -U yt-dlp")
-    command = [executable, "--ignore-config", "--no-playlist", "--no-warnings", "--no-progress", "--quiet", "--force-overwrites", "-o", str(target.parent / f"{target.stem}.%(ext)s"), "--print", "after_move:filepath"]
+    if executable:
+        command = [executable]
+    else:
+        try:
+            import yt_dlp  # noqa: F401
+        except ImportError as exc:
+            raise MediaSourceError(
+                "yt-dlp is required for YouTube links. Install it with: "
+                "python3 -m pip install --user -U yt-dlp"
+            ) from exc
+        command = [sys.executable, "-m", "yt_dlp"]
+    command += ["--ignore-config", "--no-playlist", "--no-warnings", "--no-progress", "--quiet", "--force-overwrites", "-o", str(target.parent / f"{target.stem}.%(ext)s"), "--print", "after_move:filepath"]
     if kind == "music":
         command += ["-f", "ba/b", "-x", "--audio-format", "mp3", "--audio-quality", "0"]
     else:
