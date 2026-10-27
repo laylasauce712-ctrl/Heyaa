@@ -159,6 +159,18 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(result.status, "insufficient_evidence")
         self.assertFalse(result.evidence["used_for_planning"])
 
+    def test_reference_agent_passes_measured_shot_pattern_to_planner(self):
+        result = reference_analyst({
+            "enabled": True, "available": True, "source": "input/reference.mp4",
+            "median_cut_interval_seconds": 1.2,
+            "scene_cut_count": 7,
+            "shot_intervals_seconds": [0.8, 1.7, 1.1, 2.2, 0.9, 1.2],
+        })
+        self.assertEqual(result.status, "ok")
+        self.assertTrue(result.evidence["pattern_passed_to_planner"])
+        self.assertEqual(result.evidence["shot_intervals_seconds"], [0.8, 1.7, 1.1, 2.2, 0.9, 1.2])
+        self.assertFalse(result.evidence["semantic_reference_understanding"])
+
     def test_framing_agent_rejects_ignored_edl_crop(self):
         edl = sample_edl()
         edl["video"][0]["crop"] = {"x": 0.2, "y": 0.0, "w": 0.8, "h": 1.0}
