@@ -19,7 +19,7 @@
     "max_clips": 16,
     "reference_pacing": true,
     "mirror_enabled": true,
-    "smart_crop": true,
+    "layout_mode": "fill",
     "freeze_duration": 2,
     "drop_freeze_duration": 0.25,
     "source_min_gap_seconds": 0.05,

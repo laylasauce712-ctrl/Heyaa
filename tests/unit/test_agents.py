@@ -15,7 +15,7 @@ def config():
         "video_settings": {"resolution": "1080x1920", "fps": 24, "codec": "libx264", "crf": 26, "preset": "ultrafast"},
         "edit_settings": {"duration_seconds": 8, "speed": 1.1, "freeze_duration": 1.7, "drop_freeze_duration": 0.25, "edl_mode": "on",
                           "min_clips": 6, "max_clips": 6, "reference_pacing": False,
-                          "mirror_enabled": False, "smart_crop": True},
+                          "mirror_enabled": False, "layout_mode": "fill"},
         "audio_settings": {"beat_sync": False, "beat_flash": False, "bass_boost": False, "music_loop": True},
     }
 
@@ -182,6 +182,15 @@ class AgentTests(unittest.TestCase):
         self.assertTrue(result.evidence["pattern_passed_to_planner"])
         self.assertEqual(result.evidence["shot_intervals_seconds"], [0.8, 1.7, 1.1, 2.2, 0.9, 1.2])
         self.assertFalse(result.evidence["semantic_reference_understanding"])
+
+    def test_framing_agent_reports_blur_fit_as_full_frame_preserving(self):
+        cfg = config()
+        cfg["edit_settings"].pop("smart_crop", None)
+        cfg["edit_settings"]["layout_mode"] = "blur_fit"
+        result = framing_agent(cfg, sample_edl())
+        self.assertEqual(result.status, "ok", result.findings)
+        self.assertEqual(result.evidence["mode"], "blur_fit_preserve_full_frame")
+        self.assertFalse(result.evidence["identity_recognition"])
 
     def test_framing_agent_rejects_ignored_edl_crop(self):
         edl = sample_edl()

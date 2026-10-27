@@ -52,6 +52,10 @@ def settings_agent(config: dict[str, Any]) -> AgentResult:
         return AgentResult("settings_agent", "blocked", None, 0.0,
                            ("video_settings, edit_settings and audio_settings must be objects.",),
                            ("Repair params.json before rendering.",), {})
+    layout_mode = edit.get("layout_mode")
+    if layout_mode is None:
+        legacy_smart_crop = edit.get("smart_crop")
+        layout_mode = ("fill" if legacy_smart_crop else "blur_fit") if isinstance(legacy_smart_crop, bool) else "fill"
     if config.get("style") != "phonk_montagem":
         findings.append("Only style='phonk_montagem' is implemented.")
     if str(video.get("resolution", "")).lower() != "1080x1920":
@@ -90,6 +94,8 @@ def settings_agent(config: dict[str, Any]) -> AgentResult:
     source_gap = edit.get("source_min_gap_seconds", 0.05)
     if (not _finite_number(source_gap) or not 0.0 <= float(source_gap) <= 1.0):
         findings.append("edit_settings.source_min_gap_seconds must be between 0 and 1 second.")
+    if layout_mode not in {"fill", "blur_fit"}:
+        findings.append("edit_settings.layout_mode must be either 'fill' or 'blur_fit'.")
     for key in ("beat_sync", "beat_flash", "bass_boost", "music_loop"):
         if not isinstance(audio.get(key), bool):
             findings.append(f"audio_settings.{key} must be an explicit boolean.")
@@ -117,7 +123,7 @@ def settings_agent(config: dict[str, Any]) -> AgentResult:
                        ("All required settings are present and within renderer-supported bounds.",), (),
                        {"resolution": video["resolution"], "fps": fps, "duration_seconds": duration,
                         "speed": speed, "freeze_duration": freeze,
-                        "mirror_enabled": edit["mirror_enabled"], "smart_crop": edit["smart_crop"],
+                        "mirror_enabled": edit["mirror_enabled"], "layout_mode": layout_mode,
                         "ai_upscale_enabled": ai_upscale_enabled,
                         "ai_upscale_model": ai_upscale_model,
                         "ai_upscale_scale": ai_upscale_scale,
@@ -359,23 +365,31 @@ def framing_agent(config: dict[str, Any], edl: dict[str, Any],
                            ("EDL contains per-shot crop rectangles the current FFmpeg renderer does not implement.",),
                            ("Use the supported full-source crop or implement and test arbitrary EDL crop rectangles before rendering.",),
                            {"unsupported_crop_indices": unsupported, "clip_count": len(clips)})
-    smart_crop = edit.get("smart_crop")
+    layout_mode = edit.get("layout_mode")
+    if layout_mode is None:
+        legacy_smart_crop = edit.get("smart_crop")
+        layout_mode = ("fill" if legacy_smart_crop else "blur_fit") if isinstance(legacy_smart_crop, bool) else "fill"
+    if layout_mode not in {"fill", "blur_fit"}:
+        return AgentResult("framing_agent", "needs_fix", None, 1.0,
+                           ("The configured framing layout is unsupported.",),
+                           ("Set edit_settings.layout_mode to 'fill' or 'blur_fit'.",),
+                           {"layout_mode": layout_mode})
     mirror = edit.get("mirror_enabled")
-    mode = "center_crop_9_16" if smart_crop is True else "blurred_background_legacy"
+    mode = "fill_center_crop_9_16" if layout_mode == "fill" else "blur_fit_preserve_full_frame"
     recs = []
     findings = ["Every EDL clip uses the framing mode currently implemented by FFmpeg."]
     if mirror is True:
         recs.append("Mirroring is active; inspect any visible text because horizontal flipping reverses writing.")
     if subject_tracked:
-        if smart_crop is True:
-            findings.append("Optional OpenCV HOG detections guided nearby source-frame selection and 9:16 crop centers.")
+        if layout_mode == "fill":
+            findings.append("Optional OpenCV HOG detections guided nearby source-frame selection and fill-layout crop centers.")
         else:
-            findings.append("Optional OpenCV HOG detections guided source-time selection; the selected blurred-background foreground crop remains centered.")
+            findings.append("Optional OpenCV HOG detections guided source-time selection only; blur_fit preserves the entire source frame in the foreground.")
         findings.append("The tracker uses person-shape plus short-term appearance consistency; it does not verify identity or understand story roles.")
     else:
         findings.append("Subject tracking was unavailable or no stable person track was found; deterministic center crop remains the fallback.")
     return AgentResult("framing_agent", "ok", None, 0.7 if subject_tracked else 1.0, tuple(findings), tuple(recs),
-                       {"mode": "subject_aware_crop_proxy" if subject_tracked and smart_crop is True else mode,
+                       {"mode": "subject_aware_crop_proxy" if subject_tracked and layout_mode == "fill" else mode,
                         "mirror_enabled": mirror, "clip_count": len(clips),
                         "subject_tracking": subject_tracked,
                         "subject_tracking_method": subject_tracking.get("method"),

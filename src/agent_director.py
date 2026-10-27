@@ -59,7 +59,7 @@ BEAT_FLASH = None
 BASS_BOOST = None
 REFERENCE_PACING = None
 MIRROR_ENABLED = None
-SMART_CROP_ENABLED = None
+LAYOUT_MODE = "fill"
 MIN_CLIPS = None
 MAX_CLIPS = None
 MIN_SOURCE_GAP_SECONDS = 0.05
@@ -118,7 +118,7 @@ def progress_event(stage, status, summary, details=None, *, echo=True):
 def load_settings():
     """Load and strictly validate params.json; unsupported values fail fast."""
     global DURATION, FPS, WIDTH, HEIGHT, CRF, PRESET, SPEED, FREEZE, EDIT_DURATION
-    global BEAT_SYNC, BEAT_FLASH, BASS_BOOST, REFERENCE_PACING, MIRROR_ENABLED, SMART_CROP_ENABLED
+    global BEAT_SYNC, BEAT_FLASH, BASS_BOOST, REFERENCE_PACING, MIRROR_ENABLED, LAYOUT_MODE
     global MIN_CLIPS, MAX_CLIPS, MUSIC_LOOP, CODEC, CONFIG, DROP_FREEZE_DURATION, MIN_SOURCE_GAP_SECONDS
     global AI_UPSCALE_ENABLED, AI_UPSCALE_MODEL, AI_UPSCALE_SCALE
     global AI_UPSCALE_BINARY, AI_UPSCALE_MODEL_DIR
@@ -201,16 +201,23 @@ def load_settings():
             not math.isfinite(float(source_gap_value)) or not 0.0 <= float(source_gap_value) <= 1.0):
         raise ValueError("edit_settings.source_min_gap_seconds must be between 0 and 1 second.")
     MIN_SOURCE_GAP_SECONDS = float(source_gap_value)
-    for key in ("reference_pacing", "mirror_enabled", "smart_crop"):
+    for key in ("reference_pacing", "mirror_enabled"):
         if not isinstance(edit.get(key), bool):
             raise ValueError(f"edit_settings.{key} must be an explicit boolean.")
+    layout_mode = edit.get("layout_mode")
+    if layout_mode is None:
+        legacy_smart_crop = edit.get("smart_crop")
+        layout_mode = ("fill" if legacy_smart_crop else "blur_fit") if isinstance(legacy_smart_crop, bool) else "fill"
+    if layout_mode not in {"fill", "blur_fit"}:
+        raise ValueError("edit_settings.layout_mode must be either 'fill' or 'blur_fit'.")
     for key in ("beat_sync", "beat_flash", "bass_boost", "music_loop"):
         if not isinstance(audio.get(key), bool):
             raise ValueError(f"audio_settings.{key} must be an explicit boolean.")
     BEAT_SYNC, BEAT_FLASH = audio["beat_sync"], audio["beat_flash"]
     BASS_BOOST, MUSIC_LOOP = audio["bass_boost"], audio["music_loop"]
     REFERENCE_PACING = edit["reference_pacing"]
-    MIRROR_ENABLED, SMART_CROP_ENABLED = edit["mirror_enabled"], edit["smart_crop"]
+    MIRROR_ENABLED = edit["mirror_enabled"]
+    LAYOUT_MODE = layout_mode
     if edit.get("edl_mode") != "on":
         raise ValueError("edit_settings.edl_mode must be 'on' for the integrated EDL renderer.")
     total_frames, freeze_frames = round(DURATION * FPS), round(FREEZE * FPS)
@@ -220,7 +227,7 @@ def load_settings():
     DURATION = total_frames / FPS
     EDIT_DURATION = (total_frames - freeze_frames) / FPS
     CONFIG = config
-    print(f"[settings] {WIDTH}x{HEIGHT}@{FPS} | {DURATION:.3f}s | speed={SPEED:.2f}x | final_freeze={FREEZE:.3f}s (minimum 1.7s) | drop_freeze={DROP_FREEZE_DURATION:.3f}s | mirror={MIRROR_ENABLED} | smart_crop={SMART_CROP_ENABLED} | ai_upscale={AI_UPSCALE_ENABLED} ({AI_UPSCALE_MODEL} x{AI_UPSCALE_SCALE}) | music_loop={MUSIC_LOOP} | source_min_gap={MIN_SOURCE_GAP_SECONDS:.3f}s | EDL=on")
+    print(f"[settings] {WIDTH}x{HEIGHT}@{FPS} | {DURATION:.3f}s | speed={SPEED:.2f}x | final_freeze={FREEZE:.3f}s (minimum 1.7s) | drop_freeze={DROP_FREEZE_DURATION:.3f}s | mirror={MIRROR_ENABLED} | layout_mode={LAYOUT_MODE} | ai_upscale={AI_UPSCALE_ENABLED} ({AI_UPSCALE_MODEL} x{AI_UPSCALE_SCALE}) | music_loop={MUSIC_LOOP} | source_min_gap={MIN_SOURCE_GAP_SECONDS:.3f}s | EDL=on")
     return config
 
 
@@ -844,7 +851,7 @@ def make_clip(index, item, source_duration):
         max_distance_seconds=max(1.0, input_duration / 2.0)
     )
     crop_filter = "crop=1080:1920,"
-    if subject_observation is not None:
+    if subject_observation is not None and LAYOUT_MODE == "fill":
         subject_x = float(subject_observation["center_x"])
         subject_y = float(subject_observation["center_y"])
         crop_filter = (
@@ -859,7 +866,7 @@ def make_clip(index, item, source_duration):
 
     # If optional OpenCV tracking found no stable person-shaped track, this remains
     # the deterministic centered 9:16 crop fallback.
-    if SMART_CROP_ENABLED:
+    if LAYOUT_MODE == "fill":
         vf = (
             "[0:v]scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,"
             f"{crop_filter}"
@@ -873,12 +880,11 @@ def make_clip(index, item, source_duration):
             "[0:v]split=2[bg][fg];"
             "[bg]scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,"
             "crop=1080:1920,boxblur=20:2,eq=brightness=-0.08:saturation=0.78[back];"
-            "[fg]scale=1188:1188:force_original_aspect_ratio=increase,"
-            "crop=1080:1080:x='(iw-1080)/2+5*sin(t*10)':y='(ih-1080)/2+4*cos(t*8)'"
+            "[fg]scale=1080:1920:force_original_aspect_ratio=decrease:flags=lanczos"
             f"{mirror},"
             "eq=contrast=1.16:saturation=1.30:gamma=1.02,"
             "unsharp=5:5:0.72:3:3:0.0[front];"
-            "[back][front]overlay=0:420,setsar=1,"
+            "[back][front]overlay=(W-w)/2:(H-h)/2,setsar=1,"
             f"fps={FPS},setpts=PTS/{SPEED},fps={FPS},trim=end_frame={output_frames},setpts=PTS-STARTPTS[v]"
         )
 
@@ -991,7 +997,9 @@ def build_pre_render_review(edl, beat_count, drop_beat_time, drop_freeze_duratio
             "message": (
                 f"Selected source context {context.get('start_seconds')}–{context.get('end_seconds')}s. "
                 + (f"OpenCV found a recurring appearance track across {subject_analysis.get('track_span_seconds')}s; "
-                   "nearby detections will guide source timing and crop centers."
+                   + ("nearby detections will guide source timing and fill-layout crop centers."
+                      if LAYOUT_MODE == "fill" else
+                      "nearby detections guide source timing only; blur-fit framing preserves the full source frame.")
                    if tracking_detected else
                    "No stable person track was available; source selection uses cut-density context and centered crop.")
                 + " This does not verify identity or story role."
