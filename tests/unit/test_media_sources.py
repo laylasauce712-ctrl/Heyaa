@@ -3,7 +3,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from src.heyaa.media_sources import MediaSourceError, validate_media_file, validate_youtube_url
+from src.heyaa.media_sources import (
+    MediaSourceError,
+    download_media_source,
+    validate_media_file,
+    validate_media_url,
+    validate_youtube_url,
+)
 
 
 class YouTubeUrlTests(unittest.TestCase):
@@ -39,6 +45,29 @@ class YouTubeUrlTests(unittest.TestCase):
         for url in urls:
             with self.subTest(url=url), self.assertRaises(MediaSourceError):
                 validate_youtube_url(url)
+
+    def test_accepts_direct_https_media_links(self):
+        url = "https://cdn.example.org/media/clip"
+        self.assertEqual(validate_media_url(url, "video"), url)
+        self.assertEqual(
+            validate_media_url("https://www.youtube.com/watch?v=abc123", "video"),
+            "https://www.youtube.com/watch?v=abc123",
+        )
+
+    def test_rejects_unsafe_or_non_media_direct_urls(self):
+        for url in ("http://cdn.example.org/clip.mp4", "https://user:pass@cdn.example.org/clip.mp4",
+                    "https://cdn.example.org/"):
+            with self.subTest(url=url), self.assertRaises(MediaSourceError):
+                validate_media_url(url, "video")
+
+    def test_routes_youtube_and_direct_links_to_their_handlers(self):
+        with patch("src.heyaa.media_sources.download_youtube", return_value=Path("yt.mp4")) as yt, \
+             patch("src.heyaa.media_sources.download_direct_https", return_value=Path("direct.mp4")) as direct:
+            self.assertEqual(download_media_source("https://youtu.be/abc", "out.mp4", "video"), Path("yt.mp4"))
+            self.assertEqual(download_media_source("https://cdn.example.org/clip.mp4", "out.mp4", "video"),
+                             Path("direct.mp4"))
+            yt.assert_called_once()
+            direct.assert_called_once()
 
     def test_validates_required_stream_and_duration(self):
         with tempfile.TemporaryDirectory() as directory:
