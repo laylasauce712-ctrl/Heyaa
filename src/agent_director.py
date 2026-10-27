@@ -5,7 +5,7 @@ import re
 import statistics
 import struct
 import subprocess
-from pathlib import Path
+from pathlib import Path\n\ntry:\n    from src.heyaa.edl.validate import validate_edl\nexcept ModuleNotFoundError:\n    from heyaa.edl.validate import validate_edl
 
 try:
     from src.heyaa.agents import run_agent_team
@@ -20,62 +20,60 @@ WORK = "output/work"
 FINAL = "output/final_phonk_20s.mp4"
 SKULL_ASSET = str(Path(__file__).parent / "heyaa" / "assets" / "skull_freeze.svg")
 
-DURATION = 20.0
-FPS = 60
-SPEED = 1.10
-FREEZE = 0.70
-EDIT_DURATION = DURATION - FREEZE
-WIDTH, HEIGHT = 1080, 1920
-CRF = 18
-PRESET = "veryfast"
-BEAT_SYNC = True
-BEAT_FLASH = True
-BASS_BOOST = True
-REFERENCE_PACING = True
-MIRROR_ENABLED = True
-SMART_CROP_ENABLED = True
-MIN_CLIPS = 8
-MAX_CLIPS = 16
+DURATION = None
+FPS = None
+SPEED = None
+FREEZE = None
+EDIT_DURATION = None
+WIDTH, HEIGHT = None, None
+CRF = None
+PRESET = None
+BEAT_SYNC = None
+BEAT_FLASH = None
+BASS_BOOST = None
+REFERENCE_PACING = None
+MIRROR_ENABLED = None
+SMART_CROP_ENABLED = None
+MIN_CLIPS = None
+MAX_CLIPS = None
 
 
 def load_settings():
-    """Load optional edit controls from params.json without requiring extra packages."""
-    global DURATION, FPS, WIDTH, HEIGHT, CRF, PRESET, SPEED, FREEZE
+    """Load and validate all renderer settings from params.json; never silently default."""
+    global DURATION, FPS, WIDTH, HEIGHT, CRF, PRESET, SPEED, FREEZE, EDIT_DURATION
     global BEAT_SYNC, BEAT_FLASH, BASS_BOOST, REFERENCE_PACING, MIRROR_ENABLED, SMART_CROP_ENABLED, MIN_CLIPS, MAX_CLIPS
     path = "params.json"
     if not os.path.isfile(path):
-        print("[settings] params.json not found; using safe defaults.")
-        return
-    try:
-        with open(path, "r", encoding="utf-8") as handle:
-            config = json.load(handle)
-        video = config.get("video_settings", {})
-        audio = config.get("audio_settings", {})
-        edit = config.get("edit_settings", {})
-        resolution = str(video.get("resolution", "1080x1920")).lower().split("x")
-        if len(resolution) == 2:
-            width, height = int(resolution[0]), int(resolution[1])
-            # This renderer's current layout is designed specifically for 9:16.
-            if width == 1080 and height == 1920:
-                WIDTH, HEIGHT = width, height
-        FPS = max(24, min(60, int(video.get("fps", FPS))))
-        CRF = max(16, min(26, int(video.get("crf", CRF))))
-        PRESET = str(video.get("preset", PRESET))
-        DURATION = max(8.0, min(60.0, float(edit.get("duration_seconds", DURATION))))
-        FREEZE = max(0.35, min(1.2, float(edit.get("freeze_seconds", FREEZE))))
-        SPEED = max(1.0, min(1.35, float(edit.get("speed", SPEED))))
-        MIN_CLIPS = max(6, min(12, int(edit.get("min_clips", MIN_CLIPS))))
-        MAX_CLIPS = max(MIN_CLIPS, min(18, int(edit.get("max_clips", MAX_CLIPS))))
-        BEAT_SYNC = bool(audio.get("beat_sync", BEAT_SYNC))
-        BEAT_FLASH = bool(audio.get("beat_flash", BEAT_FLASH))
-        BASS_BOOST = bool(audio.get("bass_boost", BASS_BOOST))
-        REFERENCE_PACING = bool(edit.get("reference_pacing", REFERENCE_PACING))
-        MIRROR_ENABLED = bool(edit.get("mirror_enabled", MIRROR_ENABLED))
-        SMART_CROP_ENABLED = bool(edit.get("smart_crop", SMART_CROP_ENABLED))
-        print(f"[settings] Style={config.get('style', 'phonk_montagem')} | {WIDTH}x{HEIGHT}@{FPS} | {DURATION:.1f}s | speed={SPEED:.2f}x | mirror={MIRROR_ENABLED} | smart_crop={SMART_CROP_ENABLED}")
-    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
-        print(f"[warn] Invalid params.json ({exc}); using safe defaults.")
-
+        raise FileNotFoundError("params.json is required; renderer defaults are disabled.")
+    with open(path, "r", encoding="utf-8") as handle:
+        config = json.load(handle)
+    video, audio, edit = config["video_settings"], config["audio_settings"], config["edit_settings"]
+    resolution = str(video["resolution"]).lower().split("x")
+    if len(resolution) != 2:
+        raise ValueError("video_settings.resolution must be WIDTHxHEIGHT")
+    WIDTH, HEIGHT = int(resolution[0]), int(resolution[1])
+    if (WIDTH, HEIGHT) != (1080, 1920):
+        raise ValueError("This renderer currently requires 1080x1920 output.")
+    FPS = max(24, min(60, int(video["fps"])))
+    CRF = max(16, min(26, int(video["crf"])))
+    PRESET = str(video["preset"])
+    DURATION = max(8.0, min(60.0, float(edit["duration_seconds"])))
+    FREEZE = max(0.35, min(1.2, float(edit["freeze_duration"])))
+    SPEED = max(1.0, min(1.35, float(edit["speed"])))
+    MIN_CLIPS = max(6, min(12, int(edit["min_clips"])))
+    MAX_CLIPS = max(MIN_CLIPS, min(18, int(edit["max_clips"])))
+    BEAT_SYNC, BEAT_FLASH = bool(audio["beat_sync"]), bool(audio["beat_flash"])
+    BASS_BOOST, REFERENCE_PACING = bool(audio["bass_boost"]), bool(edit["reference_pacing"])
+    MIRROR_ENABLED, SMART_CROP_ENABLED = bool(edit["mirror_enabled"]), bool(edit["smart_crop"])
+    if edit.get("edl_mode") != "on":
+        raise ValueError("edit_settings.edl_mode must be 'on' for the integrated EDL renderer.")
+    total_frames, freeze_frames = round(DURATION * FPS), round(FREEZE * FPS)
+    if freeze_frames <= 0 or freeze_frames >= total_frames:
+        raise ValueError("freeze_duration must occupy at least one frame and less than the full timeline.")
+    FREEZE = freeze_frames / FPS
+    DURATION = total_frames / FPS
+    EDIT_DURATION = (total_frames - freeze_frames) / FPS
+    print(f"[settings] {WIDTH}x{HEIGHT}@{FPS} | {DURATION:.3f}s | speed={SPEED:.2f}x | freeze={FREEZE:.3f}s | mirror={MIRROR_ENABLED} | smart_crop={SMART_CROP_ENABLED} | EDL=on")
 
 def run(cmd, capture=False, binary=False):
     return subprocess.run(
@@ -388,16 +386,49 @@ def main():
     beats = detect_music_beats(MUSIC, EDIT_DURATION) if BEAT_SYNC else []
     ref_interval = reference_cut_interval(REFERENCE) if REFERENCE_PACING else None
     clip_count = choose_clip_count(ref_interval)
-    boundaries = make_boundaries(clip_count, beats)
+    boundaries_seconds = make_boundaries(clip_count, beats)
+    total_frames, freeze_frames = round(DURATION * FPS), round(FREEZE * FPS)
+    edit_frames = total_frames - freeze_frames
+    frame_boundaries = [round(value * FPS) for value in boundaries_seconds]
+    frame_boundaries[0], frame_boundaries[-1] = 0, edit_frames
+    frame_boundaries = sorted(set(frame_boundaries))
+    if len(frame_boundaries) < 2 or frame_boundaries[0] != 0 or frame_boundaries[-1] != edit_frames:
+        raise RuntimeError("Could not create contiguous integer-frame EDL boundaries.")
+    edl_video = []
+    for start_f, end_f in zip(frame_boundaries, frame_boundaries[1:]):
+        dur_f = end_f - start_f
+        if dur_f <= 0:
+            raise RuntimeError("EDL contains a zero-length clip after frame quantization.")
+        edl_video.append({
+            "type": "clip", "source": VIDEO,
+            "source_start_f": round((start_f / FPS) * SPEED * FPS),
+            "source_dur_f": max(1, round(dur_f * SPEED)),
+            "start_f": start_f, "dur_f": dur_f, "speed": SPEED,
+            "crop": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}
+        })
+    edl_video.append({
+        "type": "freeze", "source": VIDEO, "source_frame_f": max(0, round(source_duration * FPS) - 1),
+        "start_f": edit_frames, "dur_f": freeze_frames, "effect": "phonk-freeze"
+    })
+    edl = {
+        "version": 1, "fps_num": FPS, "fps_den": 1, "width": WIDTH, "height": HEIGHT,
+        "total_frames": total_frames, "video": edl_video,
+        "audio": [{"source": MUSIC, "source_start_f": 0, "start_f": 0, "dur_f": total_frames,
+                   "gain_db": 0.0, "fade_out_f": min(total_frames, round(0.8 * FPS))}]
+    }
+    validate_edl(edl)
+    with open(os.path.join(OUTDIR, "edit_decision_list.json"), "w", encoding="utf-8") as handle:
+        json.dump(edl, handle, ensure_ascii=False, indent=2)
+    print(f"[edl] Validated {len(edl_video) - 1} clips + freeze; {total_frames} frames, no gaps.")
 
-    print("[render 1/4] Building clips with vertical framing and enhancement...")
+    print("[render 1/4] Building clips from validated EDL...")
     clips = []
-    for index, (left, right) in enumerate(zip(boundaries, boundaries[1:])):
-        timeline_center = (left + right) / 2.0
+    for index, item in enumerate(edl_video[:-1]):
+        timeline_center = (item["start_f"] + item["dur_f"] / 2) / FPS
         source_target = timeline_center / EDIT_DURATION * source_duration
         center = choose_source_center(source_target, scenes, source_duration)
-        length = right - left
-        print(f"  Clip {index + 1}/{clip_count}: source {center:.2f}s, output {length:.2f}s")
+        length = item["dur_f"] / FPS
+        print(f"  EDL clip {index + 1}/{len(edl_video) - 1}: source {center:.2f}s, output {length:.3f}s [{item['start_f']}..{item['start_f'] + item['dur_f']})")
         clips.append(make_clip(index, center, length, source_duration))
 
     print("[render 2/4] Joining clips...")
