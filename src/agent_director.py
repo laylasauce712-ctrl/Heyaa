@@ -1094,7 +1094,7 @@ def verify_output(path):
     return actual_duration, details["video_codec"], details["audio_codec"], details
 
 def analyze_render_critique(path, duration):
-    """Measure long black intervals and audio level. These are risk proxies, not aesthetics."""
+    """Measure black intervals, decoded sample level and encoded true peak; not aesthetics."""
     errors = []
     black_segments = []
     black_cmd = [
@@ -1136,9 +1136,39 @@ def analyze_render_critique(path, duration):
     mean_db = read_db("mean_volume")
     peak_db = read_db("max_volume")
     audio_silent = bool(re.search(r"(?:mean_volume|max_volume):\s*-inf\s*dB", volume_log, re.IGNORECASE))
+
+    # Measure the already encoded AAC output; sample peak alone can miss inter-sample peaks.
+    true_peak_cmd = [
+        "ffmpeg", "-hide_banner", "-i", path, "-vn",
+        "-af", "ebur128=peak=true", "-f", "null", "-",
+    ]
+    true_peak_result = subprocess.run(
+        true_peak_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, check=False,
+    )
+    true_peak_log = (true_peak_result.stderr or "") + "\\n" + (true_peak_result.stdout or "")
+    if true_peak_result.returncode != 0:
+        errors.append("true_peak_measurement_failed")
+    match = re.search(
+        r"True peak:\\s*Peak:\\s*(-?inf|-?\\d+(?:\\.\\d+)?)\\s*dBFS",
+        true_peak_log, re.IGNORECASE | re.DOTALL,
+    )
+    true_peak_dbfs = None
+    if match:
+        raw_true_peak = match.group(1).lower()
+        if raw_true_peak not in {"-inf", "inf"}:
+            try:
+                parsed_true_peak = float(raw_true_peak)
+                if math.isfinite(parsed_true_peak):
+                    true_peak_dbfs = parsed_true_peak
+            except ValueError:
+                true_peak_dbfs = None
+    if true_peak_dbfs is None and not audio_silent and "true_peak_measurement_failed" not in errors:
+        errors.append("true_peak_unparsed")
     return {
         "black_segments": black_segments, "duration_seconds": float(duration),
         "mean_volume_db": mean_db, "max_volume_db": peak_db,
+        "true_peak_dbfs": true_peak_dbfs,
         "audio_silent": audio_silent,
         "measurement_errors": errors,
         "blackdetect_threshold_seconds": 0.35,
@@ -1663,7 +1693,7 @@ def main(argv=None):
         audio_filters.append(f"afade=t=out:st={fade_start:.6f}:d={fade_out_seconds:.6f}")
     # Keep a final ceiling even when bass boost is disabled; audio transients
     # otherwise can leave the exported encode at/near 0 dBFS.
-    audio_filters.append("alimiter=limit=0.90:level=0")
+    audio_filters.append("alimiter=limit=0.85:level=0")
     audio_filter = ",".join(audio_filters)
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", joined]
     if MUSIC_LOOP:
@@ -1732,10 +1762,18 @@ def main(argv=None):
         min(1.0, 1.0 - abs(float(opening_cut_count) - expected_opening_cuts) /
             max(2.0, expected_opening_cuts * 1.5))
     )
+    hook_proxy_threshold = expected_opening_cuts + max(2.0, expected_opening_cuts * 1.5)
+    if opening_cut_count > hook_proxy_threshold:
+        opening_activity_interpretation = "overdense_scene_changes"
+    elif opening_cut_count < expected_opening_cuts / 2.0:
+        opening_activity_interpretation = "sparse_scene_changes"
+    else:
+        opening_activity_interpretation = "moderate_scene_change_cadence"
     hook_analysis = {
         "window_seconds": hook_window,
         "opening_scene_change_count": opening_cut_count,
         "opening_activity_proxy": round(opening_activity_proxy, 4),
+        "opening_activity_interpretation": opening_activity_interpretation,
         "measurement": "ffmpeg_scene_change",
         "semantic_hook_assessed": False,
     }
@@ -1771,10 +1809,11 @@ def main(argv=None):
     }
     render_critique = analyze_render_critique(final_video, actual)
 
-    progress_event("render_critique", "completed", "Render Critic has measured black intervals and output audio levels.",
+    progress_event("render_critique", "completed", "Render Critic has measured black intervals, sample peak and encoded true peak.",
                    {"black_segment_count": len(render_critique.get("black_segments", [])),
                     "mean_volume_db": render_critique.get("mean_volume_db"),
-                    "max_volume_db": render_critique.get("max_volume_db")})
+                    "max_volume_db": render_critique.get("max_volume_db"),
+                    "true_peak_dbfs": render_critique.get("true_peak_dbfs")})
 
     def print_agent_event(event):
         # Stream each structured agent result to the terminal and durable JSONL trace.

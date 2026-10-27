@@ -416,13 +416,27 @@ def hook_analyst(data: dict[str, Any]) -> AgentResult:
         0.0,
         min(1.0, 1.0 - abs(float(count) - expected_changes) / max(2.0, expected_changes * 1.5))
     )
+    overdense_threshold = expected_changes + max(2.0, expected_changes * 1.5)
+    if count > overdense_threshold:
+        interpretation = "overdense_scene_changes"
+    elif count < expected_changes / 2.0:
+        interpretation = "sparse_scene_changes"
+    else:
+        interpretation = "moderate_scene_change_cadence"
+    interpretation_finding = {
+        "overdense_scene_changes": "The opening contains unusually many detected changes, so the cadence proxy is zero; this does not mean no activity was detected.",
+        "sparse_scene_changes": "Few scene changes were detected in the opening window; this is a pacing proxy, not semantic hook analysis.",
+        "moderate_scene_change_cadence": "The detected opening cadence is within the heuristic range; semantic hook strength was not assessed.",
+    }[interpretation]
     return AgentResult("hook_analyst", "needs_review", round(activity_proxy, 4), 0.25,
-                       ("Opening cut-activity proxy was measured; semantic hook strength was not assessed.",),
+                       (interpretation_finding,),
                        ("Human-review the first seconds for a clear subject, readable action and immediate reason to keep watching.",
                         "The proxy rewards moderate opening change cadence only; it cannot identify the subject or judge meaning."),
                        {"measurement": data.get("measurement", "ffmpeg_scene_change"),
                         "window_seconds": float(window), "opening_scene_change_count": count,
                         "hook_activity_proxy": round(activity_proxy, 4),
+                        "activity_proxy_interpretation": interpretation,
+                        "overdense_threshold_scene_changes": overdense_threshold,
                         "proxy_formula": "distance of opening cut count from roughly one cut per second",
                         "semantic_hook_assessed": False})
 
@@ -540,7 +554,7 @@ def render_critic(metrics: dict[str, Any]) -> AgentResult:
     """Critique measurable black-frame/audio risks; never claim to judge aesthetics."""
     if not isinstance(metrics, dict):
         metrics = {}
-    required = ("black_segments", "duration_seconds", "mean_volume_db", "max_volume_db", "audio_silent")
+    required = ("black_segments", "duration_seconds", "mean_volume_db", "max_volume_db", "true_peak_dbfs", "audio_silent")
     missing = [key for key in required if key not in metrics]
     if missing:
         return AgentResult("render_critic", "insufficient_evidence", None, 0.0,
@@ -550,6 +564,7 @@ def render_critic(metrics: dict[str, Any]) -> AgentResult:
     duration = metrics.get("duration_seconds")
     segments = metrics.get("black_segments")
     mean_db, peak_db = metrics.get("mean_volume_db"), metrics.get("max_volume_db")
+    true_peak_dbfs = metrics.get("true_peak_dbfs")
     if not _finite_number(duration) or float(duration) <= 0 or not isinstance(segments, list):
         return AgentResult("render_critic", "blocked", None, 0.0,
                            ("Technical critique input is malformed.",), ("Fix the measurement payload.",),
@@ -565,6 +580,11 @@ def render_critic(metrics: dict[str, Any]) -> AgentResult:
                            ("Inspect FFmpeg volumedetect output and listen to the rendered soundtrack.",),
                            {"mean_volume_db": mean_db, "max_volume_db": peak_db,
                             "semantic_visual_review": False})
+    if not metrics["audio_silent"] and not _finite_number(true_peak_dbfs):
+        return AgentResult("render_critic", "insufficient_evidence", None, 0.0,
+                           ("Encoded true-peak measurement is missing or invalid.",),
+                           ("Run FFmpeg ebur128 true-peak measurement before allowing export.",),
+                           {"true_peak_dbfs": true_peak_dbfs, "semantic_visual_review": False})
     checked_segments = []
     for index, segment in enumerate(segments):
         if not isinstance(segment, dict) or not _finite_number(segment.get("start_seconds")) or not _finite_number(segment.get("duration_seconds")) or float(segment["duration_seconds"]) < 0:
@@ -583,7 +603,8 @@ def render_critic(metrics: dict[str, Any]) -> AgentResult:
                            ("The output soundtrack appears silent or near-silent.",),
                            ("Do not promote this render; verify the music input, stream mapping and audio filters.",),
                            {"decision": "reject_silent_audio", "mean_volume_db": mean_db,
-                            "max_volume_db": peak_db, "audio_silent": metrics["audio_silent"],
+                            "max_volume_db": peak_db, "true_peak_dbfs": true_peak_dbfs,
+                            "audio_silent": metrics["audio_silent"],
                             "black_segments": checked_segments, "semantic_visual_review": False})
     measurement_errors = metrics.get("measurement_errors", [])
     if isinstance(measurement_errors, list) and measurement_errors:
@@ -591,7 +612,16 @@ def render_critic(metrics: dict[str, Any]) -> AgentResult:
     if longest_black >= max(0.75, float(duration) * 0.20):
         warnings.append("A long black interval was detected; review whether it is intentional.")
     if _finite_number(peak_db) and float(peak_db) >= -0.1:
-        warnings.append("Audio peak is near 0 dBFS; listen for clipping or harsh limiting.")
+        warnings.append("Audio sample peak is near 0 dBFS; listen for clipping or harsh limiting.")
+    if _finite_number(true_peak_dbfs) and float(true_peak_dbfs) >= 0.0:
+        return AgentResult("render_critic", "reject", None, 1.0,
+                           ("Encoded audio true peak reaches or exceeds 0 dBFS.",),
+                           ("Do not promote the render; lower the audio ceiling and measure the encoded file again.",),
+                           {"decision": "reject_true_peak_clipping", "true_peak_dbfs": true_peak_dbfs,
+                            "mean_volume_db": mean_db, "max_volume_db": peak_db,
+                            "black_segments": checked_segments, "semantic_visual_review": False})
+    if _finite_number(true_peak_dbfs) and float(true_peak_dbfs) > -0.5:
+        warnings.append("Encoded audio true peak is above the -0.5 dBFS safety target; review the limiter ceiling.")
     if _finite_number(mean_db) and float(mean_db) <= -35.0:
         warnings.append("Average audio level is very low; check perceived loudness on a real device.")
     status = "needs_review" if warnings else "ok"
@@ -601,6 +631,7 @@ def render_critic(metrics: dict[str, Any]) -> AgentResult:
                        {"longest_black_interval_seconds": round(longest_black, 4),
                         "black_interval_count": len(checked_segments),
                         "mean_volume_db": mean_db, "max_volume_db": peak_db,
+                        "true_peak_dbfs": true_peak_dbfs,
                         "warnings": warnings, "semantic_visual_review": False})
 
 

@@ -74,6 +74,8 @@ assert report["render_critique"]["measurement_errors"] == [], report["render_cri
 assert isinstance(report["render_critique"]["mean_volume_db"], (int, float)), report["render_critique"]
 assert isinstance(report["render_critique"]["max_volume_db"], (int, float)), report["render_critique"]
 assert report["render_critique"]["max_volume_db"] <= -0.5, report["render_critique"]
+assert isinstance(report["render_critique"]["true_peak_dbfs"], (int, float)), report["render_critique"]
+assert report["render_critique"]["true_peak_dbfs"] <= -0.5, report["render_critique"]
 assert report["results"]["niche_analyst"]["status"] == "insufficient_evidence", report
 assert report["results"]["export_storage"]["status"] == "ok", report
 assert path.exists() and path.stat().st_size > 0

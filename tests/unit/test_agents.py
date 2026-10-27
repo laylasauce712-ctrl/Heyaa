@@ -55,7 +55,7 @@ def render_report():
 
 def render_critique():
     return {"black_segments": [], "duration_seconds": 8.0, "mean_volume_db": -18.0,
-            "max_volume_db": -2.0, "audio_silent": False, "measurement_errors": []}
+            "max_volume_db": -2.0, "true_peak_dbfs": -1.2, "audio_silent": False, "measurement_errors": []}
 
 
 class AgentTests(unittest.TestCase):
@@ -206,6 +206,9 @@ class AgentTests(unittest.TestCase):
         self.assertLessEqual(result.score, 1.0)
         self.assertEqual(result.evidence["hook_activity_proxy"], result.score)
         self.assertFalse(result.evidence["semantic_hook_assessed"])
+        overdense = hook_analyst({"window_seconds": 2.0, "opening_scene_change_count": 9})
+        self.assertEqual(overdense.evidence["hook_activity_proxy"], 0.0)
+        self.assertEqual(overdense.evidence["activity_proxy_interpretation"], "overdense_scene_changes")
 
 
     def test_agents_fail_closed_on_malformed_context(self):
@@ -220,9 +223,23 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(silent.status, "reject")
         risky = render_critic({"black_segments": [{"start_seconds": 1.0, "duration_seconds": 2.0}],
                                "duration_seconds": 8.0, "mean_volume_db": -38.0,
-                               "max_volume_db": -0.05, "audio_silent": False})
+                               "max_volume_db": -0.05, "true_peak_dbfs": -0.2, "audio_silent": False})
         self.assertEqual(risky.status, "needs_review")
-        self.assertGreaterEqual(len(risky.evidence["warnings"]), 2)
+        self.assertGreaterEqual(len(risky.evidence["warnings"]), 3)
+        self.assertIn("true peak", " ".join(risky.evidence["warnings"]).lower())
+
+    def test_render_critic_rejects_encoded_true_peak_at_or_above_zero(self):
+        result = render_critic({"black_segments": [], "duration_seconds": 8.0,
+                                "mean_volume_db": -18.0, "max_volume_db": -1.0,
+                                "true_peak_dbfs": 0.1, "audio_silent": False})
+        self.assertEqual(result.status, "reject")
+        self.assertEqual(result.evidence["decision"], "reject_true_peak_clipping")
+
+    def test_render_critic_requires_true_peak_measurement(self):
+        result = render_critic({"black_segments": [], "duration_seconds": 8.0,
+                                "mean_volume_db": -18.0, "max_volume_db": -2.0,
+                                "true_peak_dbfs": None, "audio_silent": False})
+        self.assertEqual(result.status, "insufficient_evidence")
 
     def test_director_blocks_when_render_critic_is_missing_or_malformed(self):
         from src.heyaa.agents import AgentResult
