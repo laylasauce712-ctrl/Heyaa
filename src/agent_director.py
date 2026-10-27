@@ -772,7 +772,7 @@ def analyze_render_critique(path, duration):
 
 
 def main(argv=None):
-    global VIDEO, MUSIC, REFERENCE, EDIT_DURATION, DURATION, FREEZE
+    global VIDEO, MUSIC, REFERENCE, EDIT_DURATION, DURATION, FREEZE, SUBJECT_OBSERVATIONS
     args = parse_media_source_args(argv)
     VIDEO, MUSIC, REFERENCE = prepare_media_sources(
         video_url=args.video_url,
