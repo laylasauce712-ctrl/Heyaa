@@ -94,6 +94,8 @@ class YouTubeUrlTests(unittest.TestCase):
             command = runner.call_args.args[0]
             self.assertIn("--progress", command)
             self.assertIn("--newline", command)
+            self.assertIn("--force-ipv4", command)
+            self.assertIn("--no-playlist", command)
             self.assertNotIn("--quiet", command)
             self.assertNotIn("--no-progress", command)
             self.assertNotIn("capture_output", runner.call_args.kwargs)
