@@ -7,15 +7,15 @@
 - Mirror is an explicit `edit_settings.mirror_enabled` boolean; it no longer alternates on a per-clip rule. A horizontal flip can reverse visible text.
 - The validated, frame-based EDL now drives source ranges, clip durations, freeze placement and the supported full-timeline audio segment. The renderer rejects unsupported crop rectangles or unsupported audio schedules instead of silently ignoring them.
 - The synthetic CI render checks EDL continuity, exact decoded frame count, output dimensions/FPS/duration, audio and full-file decoding.
-- Deterministic Python agents now run real settings, media, beat, reference, framing, opening-scene-change, planning, niche-evidence and render-inspector stages. The Director records an explicit allow/block decision; Export Storage performs atomic promotion only after that decision.
+- Deterministic Python agents now run real settings, media, beat, reference, framing, opening-scene-change, planning, niche-evidence, Inspector and Render Critic stages. The Critic checks FFmpeg black intervals and audio volume; the Director records an explicit allow/block decision; Export Storage performs atomic promotion only after that decision.
 - Missing evidence remains visible. Scene-change counts are not semantic scene understanding; beat timing is a bass-onset/autocorrelation heuristic; the hook agent does not assign semantic hook strength; niche craft scoring remains unavailable until all required metrics are measured.
-- The latest CI-confirmed synthetic render before the newest Director/Storage integration passed 32 unit tests and produced an 8-second 1080x1920, 24-FPS file with exactly 192 decoded frames and audio. The current branch CI for the added Director/Storage integration is pending.
+- The current CI run on commit 418ebd5 passed 38 unit tests and the synthetic render, including the explicit Director decision, Export Storage operation, and an 8-second 1080x1920, 24-FPS output with 192 decoded frames and audio. The current commit is adding measurable Render Critic checks and needs its own CI result.
 - No real user footage has been visually reviewed in this repository's CI.
 
 ## Remaining stages
 
 1. **Real-footage visual QA:** test framing, subject visibility, mirrored text, skull scale/position, flash timing, video-to-music impact and audio level using the user's own sample clips.
-2. **Critic improvements:** add representative-frame checks, black/frozen-frame detection, audio loudness/clipping checks and bounded retries. Current Inspector rejects structural problems but does not yet analyze aesthetics or run an automatic retry.
+2. **Critic improvements:** add representative-frame checks, frozen-frame detection and bounded retries. Current Render Critic measures black intervals and audio volume risk, but does not analyze aesthetics or run an automatic retry.
 3. **Beat timing:** test the full music loop and multiple timebases, quantify confidence and map candidates over a looped soundtrack; keep even pacing on low confidence.
 4. **Subject-aware crop:** add optional, tested subject/face detection only when the dependency/model is available; keep deterministic center crop as a clearly labeled fallback.
 5. **Agent Room/UI:** wire real structured events to an actual UI if/when the frontend exists. The current repository contains no frontend, so it cannot display a live Agent Room yet.

@@ -30,6 +30,7 @@ assert report["results"]["director"]["status"] == "ready_for_human_review", repo
 assert report["results"]["framing_agent"]["status"] == "ok", report
 assert report["results"]["hook_analyst"]["status"] == "insufficient_evidence", report
 assert report["results"]["inspector"]["status"] == "ok", report
+assert report["results"]["render_critic"]["status"] in ("ok", "needs_review"), report
 assert report["results"]["niche_analyst"]["status"] == "insufficient_evidence", report
 assert report["results"]["export_storage"]["status"] == "ok", report
 assert path.exists() and path.stat().st_size > 0
@@ -52,6 +53,6 @@ for item in edl["video"]:
 assert cursor == edl["total_frames"] == 192, (cursor, edl["total_frames"])
 assert edl["video"][-1]["type"] == "freeze"
 assert edl["fps_num"] == 24
-assert len(report["events"]) == 11
-print("Render smoke test passed: exact frame count, continuous EDL, audio, full decode, Director decision and atomic export.")
+assert len(report["events"]) == 12
+print("Render smoke test passed: exact frame count, continuous EDL, audio, full decode, render Critic, Director decision and atomic export.")
 PY

@@ -429,6 +429,71 @@ def inspector(report: dict[str, Any]) -> AgentResult:
                         "fps": fps, "frame_count": frame_count, "expected_frame_count": expected_count})
 
 
+def render_critic(metrics: dict[str, Any]) -> AgentResult:
+    """Critique measurable black-frame/audio risks; never claim to judge aesthetics."""
+    if not isinstance(metrics, dict):
+        metrics = {}
+    required = ("black_segments", "duration_seconds", "mean_volume_db", "max_volume_db", "audio_silent")
+    missing = [key for key in required if key not in metrics]
+    if missing:
+        return AgentResult("render_critic", "insufficient_evidence", None, 0.0,
+                           ("Technical critique evidence is incomplete.",),
+                           ("Run black-interval and audio-volume analysis before interpreting this stage.",),
+                           {"missing_fields": missing, "semantic_visual_review": False})
+    duration = metrics.get("duration_seconds")
+    segments = metrics.get("black_segments")
+    mean_db, peak_db = metrics.get("mean_volume_db"), metrics.get("max_volume_db")
+    if not _finite_number(duration) or float(duration) <= 0 or not isinstance(segments, list):
+        return AgentResult("render_critic", "blocked", None, 0.0,
+                           ("Technical critique input is malformed.",), ("Fix the measurement payload.",),
+                           {"semantic_visual_review": False})
+    if not isinstance(metrics.get("audio_silent"), bool):
+        return AgentResult("render_critic", "blocked", None, 0.0,
+                           ("audio_silent must be a measured boolean.",), ("Fix the audio analysis payload.",), {})
+    if not metrics["audio_silent"] and (
+        not _finite_number(mean_db) or not _finite_number(peak_db)
+    ):
+        return AgentResult("render_critic", "insufficient_evidence", None, 0.0,
+                           ("Audio volume measurements could not be parsed.",),
+                           ("Inspect FFmpeg volumedetect output and listen to the rendered soundtrack.",),
+                           {"mean_volume_db": mean_db, "max_volume_db": peak_db,
+                            "semantic_visual_review": False})
+    checked_segments = []
+    for index, segment in enumerate(segments):
+        if not isinstance(segment, dict) or not _finite_number(segment.get("start_seconds")) or not _finite_number(segment.get("duration_seconds")) or float(segment["duration_seconds"]) < 0:
+            return AgentResult("render_critic", "blocked", None, 0.0,
+                               (f"Black interval {index} has malformed measurements.",),
+                               ("Repair the FFmpeg blackdetect parser.",), {"invalid_segment_index": index})
+        checked_segments.append({"start_seconds": float(segment["start_seconds"]),
+                                 "duration_seconds": float(segment["duration_seconds"])})
+    longest_black = max((item["duration_seconds"] for item in checked_segments), default=0.0)
+    warnings = []
+    if metrics["audio_silent"] or (
+        _finite_number(mean_db) and _finite_number(peak_db) and
+        float(mean_db) <= -55.0 and float(peak_db) <= -45.0
+    ):
+        return AgentResult("render_critic", "reject", None, 1.0,
+                           ("The output soundtrack appears silent or near-silent.",),
+                           ("Do not promote this render; verify the music input, stream mapping and audio filters.",),
+                           {"decision": "reject_silent_audio", "mean_volume_db": mean_db,
+                            "max_volume_db": peak_db, "audio_silent": metrics["audio_silent"],
+                            "black_segments": checked_segments, "semantic_visual_review": False})
+    if longest_black >= max(0.75, float(duration) * 0.20):
+        warnings.append("A long black interval was detected; review whether it is intentional.")
+    if _finite_number(peak_db) and float(peak_db) >= -0.1:
+        warnings.append("Audio peak is near 0 dBFS; listen for clipping or harsh limiting.")
+    if _finite_number(mean_db) and float(mean_db) <= -35.0:
+        warnings.append("Average audio level is very low; check perceived loudness on a real device.")
+    status = "needs_review" if warnings else "ok"
+    return AgentResult("render_critic", status, None, 0.85,
+                       tuple(warnings or ["No long black interval or obvious silence/clipping risk was found by these simple metrics."]),
+                       ("Listen to the complete export and inspect representative frames; this stage does not judge composition or style.",),
+                       {"longest_black_interval_seconds": round(longest_black, 4),
+                        "black_interval_count": len(checked_segments),
+                        "mean_volume_db": mean_db, "max_volume_db": peak_db,
+                        "warnings": warnings, "semantic_visual_review": False})
+
+
 def director_agent(results: dict[str, AgentResult]) -> AgentResult:
     """Make the explicit orchestration decision from the actual stage results."""
     blocking_agents = ("settings_agent", "planner", "inspector")
@@ -448,6 +513,10 @@ def director_agent(results: dict[str, AgentResult]) -> AgentResult:
             "status": framing.status if framing else "missing",
             "findings": list(framing.findings) if framing else ["Agent did not return a result."],
         })
+    critic = results.get("render_critic")
+    if critic is not None and critic.status == "reject":
+        blockers.append({"agent": "render_critic", "status": critic.status,
+                         "findings": list(critic.findings)})
     if blockers:
         return AgentResult(
             "director", "blocked", None, 1.0,
@@ -458,7 +527,7 @@ def director_agent(results: dict[str, AgentResult]) -> AgentResult:
     nonblocking = {
         name: {"status": result.status, "findings": list(result.findings)}
         for name, result in results.items()
-        if name in ("media_analyst", "beat_sync_agent", "reference_analyst", "hook_analyst", "niche_analyst")
+        if name in ("media_analyst", "beat_sync_agent", "reference_analyst", "hook_analyst", "niche_analyst", "render_critic")
         and result.status not in ("ok",)
     }
     recommendations = ["Human visual review is required before considering the edit finished or publishing."]
@@ -541,10 +610,12 @@ def run_agent_team(context: dict[str, Any],
     record(niche, "craft_review")
     qa = inspector(context.get("render_report", {}))
     record(qa, "render_qa")
+    critic = render_critic(context.get("render_critique", {}))
+    record(critic, "render_critique")
     director = director_agent({
         "settings_agent": setting_result, "media_analyst": media, "beat_sync_agent": beat,
         "reference_analyst": reference, "framing_agent": framing, "hook_analyst": hook,
-        "planner": plan, "niche_analyst": niche, "inspector": qa,
+        "planner": plan, "niche_analyst": niche, "inspector": qa, "render_critic": critic,
     })
     record(director, "orchestration_decision")
     status = "blocked" if director.status == "blocked" else "ready_for_human_review"
@@ -557,11 +628,12 @@ def run_agent_team(context: dict[str, Any],
                     "beat_sync_agent": asdict(beat), "reference_analyst": asdict(reference),
                     "framing_agent": asdict(framing), "hook_analyst": asdict(hook),
                     "planner": asdict(plan), "niche_analyst": asdict(niche), "inspector": asdict(qa),
-                    "director": asdict(director)},
+                    "render_critic": asdict(critic), "director": asdict(director)},
         "render_report": dict(context.get("render_report", {})),
         "media_analysis": dict(context.get("media_analysis", {})),
         "beat_analysis": dict(context.get("beat_analysis", {})),
         "reference_analysis": dict(context.get("reference_analysis", {})),
         "hook_analysis": dict(context.get("hook_analysis", {})),
+        "render_critique": dict(context.get("render_critique", {})),
         "events": [asdict(event) for event in events],
     }

@@ -475,6 +475,60 @@ def verify_output(path):
     }
     return actual_duration, details["video_codec"], details["audio_codec"], details
 
+def analyze_render_critique(path, duration):
+    """Measure long black intervals and audio level. These are risk proxies, not aesthetics."""
+    errors = []
+    black_segments = []
+    black_cmd = [
+        "ffmpeg", "-hide_banner", "-i", path, "-vf",
+        "blackdetect=d=0.35:pix_th=0.05", "-an", "-f", "null", "-"
+    ]
+    black_result = subprocess.run(black_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  text=True, check=False)
+    black_log = (black_result.stderr or "") + "\\n" + (black_result.stdout or "")
+    if black_result.returncode != 0:
+        errors.append("blackdetect_failed")
+    else:
+        pattern = re.compile(r"black_start:([0-9.]+)\\s+black_end:([0-9.]+)\\s+black_duration:([0-9.]+)")
+        for match in pattern.finditer(black_log):
+            black_segments.append({
+                "start_seconds": float(match.group(1)),
+                "duration_seconds": float(match.group(3)),
+            })
+
+    volume_cmd = [
+        "ffmpeg", "-hide_banner", "-i", path, "-vn", "-af", "volumedetect", "-f", "null", "-"
+    ]
+    volume_result = subprocess.run(volume_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   text=True, check=False)
+    volume_log = (volume_result.stderr or "") + "\\n" + (volume_result.stdout or "")
+    if volume_result.returncode != 0:
+        errors.append("volumedetect_failed")
+
+    def read_db(label):
+        match = re.search(label + r":\\s*(-?inf|-?\\d+(?:\\.\\d+)?)\\s*dB", volume_log, re.IGNORECASE)
+        if not match or match.group(1).lower() in ("-inf", "inf"):
+            return None
+        try:
+            value = float(match.group(1))
+            return value if math.isfinite(value) else None
+        except ValueError:
+            return None
+
+    mean_db = read_db("mean_volume")
+    peak_db = read_db("max_volume")
+    audio_silent = bool(re.search(r"(?:mean_volume|max_volume):\\s*-inf\\s*dB", volume_log, re.IGNORECASE))
+    return {
+        "black_segments": black_segments, "duration_seconds": float(duration),
+        "mean_volume_db": mean_db, "max_volume_db": peak_db,
+        "audio_silent": audio_silent,
+        "measurement_errors": errors,
+        "blackdetect_threshold_seconds": 0.35,
+        "blackdetect_pixel_threshold": 0.05,
+        "method": "ffmpeg-blackdetect-and-volumedetect",
+    }
+
+
 def main():
     global EDIT_DURATION, DURATION, FREEZE
     load_settings()
@@ -697,11 +751,12 @@ def main():
         alignment = [max(0.0, 1.0 - min(abs(cut - beat) for beat in beats) / tolerance)
                      for cut in cut_times]
         niche_metrics["beat_alignment"] = round(sum(alignment) / len(alignment), 4)
+    render_critique = analyze_render_critique(final_video, actual)
     agent_report = run_agent_team({
         "settings": CONFIG, "edl": edl,
         "media_analysis": media_analysis, "beat_analysis": beat_analysis,
         "reference_analysis": reference_analysis, "hook_analysis": hook_analysis,
-        "niche_metrics": niche_metrics, "niche_tags": ["phonk", "montagem", "vertical", "freeze"],
+        "render_critique": render_critique, "niche_metrics": niche_metrics, "niche_tags": ["phonk", "montagem", "vertical", "freeze"],
         "render_report": render_report,
     })
     for event in agent_report["events"]:

@@ -21,7 +21,7 @@ Every stage returns a structured result with status, findings, recommendations a
 
 - No independent LLM agents, online trend research agent, visual vision-model reviewer, face/subject tracking, AI upscaling, UI/Agent Room event stream, publish agent or autonomous publishing.
 - No automatic quality score for hooks or virality. A craft heuristic is not a prediction of views.
-- QA currently checks structural render integrity but does not replace human review of subject framing, image aesthetics, skull placement, flash cadence, audio loudness perception or beat-to-picture feel.
+- Inspector checks structural render integrity and Render Critic checks simple black-interval/audio-level proxies; neither replaces human review of subject framing, image aesthetics, skull placement, flash cadence, or beat-to-picture feel.
 - The EDL v1 renderer supports one full-timeline audio segment. It fails fast for unsupported multi-segment audio schedules.
 
 ## Workflow and safeguards
@@ -34,6 +34,7 @@ params.json
    -> Planner validates EDL against settings
    -> FFmpeg renders to temporary path
    -> Inspector validates decoded output
+   -> Render Critic measures black intervals and audio volume risk
    -> Director combines the gates and records allow/block + reasons
    -> if blocked: Export Storage records blocked, preserve existing final and save failure report
    -> if accepted: Export Storage atomically promotes output/final_phonk_20s.mp4

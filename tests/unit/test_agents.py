@@ -5,7 +5,7 @@ from pathlib import Path
 from src.heyaa.agents import (
     beat_sync_agent, director_agent, export_storage_agent, framing_agent, hook_analyst,
     inspector, media_analyst, niche_analyst, planner, reference_analyst,
-    run_agent_team, settings_agent,
+    render_critic, run_agent_team, settings_agent,
 )
 
 
@@ -46,6 +46,11 @@ def render_report():
     return {"width": 1080, "height": 1920, "duration_seconds": 8.0, "expected_duration_seconds": 8.0,
             "fps": 24.0, "expected_fps": 24, "video_codec": "h264", "expected_video_codec": "h264",
             "frame_count": 192, "expected_frame_count": 192, "has_audio": True, "decode_ok": True, "file_exists": True, "audio_codec": "aac"}
+
+
+def render_critique():
+    return {"black_segments": [], "duration_seconds": 8.0, "mean_volume_db": -18.0,
+            "max_volume_db": -2.0, "audio_silent": False, "measurement_errors": []}
 
 
 class AgentTests(unittest.TestCase):
@@ -148,6 +153,30 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(hook_analyst(None).status, "insufficient_evidence")
         self.assertEqual(inspector(None).status, "reject")
 
+    def test_render_critic_rejects_silence_and_flags_black_clipping_risks(self):
+        silent = render_critic({"black_segments": [], "duration_seconds": 8.0,
+                                "mean_volume_db": None, "max_volume_db": None, "audio_silent": True})
+        self.assertEqual(silent.status, "reject")
+        risky = render_critic({"black_segments": [{"start_seconds": 1.0, "duration_seconds": 2.0}],
+                               "duration_seconds": 8.0, "mean_volume_db": -38.0,
+                               "max_volume_db": -0.05, "audio_silent": False})
+        self.assertEqual(risky.status, "needs_review")
+        self.assertGreaterEqual(len(risky.evidence["warnings"]), 2)
+
+    def test_director_blocks_when_render_critic_rejects_audio(self):
+        cfg = config()
+        ok = settings_agent(cfg)
+        from src.heyaa.agents import AgentResult
+        blocked = director_agent({
+            "settings_agent": ok, "planner": AgentResult("planner", "ok", None, 1.0, (), (), {}),
+            "inspector": AgentResult("inspector", "ok", None, 1.0, (), (), {}),
+            "framing_agent": AgentResult("framing_agent", "ok", None, 1.0, (), (), {}),
+            "render_critic": render_critic({"black_segments": [], "duration_seconds": 8.0,
+                                             "mean_volume_db": None, "max_volume_db": None, "audio_silent": True}),
+        })
+        self.assertEqual(blocked.status, "blocked")
+        self.assertTrue(any(item["agent"] == "render_critic" for item in blocked.evidence["blockers"]))
+
     def test_director_makes_explicit_export_decision(self):
         result = run_agent_team({
             "settings": config(), "edl": sample_edl(),
@@ -187,10 +216,10 @@ class AgentTests(unittest.TestCase):
                                "scene_cut_count": 5, "music_duration_seconds": 9.0},
             "beat_analysis": {"enabled": False, "candidate_count": 0},
             "niche_metrics": {}, "niche_tags": ["phonk", "montagem"],
-            "render_report": render_report(),
+            "render_report": render_report(), "render_critique": render_critique(),
         }, emit=emitted.append)
         self.assertEqual(result["status"], "ready_for_human_review")
-        self.assertEqual(len(emitted), 10)
+        self.assertEqual(len(emitted), 11)
         self.assertEqual(emitted, result["events"])
         self.assertFalse(result["viral_guarantee"])
         self.assertEqual(result["results"]["niche_analyst"]["status"], "insufficient_evidence")
@@ -199,6 +228,7 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(result["results"]["hook_analyst"]["status"], "insufficient_evidence")
         self.assertEqual(result["results"]["reference_analyst"]["status"], "skipped")
         self.assertEqual(result["results"]["framing_agent"]["status"], "ok")
+        self.assertEqual(result["results"]["render_critic"]["status"], "ok")
         broken = run_agent_team({"settings": config(), "edl": sample_edl(), "render_report": {}})
         self.assertEqual(broken["status"], "blocked")
 
