@@ -703,28 +703,51 @@ def main(argv=None):
     print(f"[target] {WIDTH}x{HEIGHT}, {FPS} FPS, {DURATION:.1f}s, Phonk/Montagem")
 
     scenes = detect_scenes(VIDEO, source_duration)
-    raw_beats = detect_music_beats(MUSIC, EDIT_DURATION) if BEAT_SYNC else []
-    beats = extend_looped_beats(raw_beats, music_duration, EDIT_DURATION, MUSIC_LOOP)
+    available_edit_duration = DURATION - FREEZE
+    raw_beats = detect_music_beats(MUSIC, available_edit_duration) if BEAT_SYNC else []
+    beats = extend_looped_beats(raw_beats, music_duration, available_edit_duration, MUSIC_LOOP)
+    drop_beat_time = choose_drop_beat(music_duration, available_edit_duration, MUSIC_LOOP)
+    total_frames, freeze_frames = round(DURATION * FPS), round(FREEZE * FPS)
+    drop_freeze_frames = max(1, round(DROP_FREEZE_DURATION * FPS)) if drop_beat_time is not None else 0
+    drop_freeze_duration = drop_freeze_frames / FPS
+    EDIT_DURATION = (total_frames - freeze_frames - drop_freeze_frames) / FPS
+    adjusted_beats = [
+        round(beat if drop_beat_time is None or beat <= drop_beat_time else beat - drop_freeze_duration, 6)
+        for beat in beats if beat < available_edit_duration
+    ]
     ref_interval = reference_cut_interval(REFERENCE) if REFERENCE_PACING else None
     clip_count = choose_clip_count(ref_interval)
-    boundaries_seconds = make_boundaries(clip_count, beats)
-    total_frames, freeze_frames = round(DURATION * FPS), round(FREEZE * FPS)
-    edit_frames = total_frames - freeze_frames
+    boundaries_seconds = make_boundaries(clip_count, adjusted_beats)
+    planned_drop_position = None
+    if drop_beat_time is not None:
+        boundaries_seconds, planned_drop_position = insert_drop_boundary(boundaries_seconds, drop_beat_time)
+        print(
+            f"[edit] Drop-impact freeze: strongest bass-onset proxy at {drop_beat_time:.2f}s; "
+            f"freeze boundary={planned_drop_position:.2f}s for {drop_freeze_duration:.3f}s."
+        )
+    total_motion_frames = total_frames - freeze_frames - drop_freeze_frames
     frame_boundaries = [round(value * FPS) for value in boundaries_seconds]
-    frame_boundaries[0], frame_boundaries[-1] = 0, edit_frames
+    frame_boundaries[0], frame_boundaries[-1] = 0, total_motion_frames
     frame_boundaries = sorted(set(frame_boundaries))
     if len(frame_boundaries) != clip_count + 1:
         raise RuntimeError("Frame quantization changed the planned clip count; regenerate the edit plan.")
-    if len(frame_boundaries) < 2 or frame_boundaries[0] != 0 or frame_boundaries[-1] != edit_frames:
+    if len(frame_boundaries) < 2 or frame_boundaries[0] != 0 or frame_boundaries[-1] != total_motion_frames:
         raise RuntimeError("Could not create contiguous integer-frame EDL boundaries.")
+    drop_frame = round(planned_drop_position * FPS) if planned_drop_position is not None else None
+    context = choose_context_window(source_duration, scenes, EDIT_DURATION)
+    context_start, context_end = context["start_seconds"], context["end_seconds"]
+    context_duration = max(0.1, context_end - context_start)
+    context_scenes = sorted(cut - context_start for cut in scenes if context_start <= cut <= context_end)
     edl_video = []
+    output_cursor = 0
     for start_f, end_f in zip(frame_boundaries, frame_boundaries[1:]):
         dur_f = end_f - start_f
         if dur_f <= 0:
             raise RuntimeError("EDL contains a zero-length clip after frame quantization.")
         timeline_center = (start_f + dur_f / 2) / FPS
-        source_target = timeline_center / EDIT_DURATION * source_duration
-        source_center = choose_source_center(source_target, scenes, source_duration)
+        local_target = timeline_center / EDIT_DURATION * context_duration
+        local_center = choose_source_center(local_target, context_scenes, context_duration)
+        source_center = context_start + local_center
         source_dur_f = max(1, round(dur_f * SPEED))
         source_start_seconds = max(0.0, min(
             source_center - (source_dur_f / FPS) / 2,
@@ -734,9 +757,23 @@ def main(argv=None):
             "type": "clip", "source": VIDEO,
             "source_start_f": round(source_start_seconds * FPS),
             "source_dur_f": source_dur_f,
-            "start_f": start_f, "dur_f": dur_f, "speed": SPEED,
+            "start_f": output_cursor, "dur_f": dur_f, "speed": SPEED,
             "crop": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}
         })
+        output_cursor += dur_f
+        if drop_frame is not None and end_f == drop_frame:
+            edl_video.append({
+                "type": "freeze", "source": "timeline:last_frame",
+                "source_frame_f": max(0, output_cursor - 1),
+                "start_f": output_cursor, "dur_f": drop_freeze_frames,
+                "effect": "drop-impact-freeze"
+            })
+            output_cursor += drop_freeze_frames
+    edit_frames = total_frames - freeze_frames
+    if output_cursor != edit_frames:
+        raise RuntimeError(
+            f"EDL motion and drop freeze end at frame {output_cursor}, expected final freeze at {edit_frames}."
+        )
     edl_video.append({
         "type": "freeze", "source": "timeline:last_frame", "source_frame_f": max(0, edit_frames - 1),
         "start_f": edit_frames, "dur_f": freeze_frames, "effect": "phonk-freeze"
@@ -750,8 +787,11 @@ def main(argv=None):
     validate_edl(edl)
     # Fail before expensive clip rendering if the contract contains features the
     # current FFmpeg renderer explicitly does not implement.
-    if edl["video"][-1]["type"] != "freeze" or sum(1 for item in edl["video"] if item["type"] == "freeze") != 1:
-        raise RuntimeError("EDL must contain exactly one freeze segment at the end.")
+    freeze_items = [item for item in edl["video"] if item["type"] == "freeze"]
+    if (edl["video"][-1]["type"] != "freeze" or len(freeze_items) not in (1, 2) or
+            freeze_items[-1].get("effect") != "phonk-freeze" or
+            any(item.get("effect") != "drop-impact-freeze" for item in freeze_items[:-1])):
+        raise RuntimeError("EDL must end with one Phonk final freeze and may include one drop-impact freeze.")
     if len(edl["audio"]) != 1:
         raise RuntimeError("Current FFmpeg renderer supports exactly one EDL audio segment.")
     if edl["audio"][0]["start_f"] != 0 or edl["audio"][0]["dur_f"] != edl["total_frames"]:
@@ -778,15 +818,27 @@ def main(argv=None):
         json.dump(edl, handle, ensure_ascii=False, indent=2)
     print(f"[edl] Validated {len(edl_video) - 1} clips + freeze; {total_frames} frames, no gaps.")
 
-    print("[render 1/4] Building clips from validated EDL...")
+    print("[render 1/4] Building clips and the drop-impact freeze from the validated EDL...")
     clips = []
+    previous_clip = None
+    clip_number = 0
+    clip_total = sum(1 for x in edl_video if x["type"] == "clip")
     for index, item in enumerate(edl_video[:-1]):
-        length = item["dur_f"] / FPS
-        center = item["source_start_f"] / FPS + (item["source_dur_f"] / FPS) / 2
-        print(f"  EDL clip {index + 1}/{len(edl_video) - 1}: source {center:.2f}s, output {length:.3f}s [{item['start_f']}..{item['start_f'] + item['dur_f']})")
-        clips.append(make_clip(index, item, source_duration))
+        if item["type"] == "clip":
+            clip_number += 1
+            length = item["dur_f"] / FPS
+            center = item["source_start_f"] / FPS + (item["source_dur_f"] / FPS) / 2
+            print(f"  EDL clip {clip_number}/{clip_total}: source {center:.2f}s, output {length:.3f}s")
+            clip_path = make_clip(index, item, source_duration)
+        else:
+            print(f"  [impact] Holding the preceding shot for {item['dur_f'] / FPS:.3f}s in black-and-white with a brief shake.")
+            if previous_clip is None:
+                raise RuntimeError("Drop-impact freeze appeared before the first rendered shot.")
+            clip_path = make_freeze_clip(index, item, previous_clip)
+        clips.append(clip_path)
+        previous_clip = clip_path
 
-    print("[render 2/4] Joining clips...")
+    print("[render 2/4] Joining clips and the impact hold...")
     concat_file = f"{WORK}/concat.txt"
     with open(concat_file, "w", encoding="utf-8") as handle:
         for clip in clips:
@@ -831,7 +883,7 @@ def main(argv=None):
         f"[0:v]{base_chain},split[base][impact_src];"
         "[base]setsar=1[baseout];"
         f"[impact_src]{impact_chain}[impact_raw];"
-        "[2:v]scale=300:-1[skull];"
+        "[2:v]scale=420:-1[skull];"
         f"[impact_raw][skull]overlay=(W-w)/2:(H-h)/2:enable='gte(t,{EDIT_DURATION:.5f})'[impact];"
         f"[baseout][impact]overlay=0:0:enable='gte(t,{EDIT_DURATION:.5f})',"
         f"trim=end_frame={total_frames},setsar=1[outv]"
@@ -878,6 +930,8 @@ def main(argv=None):
         "source_height": int(source_video.get("height", 0)),
         "scene_cut_count": len(scenes),
         "music_duration_seconds": music_duration,
+        "context_window": context,
+        "context_caveat": "Temporal scene-cut-density proxy only; no semantic person identification in this build.",
     }
     beat_analysis = {
         "enabled": BEAT_SYNC,
@@ -886,6 +940,10 @@ def main(argv=None):
         "loop_expanded": len(beats) > len(raw_beats),
         "fallback": "even_pacing" if BEAT_SYNC and len(beats) < 3 else None,
         "method": "bass-lowpass-rms-novelty-autocorrelation-heuristic" if BEAT_SYNC else "disabled",
+        "drop_beat_time_seconds": drop_beat_time,
+        "drop_beat_strength_proxy": DROP_BEAT_STRENGTH if drop_beat_time is not None else None,
+        "drop_freeze_frames": drop_freeze_frames,
+        "drop_freeze_duration_seconds": drop_freeze_duration,
     }
     reference_analysis = {
         "enabled": REFERENCE_PACING,
