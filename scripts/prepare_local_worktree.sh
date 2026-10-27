@@ -78,9 +78,10 @@ fi
 # Check venv support before changing local paths. A pre-existing but incomplete venv is not auto-deleted.
 if [[ ! -x "$ROOT/.venv/bin/python" ]]; then
     VENV_PROBE="$(mktemp -d)"
-    if ! "$PYTHON_BIN" -m venv "$VENV_PROBE/probe" >/dev/null 2>&1; then
+    if ! "$PYTHON_BIN" -m venv "$VENV_PROBE/probe" >/dev/null 2>&1 ||
+       ! "$VENV_PROBE/probe/bin/python" -m pip --version >/dev/null 2>&1; then
         rm -rf "$VENV_PROBE"
-        echo "[setup] Python venv support is missing. Install it first with: apt install -y python3-venv" >&2
+        echo "[setup] Python venv/pip support is missing. Install it first with: apt install -y python3-venv" >&2
         echo "[setup] No input symlinks or settings have been changed." >&2
         exit 4
     fi
