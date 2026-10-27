@@ -13,9 +13,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Install FFmpeg for render smoke test
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
       - name: Validate renderer syntax and settings JSON
         run: |
           python -m py_compile src/agent_director.py src/heyaa/agents.py
           python -m json.tool params.json > /dev/null
       - name: Run dependency-free unit tests
         run: python -m unittest discover -s tests/unit -v
+      - name: Run synthetic end-to-end render smoke test
+        run: bash tests/integration/render_smoke.sh
