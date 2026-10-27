@@ -1,46 +1,28 @@
-# Heyaa EDL v1 — M1a contract
+# Heyaa EDL v1 — integrated frame-based edit contract
 
-The Edit Decision List (EDL) is a versioned JSON plan for a future frame-accurate renderer. The renderer now builds and validates a frame-contiguous EDL from params.json and uses its clip entries to drive segment rendering. The freeze entry is represented explicitly in the EDL; the existing FFmpeg impact filter implements its visual treatment.
+The renderer builds, validates and consumes an EDL from `params.json`. The EDL is the source of truth for ordered clip boundaries, project frame count, clip speed, source seek ranges, audio source and freeze placement. A validated EDL must cover every project frame exactly once: no gaps, overlaps or zero-length items.
 
-## Top-level fields
+## Fields
 
-- version: required integer, currently 1.
-- fps_num and fps_den: positive integers describing rational frame rate, e.g. 30000/1001.
-- width and height: positive output dimensions.
-- total_frames: exact positive output frame count.
-- video: non-empty ordered list of clip/freeze items. Starts at frame 0, stays contiguous, and ends exactly at total_frames.
-- audio: optional source audio segments, each contained within the project duration.
+Top-level fields: `version`, `fps_num`, `fps_den`, `width`, `height`, `total_frames`, `video[]`, and `audio[]`.
 
-Unknown fields and unsupported versions are rejected so schema changes stay explicit.
+Video items use integer `start_f` and `dur_f` project frames. Clip entries also carry `source_start_f`, `source_dur_f`, `speed` and normalized `crop`. In this renderer's v1 profile, source range ticks are measured at the project FPS and converted to seconds for FFmpeg seeking; they are not guaranteed to equal the source file's native frame index when its frame rate differs. Crop currently describes the full normalized source area; the renderer applies a centered 9:16 aspect crop. That is not face tracking.
 
-## Video item types
+Freeze entries name the frame at the end of the edited timeline and the number of project frames to hold. The renderer uses frame-count-based clone padding and trims the output to exactly `total_frames`.
 
-Every item has type, start_f, and positive dur_f. Positions and durations are integer frames, not floating-point seconds.
+Audio entries carry source, source start, project start, duration, gain and optional fades in project-frame units. The current render profile intentionally supports one audio segment spanning the entire output, and rejects unsupported multi-segment/non-zero-timeline audio instead of silently pretending to implement it. `music_loop` controls whether the audio input is looped; when disabled, short music is padded with silence.
 
-Clip items additionally require source, source_start_f, source_dur_f, speed, and crop. Speed is limited to 0.25–4.0; output duration must match source duration divided by speed within one frame. Crop x/y/w/h are normalized source-frame fractions and must form a positive rectangle inside [0,1].
+## Settings and QA
 
-Example clip JSON:
+`params.json` is the single configuration input. Unsupported or out-of-range values fail fast rather than being silently clamped. The director validates the EDL before FFmpeg starts. Render QA checks 1080x1920, output FPS, exact decoded frame count, audio presence, duration and a full-file decode. The previous final export is not replaced until blocking technical QA passes.
 
-    {"type":"clip","source":"input.mp4","source_start_f":0,"source_dur_f":90,"start_f":0,"dur_f":90,"speed":1.0,"crop":{"x":0,"y":0,"w":1,"h":1}}
+The `agent_report.json` contains structured events/results from the deterministic settings, media, beat-sync, planning, niche-review, inspector and export stages. These are not independent LLM agents and are not a UI/Agent Room; no model chat is fabricated.
 
-Freeze items require source_frame_f and may specify a non-empty renderer-defined effect string. Duration is the number of output frames to hold the still.
+## Validation
 
-    {"type":"freeze","source":"input.mp4","source_frame_f":89,"start_f":90,"dur_f":15,"effect":"phonk-freeze"}
+```sh
+python -m unittest discover -s tests/unit -v
+bash tests/integration/render_smoke.sh
+```
 
-Audio items use source, source_start_f, start_f, dur_f, and optional gain_db, fade_in_f, fade_out_f. Frame values are non-negative integers, duration is positive, and audio must fit within total_frames. Fade lengths cannot exceed segment duration.
-
-## API and compatibility
-
-- validate_edl(edl) returns the same object or raises EDLValidationError.
-- frames_to_seconds and seconds_to_frames support rational FPS.
-- edl_mode(params) recognizes off, shadow, and on; absent/invalid values resolve to off. The integrated renderer requires edl_mode=on; off/shadow are not supported by the current render path.
-- No third-party dependencies are added.
-
-## Checks
-
-Run unit tests with: python -m unittest discover -s tests/unit -v
-Optional fixture generation: sh tests/integration/make_fixtures.sh (requires FFmpeg). Fixture generation is not a visual-quality test.
-
-## M1a non-goals
-
-No changes to existing filters, beat detection, crop behavior, freeze effects, or agent orchestration. No claims of AI upscaling or automated visual-quality verification. Renderer integration and A/B visual review are later milestones.
+The integration test uses generated synthetic media. It proves the technical pipeline checks but does not prove visual quality on a user's actual footage or predict virality. Human visual review remains required.

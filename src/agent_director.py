@@ -5,6 +5,7 @@ import re
 import statistics
 import struct
 import subprocess
+from fractions import Fraction
 from pathlib import Path
 
 try:
@@ -41,35 +42,64 @@ MIRROR_ENABLED = None
 SMART_CROP_ENABLED = None
 MIN_CLIPS = None
 MAX_CLIPS = None
+MUSIC_LOOP = None
+CODEC = None
+CONFIG = None
 
 
 def load_settings():
-    """Load and validate all renderer settings from params.json; never silently default."""
+    """Load and strictly validate params.json; unsupported values fail fast."""
     global DURATION, FPS, WIDTH, HEIGHT, CRF, PRESET, SPEED, FREEZE, EDIT_DURATION
-    global BEAT_SYNC, BEAT_FLASH, BASS_BOOST, REFERENCE_PACING, MIRROR_ENABLED, SMART_CROP_ENABLED, MIN_CLIPS, MAX_CLIPS
+    global BEAT_SYNC, BEAT_FLASH, BASS_BOOST, REFERENCE_PACING, MIRROR_ENABLED, SMART_CROP_ENABLED
+    global MIN_CLIPS, MAX_CLIPS, MUSIC_LOOP, CODEC, CONFIG
     path = "params.json"
     if not os.path.isfile(path):
         raise FileNotFoundError("params.json is required; renderer defaults are disabled.")
     with open(path, "r", encoding="utf-8") as handle:
         config = json.load(handle)
     video, audio, edit = config["video_settings"], config["audio_settings"], config["edit_settings"]
+    if config.get("style") != "phonk_montagem":
+        raise ValueError("Only style='phonk_montagem' is implemented by this renderer.")
     resolution = str(video["resolution"]).lower().split("x")
     if len(resolution) != 2:
         raise ValueError("video_settings.resolution must be WIDTHxHEIGHT")
     WIDTH, HEIGHT = int(resolution[0]), int(resolution[1])
     if (WIDTH, HEIGHT) != (1080, 1920):
         raise ValueError("This renderer currently requires 1080x1920 output.")
-    FPS = max(24, min(60, int(video["fps"])))
-    CRF = max(16, min(26, int(video["crf"])))
+    FPS = video["fps"]
+    if isinstance(FPS, bool) or not isinstance(FPS, int) or not 24 <= FPS <= 60:
+        raise ValueError("video_settings.fps must be an integer from 24 to 60.")
+    CRF = video["crf"]
+    if isinstance(CRF, bool) or not isinstance(CRF, int) or not 16 <= CRF <= 26:
+        raise ValueError("video_settings.crf must be an integer from 16 to 26.")
+    CODEC = str(video["codec"])
+    if CODEC != "libx264":
+        raise ValueError("Only video_settings.codec='libx264' is implemented.")
     PRESET = str(video["preset"])
-    DURATION = max(8.0, min(60.0, float(edit["duration_seconds"])))
-    FREEZE = max(0.35, min(1.2, float(edit["freeze_duration"])))
-    SPEED = max(1.0, min(1.35, float(edit["speed"])))
-    MIN_CLIPS = max(6, min(12, int(edit["min_clips"])))
-    MAX_CLIPS = max(MIN_CLIPS, min(18, int(edit["max_clips"])))
-    BEAT_SYNC, BEAT_FLASH = bool(audio["beat_sync"]), bool(audio["beat_flash"])
-    BASS_BOOST, REFERENCE_PACING = bool(audio["bass_boost"]), bool(edit["reference_pacing"])
-    MIRROR_ENABLED, SMART_CROP_ENABLED = bool(edit["mirror_enabled"]), bool(edit["smart_crop"])
+    if PRESET not in {"ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow"}:
+        raise ValueError("Unsupported x264 preset.")
+    DURATION = float(edit["duration_seconds"])
+    if not 8.0 <= DURATION <= 60.0:
+        raise ValueError("edit_settings.duration_seconds must be between 8 and 60.")
+    FREEZE = float(edit["freeze_duration"])
+    if not 0.35 <= FREEZE <= 1.2 or FREEZE >= DURATION:
+        raise ValueError("freeze_duration must be 0.35–1.2 seconds and shorter than duration.")
+    SPEED = float(edit["speed"])
+    if not 1.0 <= SPEED <= 1.35:
+        raise ValueError("edit_settings.speed must be between 1.0x and 1.35x.")
+    MIN_CLIPS, MAX_CLIPS = int(edit["min_clips"]), int(edit["max_clips"])
+    if not 6 <= MIN_CLIPS <= 12 or not MIN_CLIPS <= MAX_CLIPS <= 18:
+        raise ValueError("Clip bounds must satisfy 6 <= min_clips <= 12 <= max_clips <= 18.")
+    for key in ("reference_pacing", "mirror_enabled", "smart_crop"):
+        if not isinstance(edit.get(key), bool):
+            raise ValueError(f"edit_settings.{key} must be an explicit boolean.")
+    for key in ("beat_sync", "beat_flash", "bass_boost", "music_loop"):
+        if not isinstance(audio.get(key), bool):
+            raise ValueError(f"audio_settings.{key} must be an explicit boolean.")
+    BEAT_SYNC, BEAT_FLASH = audio["beat_sync"], audio["beat_flash"]
+    BASS_BOOST, MUSIC_LOOP = audio["bass_boost"], audio["music_loop"]
+    REFERENCE_PACING = edit["reference_pacing"]
+    MIRROR_ENABLED, SMART_CROP_ENABLED = edit["mirror_enabled"], edit["smart_crop"]
     if edit.get("edl_mode") != "on":
         raise ValueError("edit_settings.edl_mode must be 'on' for the integrated EDL renderer.")
     total_frames, freeze_frames = round(DURATION * FPS), round(FREEZE * FPS)
@@ -78,7 +108,9 @@ def load_settings():
     FREEZE = freeze_frames / FPS
     DURATION = total_frames / FPS
     EDIT_DURATION = (total_frames - freeze_frames) / FPS
-    print(f"[settings] {WIDTH}x{HEIGHT}@{FPS} | {DURATION:.3f}s | speed={SPEED:.2f}x | freeze={FREEZE:.3f}s | mirror={MIRROR_ENABLED} | smart_crop={SMART_CROP_ENABLED} | EDL=on")
+    CONFIG = config
+    print(f"[settings] {WIDTH}x{HEIGHT}@{FPS} | {DURATION:.3f}s | speed={SPEED:.2f}x | freeze={FREEZE:.3f}s | mirror={MIRROR_ENABLED} | smart_crop={SMART_CROP_ENABLED} | music_loop={MUSIC_LOOP} | EDL=on")
+    return config
 
 def run(cmd, capture=False, binary=False):
     return subprocess.run(
@@ -287,15 +319,20 @@ def choose_source_center(target, scenes, source_duration):
     return max(0.0, min(center, max(0.0, source_duration - 0.2)))
 
 
-def make_clip(index, center, output_duration, source_duration):
-    input_duration = output_duration * SPEED
-    start = max(0.0, min(center - input_duration / 2.0, max(0.0, source_duration - input_duration)))
+def make_clip(index, item, source_duration):
+    """Render exactly the source range and output frame count declared by one EDL clip."""
+    start = item["source_start_f"] / FPS
+    input_duration = item["source_dur_f"] / FPS
+    output_frames = item["dur_f"]
+    if input_duration <= 0 or output_frames <= 0:
+        raise ValueError("EDL clip source/output duration must be positive.")
+    start = max(0.0, min(start, max(0.0, source_duration - input_duration)))
     path = f"{WORK}/clip_{index:02d}.mp4"
-    # Horizontal mirror is an explicit transform, independent of visual effects.
     mirror = ",hflip" if MIRROR_ENABLED else ""
 
-    # Smart crop means full-frame 9:16 center crop; it is not face tracking.
-    # The legacy blurred-background layout remains available when disabled.
+    # Smart crop is a center crop, not face/subject tracking.
+    # EDL crop currently describes the full normalized source area; aspect-fit
+    # and centering are renderer policy for the fixed 9:16 canvas.
     if SMART_CROP_ENABLED:
         vf = (
             "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,"
@@ -303,8 +340,7 @@ def make_clip(index, center, output_duration, source_duration):
             f"{'hflip,' if MIRROR_ENABLED else ''}"
             "eq=contrast=1.16:saturation=1.30:gamma=1.02,"
             "unsharp=5:5:0.72:3:3:0.0,setsar=1,"
-            f"fps={FPS},setpts=PTS/{SPEED},"
-            f"trim=duration={output_duration:.5f},setpts=PTS-STARTPTS[v]"
+            f"fps={FPS},setpts=PTS/{SPEED},trim=end_frame={output_frames},setpts=PTS-STARTPTS[v]"
         )
     else:
         vf = (
@@ -317,23 +353,22 @@ def make_clip(index, center, output_duration, source_duration):
             "eq=contrast=1.16:saturation=1.30:gamma=1.02,"
             "unsharp=5:5:0.72:3:3:0.0[front];"
             "[back][front]overlay=0:420,setsar=1,"
-            f"fps={FPS},setpts=PTS/{SPEED},"
-            f"trim=duration={output_duration:.5f},setpts=PTS-STARTPTS[v]"
+            f"fps={FPS},setpts=PTS/{SPEED},trim=end_frame={output_frames},setpts=PTS-STARTPTS[v]"
         )
 
-    # Loop only for unusually short source videos so every segment reaches its duration.
+    # Loop only when the selected range cannot supply the requested source time.
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
     if source_duration < input_duration + start:
         cmd += ["-stream_loop", "-1"]
     cmd += [
-        "-ss", f"{start:.4f}", "-t", f"{input_duration:.5f}", "-i", VIDEO,
+        "-ss", f"{start:.6f}", "-t", f"{input_duration:.6f}", "-i", VIDEO,
         "-filter_complex", vf, "-map", "[v]", "-an",
-        "-c:v", "libx264", "-preset", "ultrafast", "-crf", str(CRF),
-        "-pix_fmt", "yuv420p", "-r", str(FPS), "-threads", "2", path
+        "-c:v", CODEC, "-preset", PRESET, "-crf", str(CRF),
+        "-pix_fmt", "yuv420p", "-r", str(FPS), "-frames:v", str(output_frames),
+        "-threads", "2", path
     ]
     run(cmd)
     return path
-
 
 def make_flash_filter(beats):
     # Brief white impacts on selected bass hits; keep the filter graph bounded.
@@ -352,7 +387,14 @@ def make_flash_filter(beats):
 
 
 def verify_output(path):
-    info = probe(path)
+    """Verify the encoded file, exact decoded frame count, frame rate, audio and full-file decodability."""
+    if not os.path.isfile(path) or os.path.getsize(path) <= 0:
+        raise RuntimeError("Rendered output file is missing or empty.")
+    result = run([
+        "ffprobe", "-v", "error", "-count_frames", "-show_streams", "-show_format",
+        "-of", "json", path
+    ], capture=True)
+    info = json.loads(result.stdout)
     streams = info.get("streams", [])
     video = next((s for s in streams if s.get("codec_type") == "video"), None)
     audio = next((s for s in streams if s.get("codec_type") == "audio"), None)
@@ -360,15 +402,33 @@ def verify_output(path):
         raise RuntimeError("Final file has no video stream.")
     if audio is None:
         raise RuntimeError("Final file has no audio stream.")
-    if int(video.get("width", 0)) != WIDTH or int(video.get("height", 0)) != HEIGHT:
-        raise RuntimeError(
-            f"Wrong output resolution: {video.get('width')}x{video.get('height')}"
-        )
+    width, height = int(video.get("width", 0)), int(video.get("height", 0))
+    if (width, height) != (WIDTH, HEIGHT):
+        raise RuntimeError(f"Wrong output resolution: {width}x{height}")
+    try:
+        rate = Fraction(video.get("avg_frame_rate", "0/1"))
+    except (ValueError, ZeroDivisionError):
+        rate = Fraction(0, 1)
+    if abs(float(rate) - FPS) > 0.01:
+        raise RuntimeError(f"Wrong output FPS: {rate}, expected {FPS}.")
+    frame_count = int(video.get("nb_read_frames") or video.get("nb_frames") or 0)
+    expected_frames = round(DURATION * FPS)
+    if frame_count != expected_frames:
+        raise RuntimeError(f"Output has {frame_count} decoded frames, expected exactly {expected_frames}.")
     actual_duration = float(info["format"]["duration"])
-    if abs(actual_duration - DURATION) > 0.30:
-        raise RuntimeError(f"Output duration is {actual_duration:.2f}s, expected {DURATION:.2f}s.")
-    return actual_duration, video.get("codec_name", "unknown"), audio.get("codec_name", "unknown")
-
+    if abs(actual_duration - DURATION) > (1.0 / FPS + 0.005):
+        raise RuntimeError(f"Output duration is {actual_duration:.3f}s, expected {DURATION:.3f}s.")
+    # A successful probe is not enough: decode the complete streams to catch corrupt packets.
+    run(["ffmpeg", "-hide_banner", "-v", "error", "-i", path, "-f", "null", "-"])
+    details = {
+        "width": width, "height": height, "fps": float(rate),
+        "frame_count": frame_count, "expected_frame_count": expected_frames,
+        "has_audio": True, "decode_ok": True, "file_exists": True,
+        "duration_seconds": actual_duration, "expected_duration_seconds": DURATION,
+        "video_codec": video.get("codec_name", "unknown"),
+        "audio_codec": audio.get("codec_name", "unknown"), "file": path
+    }
+    return actual_duration, details["video_codec"], details["audio_codec"], details
 
 def main():
     load_settings()
@@ -397,6 +457,8 @@ def main():
     frame_boundaries = [round(value * FPS) for value in boundaries_seconds]
     frame_boundaries[0], frame_boundaries[-1] = 0, edit_frames
     frame_boundaries = sorted(set(frame_boundaries))
+    if len(frame_boundaries) != clip_count + 1:
+        raise RuntimeError("Frame quantization changed the planned clip count; regenerate the edit plan.")
     if len(frame_boundaries) < 2 or frame_boundaries[0] != 0 or frame_boundaries[-1] != edit_frames:
         raise RuntimeError("Could not create contiguous integer-frame EDL boundaries.")
     edl_video = []
@@ -440,7 +502,7 @@ def main():
         length = item["dur_f"] / FPS
         center = item["source_start_f"] / FPS + (item["source_dur_f"] / FPS) / 2
         print(f"  EDL clip {index + 1}/{len(edl_video) - 1}: source {center:.2f}s, output {length:.3f}s [{item['start_f']}..{item['start_f'] + item['dur_f']})")
-        clips.append(make_clip(index, center, length, source_duration))
+        clips.append(make_clip(index, item, source_duration))
 
     print("[render 2/4] Joining clips...")
     concat_file = f"{WORK}/concat.txt"
@@ -461,8 +523,8 @@ def main():
     # Pad first, then split: the impact branch reads the cloned tail frames.
     # Only the freeze branch is enlarged/shaken, so normal footage stays stable.
     base_chain = (
-        f"tpad=stop_mode=clone:stop_duration={FREEZE:.3f},"
-        f"eq=contrast=1.32:saturation=0:enable='gte(t,{EDIT_DURATION:.3f})'"
+        f"tpad=stop_mode=clone:stop={freeze_frames},"
+        f"eq=contrast=1.32:saturation=0:enable='gte(t,{EDIT_DURATION:.6f})'"
     )
     if flash_filter:
         base_chain += "," + flash_filter
@@ -471,8 +533,9 @@ def main():
         f"enable='between(t,{EDIT_DURATION - 0.10:.3f},{EDIT_DURATION - 0.055:.3f})'"
     )
     impact_chain = (
-        f"trim=start={EDIT_DURATION:.5f}:duration={FREEZE:.5f},"
+        f"trim=start_frame={edit_frames}:end_frame={total_frames},"
         "setpts=PTS-STARTPTS,"
+        f"fps={FPS},"
         "scale=1188:2112:flags=lanczos,"
         "crop=1080:1920:"
         "x='(iw-ow)/2+18*sin(t*70)':"
@@ -480,7 +543,7 @@ def main():
         "eq=contrast=1.48:saturation=0:brightness=0.015,"
         "drawbox=x=0:y=0:w=iw:h=ih:color=white@0.55:t=fill:"
         "enable='lt(t,0.055)',"
-        f"setpts=PTS+{EDIT_DURATION:.5f}/TB"
+        f"setpts=PTS+{EDIT_DURATION:.6f}/TB"
     )
     filter_graph = (
         f"[0:v]{base_chain},split[base][impact_src];"
@@ -489,50 +552,106 @@ def main():
         "[2:v]scale=300:-1[skull];"
         f"[impact_raw][skull]overlay=(W-w)/2:(H-h)/2:enable='gte(t,{EDIT_DURATION:.5f})'[impact];"
         f"[baseout][impact]overlay=0:0:enable='gte(t,{EDIT_DURATION:.5f})',"
-        f"trim=duration={DURATION:.3f},setsar=1[outv]"
+        f"trim=end_frame={total_frames},setsar=1[outv]"
     )
+    if len(edl["audio"]) != 1:
+        raise RuntimeError("Current FFmpeg renderer supports exactly one EDL audio segment.")
     edl_audio = edl["audio"][0]
+    if edl_audio["start_f"] != 0 or edl_audio["dur_f"] != total_frames:
+        raise RuntimeError("Current renderer requires the audio EDL segment to span the full output timeline.")
     audio_source = edl_audio["source"]
+    audio_start_seconds = edl_audio["source_start_f"] / FPS
     fade_out_seconds = edl_audio.get("fade_out_f", 0) / FPS
-    bass_filter = "bass=g=3:f=90:w=0.5,alimiter=limit=0.95," if BASS_BOOST else ""
-    fade_start = max(0.0, DURATION - fade_out_seconds)
-    audio_filter = f"{bass_filter}atrim=duration={DURATION:.3f},afade=t=out:st={fade_start:.3f}:d={fade_out_seconds:.3f}"
-
-    cmd = [
-        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-        "-i", joined, "-stream_loop", "-1", "-i", audio_source,
-        "-loop", "1", "-framerate", str(FPS), "-i", SKULL_ASSET,
-        "-filter_complex", filter_graph, "-map", "[outv]", "-map", "1:a:0",
-        "-af", audio_filter, "-t", f"{DURATION:.3f}",
-        "-c:v", "libx264", "-preset", PRESET, "-crf", str(CRF),
-        "-pix_fmt", "yuv420p", "-r", str(FPS),
-        "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
-        "-threads", "2", final_video
-    ]
+    fade_in_seconds = edl_audio.get("fade_in_f", 0) / FPS
+    gain_db = float(edl_audio.get("gain_db", 0.0))
+    audio_filters = []
+    if abs(gain_db) > 1e-9:
+        audio_filters.append(f"volume={gain_db:.4f}dB")
+    if BASS_BOOST:
+        audio_filters.extend(["bass=g=3:f=90:w=0.5", "alimiter=limit=0.95"])
+    if fade_in_seconds > 0:
+        audio_filters.append(f"afade=t=in:st=0:d={fade_in_seconds:.6f}")
+    audio_filters.extend([f"apad=whole_dur={DURATION:.6f}", f"atrim=duration={DURATION:.6f}"])
+    if fade_out_seconds > 0:
+        fade_start = max(0.0, DURATION - fade_out_seconds)
+        audio_filters.append(f"afade=t=out:st={fade_start:.6f}:d={fade_out_seconds:.6f}")
+    audio_filter = ",".join(audio_filters)
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", joined]
+    if MUSIC_LOOP:
+        cmd += ["-stream_loop", "-1"]
+    if audio_start_seconds > 0:
+        cmd += ["-ss", f"{audio_start_seconds:.6f}"]
+    cmd += ["-i", audio_source, "-loop", "1", "-framerate", str(FPS), "-i", SKULL_ASSET,
+            "-filter_complex", filter_graph, "-map", "[outv]", "-map", "1:a:0",
+            "-af", audio_filter, "-t", f"{DURATION:.6f}", "-frames:v", str(total_frames),
+            "-c:v", CODEC, "-preset", PRESET, "-crf", str(CRF),
+            "-pix_fmt", "yuv420p", "-r", str(FPS),
+            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
+            "-threads", "2", final_video]
     run(cmd)
 
     print("[render 4/4] Verifying the rendered file...")
-    actual, video_codec, audio_codec = verify_output(final_video)
-    os.replace(final_video, FINAL)
-    print(f"[OK] Final video: {FINAL}")
-    print(f"[OK] Duration: {actual:.2f}s | Resolution: {WIDTH}x{HEIGHT} | FPS: {FPS}")
-    print(f"[OK] Video codec: {video_codec} | Audio codec: {audio_codec}")
-    settings = {"resolution": f"{WIDTH}x{HEIGHT}", "speed": SPEED, "smart_crop": SMART_CROP_ENABLED}
-    render_report = {
-        "width": WIDTH, "height": HEIGHT, "duration_seconds": actual, "expected_duration_seconds": DURATION,
-        "has_audio": True, "video_codec": video_codec, "audio_codec": audio_codec,
-        "file": FINAL,
+    actual, video_codec, audio_codec, render_report = verify_output(final_video)
+    source_streams = probe(VIDEO).get("streams", [])
+    source_video = next((stream for stream in source_streams if stream.get("codec_type") == "video"), {})
+    media_analysis = {
+        "source_duration_seconds": source_duration,
+        "source_width": int(source_video.get("width", 0)),
+        "source_height": int(source_video.get("height", 0)),
+        "scene_cut_count": len(scenes),
+        "music_duration_seconds": music_duration,
     }
+    beat_analysis = {
+        "enabled": BEAT_SYNC,
+        "candidate_count": len(beats),
+        "fallback": "even_pacing" if BEAT_SYNC and len(beats) < 3 else None,
+        "method": "bass-lowpass-rms-novelty-autocorrelation-heuristic" if BEAT_SYNC else "disabled",
+    }
+    cut_times = [item["start_f"] / FPS for item in edl_video[:-1] if item["start_f"] > 0]
+    niche_metrics = {}
+    if cut_times and beats:
+        tolerance = 0.12
+        alignment = [max(0.0, 1.0 - min(abs(cut - beat) for beat in beats) / tolerance)
+                     for cut in cut_times]
+        niche_metrics["beat_alignment"] = round(sum(alignment) / len(alignment), 4)
     agent_report = run_agent_team({
-        "settings": settings, "niche_metrics": {}, "niche_tags": ["phonk", "montagem"],
+        "settings": CONFIG, "edl": edl,
+        "media_analysis": media_analysis, "beat_analysis": beat_analysis,
+        "niche_metrics": niche_metrics, "niche_tags": ["phonk", "montagem", "vertical", "freeze"],
         "render_report": render_report,
     })
+    for event in agent_report["events"]:
+        print(f"[agent:{event['agent']}] {event['status']}: {event['summary']}")
     report_path = os.path.join(OUTDIR, "agent_report.json")
+    if agent_report["status"] == "blocked":
+        with open(report_path, "w", encoding="utf-8") as handle:
+            json.dump(agent_report, handle, ensure_ascii=False, indent=2)
+        raise RuntimeError("Technical QA blocked export; previous final file was preserved. See output/agent_report.json.")
+    # Promote only after every blocking technical check passes; preserve the last known-good export otherwise.
+    os.replace(final_video, FINAL)
+    render_report["file"] = FINAL
+    agent_report["render_report"]["file"] = FINAL
+    export_result = {
+        "agent": "export_storage", "status": "ok", "score": None, "confidence": 1.0,
+        "findings": ["Technical QA passed and the temporary render was atomically promoted."],
+        "recommendations": ["Review the actual video before publishing."],
+        "evidence": {"file": FINAL, "atomic_replace": True, "human_review_required": True},
+    }
+    agent_report["results"]["export_storage"] = export_result
+    export_event = {
+        "agent": "export_storage", "stage": "export_promotion", "status": "ok",
+        "summary": export_result["findings"][0],
+        "data": {"score": None, "confidence": 1.0, "findings": export_result["findings"],
+                 "recommendations": export_result["recommendations"], "evidence": export_result["evidence"]},
+    }
+    agent_report["events"].append(export_event)
     with open(report_path, "w", encoding="utf-8") as handle:
         json.dump(agent_report, handle, ensure_ascii=False, indent=2)
+    print(f"[OK] Final video: {FINAL}")
+    print(f"[OK] Duration: {actual:.3f}s | Resolution: {WIDTH}x{HEIGHT} | FPS: {FPS} | frames: {render_report['frame_count']}")
+    print(f"[OK] Video codec: {video_codec} | Audio codec: {audio_codec}")
     print(f"[agents] Status: {agent_report['status']} | report: {report_path}")
-    if agent_report["status"] == "blocked":
-        raise RuntimeError("Agent Inspector blocked this render; see output/agent_report.json.")
+    print(f"[agents] Niche result: {agent_report['results']['niche_analyst']['status']} (no unsupported virality score)")
     print("[NOTE] Reference mode learns rough cut pacing; it does not copy copyrighted frames/effects.")
     print("[NOTE] Upscaling improves presentation but cannot restore detail absent from the source.")
 

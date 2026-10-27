@@ -18,20 +18,37 @@ ffmpeg -hide_banner -loglevel error -y -f lavfi -i "sine=frequency=70:sample_rat
 python src/agent_director.py
 python - <<'PY'
 import json
+import subprocess
 from pathlib import Path
+
+path = Path("output/final_phonk_20s.mp4")
 report = json.loads(Path("output/agent_report.json").read_text(encoding="utf-8"))
 assert report["status"] == "ready_for_human_review", report
+assert report["results"]["settings_agent"]["status"] == "ok", report
+assert report["results"]["planner"]["status"] == "ok", report
 assert report["results"]["inspector"]["status"] == "ok", report
 assert report["results"]["niche_analyst"]["status"] == "insufficient_evidence", report
-assert Path("output/final_phonk_20s.mp4").exists()
+assert report["results"]["export_storage"]["status"] == "ok", report
+assert path.exists() and path.stat().st_size > 0
+probe = json.loads(subprocess.check_output([
+    "ffprobe", "-v", "error", "-count_frames", "-show_streams", "-show_format", "-of", "json", str(path)
+], text=True))
+video = next(s for s in probe["streams"] if s["codec_type"] == "video")
+audio = next(s for s in probe["streams"] if s["codec_type"] == "audio")
+assert (video["width"], video["height"]) == (1080, 1920), video
+assert int(video["nb_read_frames"]) == 192, video
+assert video["avg_frame_rate"] in ("24/1", "24/1"), video
+assert abs(float(probe["format"]["duration"]) - 8.0) <= (1 / 24 + 0.005)
+assert audio["codec_type"] == "audio"
 edl = json.loads(Path("output/edit_decision_list.json").read_text(encoding="utf-8"))
 assert edl["version"] == 1
 cursor = 0
 for item in edl["video"]:
     assert item["start_f"] == cursor, (cursor, item)
     cursor += item["dur_f"]
-assert cursor == edl["total_frames"], (cursor, edl["total_frames"])
+assert cursor == edl["total_frames"] == 192, (cursor, edl["total_frames"])
 assert edl["video"][-1]["type"] == "freeze"
 assert edl["fps_num"] == 24
-print("Render smoke test passed; EDL is frame-contiguous and freeze is explicit.")
+assert len(report["events"]) == 7
+print("Render smoke test passed: exact frame count, continuous EDL, audio, full decode, QA and export event.")
 PY
