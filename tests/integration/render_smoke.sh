@@ -20,7 +20,8 @@ cat > params.json <<'JSON'
 }
 JSON
 ffmpeg -hide_banner -loglevel error -y -f lavfi -i "testsrc2=size=640x360:rate=24:duration=10" -an -c:v libx264 -pix_fmt yuv420p input/test_video.mp4
-ffmpeg -hide_banner -loglevel error -y -f lavfi -i "sine=frequency=70:sample_rate=44100:duration=9" -c:a libmp3lame input/phonk.mp3
+# Deliberately hot input: the final output limiter must keep the export below clipping.
+ffmpeg -hide_banner -loglevel error -y -f lavfi -i "sine=frequency=70:sample_rate=44100:duration=9" -af "volume=20dB" -c:a libmp3lame input/phonk.mp3
 # Exercise reference-audio extraction independently from the renderer's local-music path.
 ffmpeg -hide_banner -loglevel error -y \
   -f lavfi -i "testsrc2=size=640x360:rate=24:duration=4" \
@@ -72,6 +73,7 @@ assert report["results"]["render_critic"]["status"] in ("ok", "needs_review"), r
 assert report["render_critique"]["measurement_errors"] == [], report["render_critique"]
 assert isinstance(report["render_critique"]["mean_volume_db"], (int, float)), report["render_critique"]
 assert isinstance(report["render_critique"]["max_volume_db"], (int, float)), report["render_critique"]
+assert report["render_critique"]["max_volume_db"] <= -0.5, report["render_critique"]
 assert report["results"]["niche_analyst"]["status"] == "insufficient_evidence", report
 assert report["results"]["export_storage"]["status"] == "ok", report
 assert path.exists() and path.stat().st_size > 0
