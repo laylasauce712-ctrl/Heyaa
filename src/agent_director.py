@@ -877,7 +877,8 @@ def _run_variant_batch(args):
             ):
                 if value:
                     command.extend([flag, value])
-        print(f"\\n[variants] Rendering {index}/{args.variants}: {VARIANT_LABELS.get(index, 'Reference-timed source variation')}", flush=True)
+        print()
+        print(f"[variants] Rendering {index}/{args.variants}: {VARIANT_LABELS.get(index, 'Reference-timed source variation')}", flush=True)
         completed = subprocess.run(command, check=False)
         report = {}
         if report_path.is_file():
@@ -920,7 +921,8 @@ def _run_variant_batch(args):
     }
     manifest_path = output_root / "index.json"
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"\\n[variants] Comparison manifest: {manifest_path}", flush=True)
+    print()
+    print(f"[variants] Comparison manifest: {manifest_path}", flush=True)
     for result in results:
         print(f"[variants] {result['index']}: {result['status']} | {result.get('video') or result.get('reason', '')}", flush=True)
     if len(results) != args.variants or any(item["status"] != "ok" for item in results):
