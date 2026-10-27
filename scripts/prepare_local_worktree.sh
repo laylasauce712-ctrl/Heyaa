@@ -64,6 +64,11 @@ for file in params.json input/test_video.mp4 input/phonk.mp3; do
     fi
 done
 
+# Do not follow a pre-existing venv symlink into another project.
+if [[ -L "$ROOT/.venv" ]]; then
+    echo "[setup] Refusing to install packages into a symlinked .venv: $ROOT/.venv" >&2
+    exit 4
+fi
 # Refuse to repair or replace an unexpected existing .venv automatically.
 if [[ -e "$ROOT/.venv" && ! -x "$ROOT/.venv/bin/python" ]]; then
     echo "[setup] Existing .venv is incomplete; it was not changed. Repair or rename it, then rerun." >&2
@@ -90,6 +95,11 @@ fi
 
 LOCAL_PARAMS="$ROOT/params.local.json"
 # Use a separate ignored config so diagnostic settings never dirty/overwrite tracked params.json.
+# Don't follow a symlink because this helper owns only the local file in this worktree.
+if [[ -L "$LOCAL_PARAMS" ]]; then
+    echo "[setup] Refusing to use a symlinked params.local.json: $LOCAL_PARAMS" >&2
+    exit 3
+fi
 # An existing local config is only accepted if it exactly matches the requested source settings.
 if [[ -f "$LOCAL_PARAMS" ]]; then
     if ! "$PYTHON_BIN" - "$SOURCE/params.json" "$LOCAL_PARAMS" "$DISABLE_AI_UPSCALE" <<'PY'
