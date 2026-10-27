@@ -1,11 +1,13 @@
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 
 from src.heyaa.media_sources import (
     MediaSourceError,
     download_media_source,
+    download_youtube,
     validate_media_file,
     validate_media_url,
     validate_youtube_url,
@@ -68,6 +70,35 @@ class YouTubeUrlTests(unittest.TestCase):
                              Path("direct.mp4"))
             yt.assert_called_once()
             direct.assert_called_once()
+
+    def test_youtube_downloader_streams_progress_and_reads_reported_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            input_dir = Path(directory) / "input"
+            input_dir.mkdir()
+            target = input_dir / "test_video.mp4"
+            downloaded = input_dir / "test_video.mp4"
+            downloaded.write_bytes(b"valid fixture bytes")
+
+            def fake_run(command, **kwargs):
+                report_path = Path(command[command.index("--print-to-file") + 2])
+                report_path.write_text(str(downloaded), encoding="utf-8")
+                return SimpleNamespace(returncode=0)
+
+            with patch("src.heyaa.media_sources.shutil.which", return_value="/usr/bin/yt-dlp"), \
+                 patch("src.heyaa.media_sources.subprocess.run", side_effect=fake_run) as runner:
+                result = download_youtube(
+                    "https://www.youtube.com/watch?v=abc123", target, "video"
+                )
+
+            self.assertEqual(result, downloaded.resolve())
+            command = runner.call_args.args[0]
+            self.assertIn("--progress", command)
+            self.assertIn("--newline", command)
+            self.assertNotIn("--quiet", command)
+            self.assertNotIn("--no-progress", command)
+            self.assertNotIn("capture_output", runner.call_args.kwargs)
+            report_path = input_dir / ".test_video.video.yt-dlp-path.txt"
+            self.assertFalse(report_path.exists())
 
     def test_validates_required_stream_and_duration(self):
         with tempfile.TemporaryDirectory() as directory:
