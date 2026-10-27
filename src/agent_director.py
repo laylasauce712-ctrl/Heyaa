@@ -606,6 +606,14 @@ def reference_cut_interval(reference_path):
     profile = reference_pacing_profile(reference_path)
     return profile.get("median_cut_interval_seconds") if profile else None
 
+def _has_usable_reference_profile(profile):
+    """Return whether measured reference timing is available for the current render."""
+    return bool(
+        isinstance(profile, dict)
+        and profile.get("median_cut_interval_seconds") is not None
+        and profile.get("shot_intervals_seconds")
+    )
+
 
 def choose_clip_count(reference_interval, requested_count=None):
     """Choose the measured-reference count unless the user requests an allowed exact count."""
@@ -1518,7 +1526,7 @@ def main(argv=None):
     progress_event("reference_analysis", "completed" if ref_interval is not None else ("skipped" if not REFERENCE_PACING else "needs_review"),
                    "Reference pacing profile ready." if ref_interval is not None else "No usable measured reference interval; configured fallback will be used.",
                    {"median_cut_interval_seconds": ref_interval,
-                    "reference_available": bool(ref_profile and ref_profile.get("available"))})
+                    "reference_available": _has_usable_reference_profile(ref_profile)})
     clip_count = choose_clip_count(ref_interval, args.clip_count)
     clip_selection_mode = (
         "explicit_user_choice" if args.clip_count is not None
@@ -1838,7 +1846,7 @@ def main(argv=None):
     }
     reference_analysis = {
         "enabled": REFERENCE_PACING,
-        "available": os.path.isfile(REFERENCE) and ref_interval is not None,
+        "available": _has_usable_reference_profile(ref_profile),
         "median_cut_interval_seconds": ref_interval,
         "source": REFERENCE if os.path.isfile(REFERENCE) else None,
         "shot_intervals_seconds": ref_profile.get("shot_intervals_seconds", []) if ref_profile else [],
