@@ -116,6 +116,11 @@ def progress_event(stage, status, summary, details=None, *, echo=True):
     return event
 
 
+def _settings_path():
+    """Resolve the settings JSON path, with an explicit local-render override."""
+    return os.environ.get("HEYAA_PARAMS_PATH") or "params.json"
+
+
 def load_settings():
     """Load and strictly validate params.json; unsupported values fail fast."""
     global DURATION, FPS, WIDTH, HEIGHT, CRF, PRESET, SPEED, FREEZE, EDIT_DURATION
@@ -123,7 +128,7 @@ def load_settings():
     global MIN_CLIPS, MAX_CLIPS, MUSIC_LOOP, CODEC, CONFIG, DROP_FREEZE_DURATION, MIN_SOURCE_GAP_SECONDS
     global AI_UPSCALE_ENABLED, AI_UPSCALE_MODEL, AI_UPSCALE_SCALE
     global AI_UPSCALE_BINARY, AI_UPSCALE_MODEL_DIR
-    path = os.environ.get("HEYAA_PARAMS_PATH", "params.json")
+    path = _settings_path()
     if not os.path.isfile(path):
         raise FileNotFoundError(f"Settings file {path!r} is required; renderer defaults are disabled.")
     with open(path, "r", encoding="utf-8") as handle:
