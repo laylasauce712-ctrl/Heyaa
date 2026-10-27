@@ -6,3 +6,4 @@ __pycache__/
 
 tools/realesrgan/
 .venv/
+params.local.json
