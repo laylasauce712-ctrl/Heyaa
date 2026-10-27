@@ -1282,6 +1282,12 @@ def main(argv=None):
                    {"resolution": f"{WIDTH}x{HEIGHT}", "fps": FPS,
                     "duration_seconds": DURATION, "freeze_seconds": FREEZE,
                     "min_clips": MIN_CLIPS, "max_clips": MAX_CLIPS})
+    if args.clip_count is not None:
+        progress_event("clip_count_override", "running",
+                       f"Validating requested motion clip count {args.clip_count}.")
+        choose_clip_count(None, args.clip_count)
+        progress_event("clip_count_override", "completed",
+                       f"Requested motion clip count {args.clip_count} is within configured bounds.")
     progress_event("ai_upscale_preflight", "running", "Checking configured Real-ESRGAN executable and model weights.")
     resolve_ai_upscaler()
     progress_event(
