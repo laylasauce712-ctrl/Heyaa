@@ -247,6 +247,24 @@ def download_media_source(url: str, target_path: str | Path, kind: str) -> Path:
     return download_direct_https(value, target_path, kind)
 
 
+def parse_clip_count_options(value: str) -> tuple[int, ...]:
+    """Parse explicit clip-count alternatives for comparison renders."""
+    try:
+        raw_values = [part.strip() for part in value.split(",")]
+        if not raw_values or any(not part for part in raw_values):
+            raise ValueError
+        values = tuple(int(part) for part in raw_values)
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise argparse.ArgumentTypeError("Use comma-separated integers such as 8,12,16.") from exc
+    if len(values) > 5:
+        raise argparse.ArgumentTypeError("At most five clip-count alternatives are supported.")
+    if len(set(values)) != len(values):
+        raise argparse.ArgumentTypeError("Clip-count alternatives must be distinct.")
+    if any(count < 6 or count > 18 for count in values):
+        raise argparse.ArgumentTypeError("Every clip count must be between 6 and 18.")
+    return values
+
+
 def parse_media_source_args(argv=None):
     parser = argparse.ArgumentParser(
         description="Render a Heyaa Phonk montage from local files, direct HTTPS media links, or YouTube video links."
@@ -257,6 +275,14 @@ def parse_media_source_args(argv=None):
     parser.add_argument(
         "--variants", type=int, choices=(1, 2, 3, 4, 5), default=3,
         help="Render 3 comparison variants by default (1–5 supported)."
+    )
+    parser.add_argument(
+        "--clip-count", type=int, default=None,
+        help="Use this exact number of motion clips (must be within params.json min_clips/max_clips)."
+    )
+    parser.add_argument(
+        "--clip-count-options", type=parse_clip_count_options, default=None,
+        help="Render one candidate per exact clip count, e.g. --variants 3 --clip-count-options 8,12,16."
     )
     parser.add_argument(
         "--variant-index", type=int, choices=(1, 2, 3, 4, 5), default=None,
