@@ -9,7 +9,7 @@ cat > params.json <<'JSON'
 {
   "style": "phonk_montagem",
   "video_settings": {"resolution": "1080x1920", "fps": 24, "codec": "libx264", "crf": 26, "preset": "ultrafast"},
-  "edit_settings": {"duration_seconds": 8, "speed": 1.1, "freeze_seconds": 0.35, "min_clips": 6, "max_clips": 6, "reference_pacing": false, "mirror_enabled": false, "smart_crop": true},
+  "edit_settings": {"duration_seconds": 8, "speed": 1.1, "freeze_duration": 0.35, "edl_mode": "on", "min_clips": 6, "max_clips": 6, "reference_pacing": false, "mirror_enabled": false, "smart_crop": true},
   "audio_settings": {"beat_sync": false, "beat_flash": false, "bass_boost": false, "music_loop": true}
 }
 JSON
