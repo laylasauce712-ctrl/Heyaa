@@ -266,7 +266,7 @@ def parse_media_source_args(argv=None):
 
 
 def extract_reference_audio(reference_path: str | Path, music_path: str | Path) -> Path:
-    """Extract the reference soundtrack losslessly through FFmpeg's audio decode/encode path."""
+    """Extract and normalize the reference soundtrack as a high-quality MP3 for the renderer."""
     reference = Path(reference_path)
     target = Path(music_path)
     info = _ffprobe(reference)
