@@ -274,16 +274,31 @@ def reference_analyst(data: dict[str, Any]) -> AgentResult:
         round(float(value), 4) for value in shot_intervals
         if _finite_number(value) and 0.25 <= float(value) <= 4.0
     ]
+    cut_times = data.get("cut_timestamps_seconds", [])
+    if not isinstance(cut_times, list):
+        cut_times = []
+    validated_cut_times = [
+        round(float(value), 4) for value in cut_times
+        if _finite_number(value) and float(value) > 0
+    ]
+    absolute_timestamps_used = data.get("used_absolute_cut_timestamps") is True
+    timing_finding = (
+        "Measured reference cut timestamps drove the planned cut positions after timeline scaling."
+        if absolute_timestamps_used else
+        "Reference shot intervals were resampled to the requested duration because direct timestamp use was not suitable."
+    )
     return AgentResult("reference_analyst", "ok", None, 0.8,
-                       ("Reference shot intervals were measured and passed to the Planner as a variable cut-length pattern.",
+                       (timing_finding,
                         "This analyzes visual cut timing only; it does not understand reference people, story meaning or semantic effects."),
                        ("Review the resulting rhythm against the actual soundtrack.",
-                        "Use the reference's cut-length sequence as pacing guidance rather than copying its footage."),
+                        "Use the reference's measured cut timing as guidance; no reference footage frames are copied."),
                        {"enabled": True, "available": True, "used_for_planning": True,
                         "source": data.get("source"),
                         "median_cut_interval_seconds": round(float(interval), 4),
                         "scene_cut_count": data.get("scene_cut_count"),
                         "shot_intervals_seconds": validated_intervals,
+                        "cut_timestamps_seconds": validated_cut_times,
+                        "used_absolute_cut_timestamps": absolute_timestamps_used,
                         "pattern_passed_to_planner": bool(validated_intervals),
                         "semantic_reference_understanding": False,
                         "does_not_copy_reference_frames": True})
