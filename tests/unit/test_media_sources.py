@@ -8,6 +8,11 @@ from src.heyaa.media_sources import (
     MediaSourceError,
     download_media_source,
     download_youtube,
+    SOURCE_VIDEO_FORMAT,
+    REFERENCE_VIDEO_FORMAT,
+    VIDEO_DOWNLOAD_TIMEOUT_SECONDS,
+    REFERENCE_DOWNLOAD_TIMEOUT_SECONDS,
+    MUSIC_DOWNLOAD_TIMEOUT_SECONDS,
     validate_media_file,
     validate_media_url,
     validate_youtube_url,
@@ -99,8 +104,56 @@ class YouTubeUrlTests(unittest.TestCase):
             self.assertNotIn("--quiet", command)
             self.assertNotIn("--no-progress", command)
             self.assertNotIn("capture_output", runner.call_args.kwargs)
+            self.assertEqual(runner.call_args.kwargs["timeout"], VIDEO_DOWNLOAD_TIMEOUT_SECONDS)
+            self.assertEqual(command[command.index("-f") + 1], SOURCE_VIDEO_FORMAT)
             report_path = input_dir / ".test_video.video.yt-dlp-path.txt"
             self.assertFalse(report_path.exists())
+
+    def test_reference_download_is_capped_at_720p_and_has_15_minute_timeout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            input_dir = Path(directory) / "input"
+            input_dir.mkdir()
+            target = input_dir / "reference.mp4"
+            target.write_bytes(b"valid fixture bytes")
+
+            def fake_run(command, **kwargs):
+                report_path = Path(command[command.index("--print-to-file") + 2])
+                report_path.write_text(str(target), encoding="utf-8")
+                return SimpleNamespace(returncode=0)
+
+            with patch("src.heyaa.media_sources.shutil.which", return_value="/usr/bin/yt-dlp"), \
+                 patch("src.heyaa.media_sources.subprocess.run", side_effect=fake_run) as runner:
+                result = download_youtube(
+                    "https://www.youtube.com/shorts/abc123", target, "reference"
+                )
+
+            self.assertEqual(result, target.resolve())
+            command = runner.call_args.args[0]
+            self.assertEqual(command[command.index("-f") + 1], REFERENCE_VIDEO_FORMAT)
+            self.assertEqual(runner.call_args.kwargs["timeout"], REFERENCE_DOWNLOAD_TIMEOUT_SECONDS)
+
+    def test_music_download_has_bounded_timeout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            input_dir = Path(directory) / "input"
+            input_dir.mkdir()
+            target = input_dir / "phonk.mp3"
+            target.write_bytes(b"valid fixture bytes")
+
+            def fake_run(command, **kwargs):
+                report_path = Path(command[command.index("--print-to-file") + 2])
+                report_path.write_text(str(target), encoding="utf-8")
+                return SimpleNamespace(returncode=0)
+
+            with patch("src.heyaa.media_sources.shutil.which", return_value="/usr/bin/yt-dlp"), \
+                 patch("src.heyaa.media_sources.subprocess.run", side_effect=fake_run) as runner:
+                result = download_youtube(
+                    "https://www.youtube.com/watch?v=abc123", target, "music"
+                )
+
+            self.assertEqual(result, target.resolve())
+            command = runner.call_args.args[0]
+            self.assertEqual(command[command.index("-f") + 1], "ba/b")
+            self.assertEqual(runner.call_args.kwargs["timeout"], MUSIC_DOWNLOAD_TIMEOUT_SECONDS)
 
     def test_validates_required_stream_and_duration(self):
         with tempfile.TemporaryDirectory() as directory:
