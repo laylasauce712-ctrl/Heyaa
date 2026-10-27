@@ -657,6 +657,75 @@ def make_freeze_clip(index, item, previous_clip):
     return output_path
 
 
+def build_pre_render_review(edl, beat_count, drop_beat_time, drop_freeze_duration,
+                              reference_profile, context, subject_analysis):
+    """Build an evidence-linked pre-render planning review, not an LLM conversation."""
+    clips = [item for item in edl.get("video", []) if item.get("type") == "clip"]
+    drop_freezes = [item for item in edl.get("video", [])
+                    if item.get("type") == "freeze" and item.get("effect") == "drop-impact-freeze"]
+    final_freezes = [item for item in edl.get("video", [])
+                     if item.get("type") == "freeze" and item.get("effect") == "phonk-freeze"]
+    internal_freeze_seconds = sum(item["dur_f"] for item in drop_freezes) / FPS
+    final_freeze_seconds = final_freezes[-1]["dur_f"] / FPS if final_freezes else 0.0
+    tracking_detected = isinstance(subject_analysis, dict) and subject_analysis.get("detected") is True
+    intervals = reference_profile.get("shot_intervals_seconds", []) if isinstance(reference_profile, dict) else []
+    median_interval = reference_profile.get("median_cut_interval_seconds") if isinstance(reference_profile, dict) else None
+    return [
+        {
+            "turn": 1, "speaker": "Beat Sync Agent", "to": "Planner",
+            "message": (
+                f"Found {beat_count} bass/onset candidates. "
+                + (f"The strongest-onset proxy is {drop_beat_time:.2f}s and a {internal_freeze_seconds:.3f}s internal hold is planned."
+                   if drop_freezes else "No internal drop hold was planned because no eligible drop proxy/boundary was available.")
+                + " The strongest onset is a proxy, not a verified musical drop."
+            ),
+            "evidence": {"candidate_count": beat_count, "drop_beat_time_seconds": drop_beat_time,
+                        "drop_freeze_duration_seconds": internal_freeze_seconds}
+        },
+        {
+            "turn": 2, "speaker": "Reference Analyst", "to": "Planner",
+            "message": (
+                f"Measured reference median={median_interval}s and shot intervals={intervals[:8]}. "
+                + ("The Planner is resampling this measured interval pattern into the new timeline."
+                   if intervals else "No usable reference profile was measured; use default/bass-aware pacing.")
+                + " This is timing analysis only, not semantic reference understanding."
+            ),
+            "evidence": {"median_cut_interval_seconds": median_interval,
+                        "shot_intervals_seconds": intervals, "used_for_planning": bool(intervals)}
+        },
+        {
+            "turn": 3, "speaker": "Framing Agent", "to": "Planner",
+            "message": (
+                f"Selected source context {context.get('start_seconds')}–{context.get('end_seconds')}s. "
+                + (f"OpenCV found a recurring appearance track across {subject_analysis.get('track_span_seconds')}s; "
+                   "nearby detections will guide source timing and crop centers."
+                   if tracking_detected else
+                   "No stable person track was available; source selection uses cut-density context and centered crop.")
+                + " This does not verify identity or story role."
+            ),
+            "evidence": {"context_window": context, "subject_tracking": subject_analysis}
+        },
+        {
+            "turn": 4, "speaker": "Planner", "to": "Director",
+            "message": (
+                f"Validated EDL: {len(clips)} motion clips, {len(drop_freezes)} internal drop holds, "
+                f"final freeze={final_freeze_seconds:.3f}s, total frames={edl.get('total_frames')}. "
+                "Frame continuity and settings are checked. Final export authorization remains pending render QA."
+            ),
+            "evidence": {"motion_clip_count": len(clips), "drop_freeze_count": len(drop_freezes),
+                        "drop_freeze_duration_seconds": internal_freeze_seconds,
+                        "final_freeze_duration_seconds": final_freeze_seconds,
+                        "total_frames": edl.get("total_frames"), "decision": "pending_render_qa"}
+        },
+    ]
+
+
+def print_pre_render_review(review):
+    print("[agent conference: pre-render] Evidence-linked planning review (rule-based, not independent LLM chat):", flush=True)
+    for turn in review:
+        print(f"[preflight {turn['turn']}] {turn['speaker']} -> {turn['to']}: {turn['message']}", flush=True)
+
+
 def make_flash_filter(beats):
     # Brief white impacts on selected bass hits; keep the filter graph bounded.
     if not BEAT_FLASH:
@@ -935,7 +1004,15 @@ def main(argv=None):
     DURATION = total_frames / FPS
     with open(os.path.join(OUTDIR, "edit_decision_list.json"), "w", encoding="utf-8") as handle:
         json.dump(edl, handle, ensure_ascii=False, indent=2)
-    print(f"[edl] Validated {len(edl_video) - 1} clips + freeze; {total_frames} frames, no gaps.")
+    print(f"[edl] Validated {len([item for item in edl_video if item['type'] == 'clip'])} clips + "
+          f"{len([item for item in edl_video if item['type'] == 'freeze'])} freeze segments; "
+          f"{total_frames} frames, no gaps.")
+    pre_render_review = build_pre_render_review(
+        edl, len(beats), drop_beat_time, drop_freeze_duration, ref_profile, context, subject_analysis
+    )
+    with open(os.path.join(OUTDIR, "pre_render_review.json"), "w", encoding="utf-8") as handle:
+        json.dump(pre_render_review, handle, ensure_ascii=False, indent=2)
+    print_pre_render_review(pre_render_review)
 
     print("[render 1/4] Building clips and the drop-impact freeze from the validated EDL...")
     clips = []
@@ -1136,7 +1213,8 @@ def main(argv=None):
         "niche_tags": ["phonk", "montagem", "vertical", "freeze"],
         "render_report": render_report,
     }, emit=print_agent_event)
-    print("[agent conference] Evidence-linked rule review (not independent LLM chat):", flush=True)
+    agent_report["pre_render_review"] = pre_render_review
+    print("[agent conference] Evidence-linked post-render review (not independent LLM chat):", flush=True)
     for turn in agent_report.get("agent_dialogue", []):
         print(f"[conference {turn['turn']}] {turn['speaker']} -> {turn['to']}: {turn['message']}")
     report_path = os.path.join(OUTDIR, "agent_report.json")
