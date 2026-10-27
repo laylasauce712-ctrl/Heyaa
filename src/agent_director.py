@@ -399,10 +399,18 @@ def main():
         dur_f = end_f - start_f
         if dur_f <= 0:
             raise RuntimeError("EDL contains a zero-length clip after frame quantization.")
+        timeline_center = (start_f + dur_f / 2) / FPS
+        source_target = timeline_center / EDIT_DURATION * source_duration
+        source_center = choose_source_center(source_target, scenes, source_duration)
+        source_dur_f = max(1, round(dur_f * SPEED))
+        source_start_seconds = max(0.0, min(
+            source_center - (source_dur_f / FPS) / 2,
+            max(0.0, source_duration - source_dur_f / FPS)
+        ))
         edl_video.append({
             "type": "clip", "source": VIDEO,
-            "source_start_f": round((start_f / FPS) * SPEED * FPS),
-            "source_dur_f": max(1, round(dur_f * SPEED)),
+            "source_start_f": round(source_start_seconds * FPS),
+            "source_dur_f": source_dur_f,
             "start_f": start_f, "dur_f": dur_f, "speed": SPEED,
             "crop": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}
         })
@@ -424,10 +432,8 @@ def main():
     print("[render 1/4] Building clips from validated EDL...")
     clips = []
     for index, item in enumerate(edl_video[:-1]):
-        timeline_center = (item["start_f"] + item["dur_f"] / 2) / FPS
-        source_target = timeline_center / EDIT_DURATION * source_duration
-        center = choose_source_center(source_target, scenes, source_duration)
         length = item["dur_f"] / FPS
+        center = item["source_start_f"] / FPS + (item["source_dur_f"] / FPS) / 2
         print(f"  EDL clip {index + 1}/{len(edl_video) - 1}: source {center:.2f}s, output {length:.3f}s [{item['start_f']}..{item['start_f'] + item['dur_f']})")
         clips.append(make_clip(index, center, length, source_duration))
 
