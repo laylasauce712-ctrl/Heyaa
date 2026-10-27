@@ -672,6 +672,14 @@ def run_agent_team(context: dict[str, Any],
         context = {}
     events: list[AgentEvent] = []
 
+    def announce(agent: str, stage: str) -> None:
+        """Emit a truthful lifecycle event before running a deterministic stage."""
+        if emit:
+            emit({
+                "agent": agent, "stage": stage, "status": "running",
+                "summary": f"Starting {agent.replace('_', ' ')}.",
+            })
+
     def record(result: AgentResult, stage: str) -> None:
         event = AgentEvent(result.agent, stage, result.status,
                            result.findings[0] if result.findings else "Completed.",
@@ -684,24 +692,34 @@ def run_agent_team(context: dict[str, Any],
             emit(asdict(event))
 
     settings = context.get("settings", {})
+    announce("settings_agent", "settings_validation")
     setting_result = settings_agent(settings)
     record(setting_result, "settings_validation")
+    announce("media_analyst", "media_analysis")
     media = media_analyst(context.get("media_analysis", {}))
     record(media, "media_analysis")
+    announce("beat_sync_agent", "beat_analysis")
     beat = beat_sync_agent(context.get("beat_analysis", {}))
     record(beat, "beat_analysis")
+    announce("reference_analyst", "reference_analysis")
     reference = reference_analyst(context.get("reference_analysis", {}))
     record(reference, "reference_analysis")
+    announce("framing_agent", "framing_review")
     framing = framing_agent(settings, context.get("edl", {}), context.get("media_analysis", {}))
     record(framing, "framing_review")
+    announce("hook_analyst", "opening_hook_review")
     hook = hook_analyst(context.get("hook_analysis", {}))
     record(hook, "opening_hook_review")
+    announce("planner", "edl_planning")
     plan = planner(context)
     record(plan, "edl_planning")
+    announce("niche_analyst", "craft_review")
     niche = niche_analyst(context.get("niche_metrics", {}), context.get("niche_tags", []))
     record(niche, "craft_review")
+    announce("inspector", "render_qa")
     qa = inspector(context.get("render_report", {}))
     record(qa, "render_qa")
+    announce("render_critic", "render_critique")
     critic = render_critic(context.get("render_critique", {}))
     record(critic, "render_critique")
 
@@ -782,6 +800,7 @@ def run_agent_team(context: dict[str, Any],
                         "subject_tracking": media_payload.get("context_window", {}).get("subject_tracking")}
         },
     ]
+    announce("director", "orchestration_decision")
     director = director_agent({
         "settings_agent": setting_result, "media_analyst": media, "beat_sync_agent": beat,
         "reference_analyst": reference, "framing_agent": framing, "hook_analyst": hook,
