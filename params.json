@@ -1,20 +1,28 @@
 {
   "style": "phonk_montagem",
-  "target_viral_score": 85,
   "video_settings": {
     "resolution": "1080x1920",
     "fps": 60,
     "codec": "libx264",
     "crf": 18,
-    "preset": "veryfast"
+    "preset": "veryfast",
+    "ai_upscale_enabled": true,
+    "ai_upscale_model": "realesrgan-x4plus",
+    "ai_upscale_scale": 2,
+    "ai_upscale_binary": "tools/realesrgan/realesrgan-ncnn-vulkan",
+    "ai_upscale_model_dir": "tools/realesrgan/models"
   },
   "edit_settings": {
     "duration_seconds": 20,
     "speed": 1.1,
-    "freeze_seconds": 0.7,
     "min_clips": 8,
     "max_clips": 16,
-    "reference_pacing": true
+    "reference_pacing": true,
+    "mirror_enabled": true,
+    "smart_crop": true,
+    "freeze_duration": 2,
+    "drop_freeze_duration": 0.25,
+    "edl_mode": "on"
   },
   "audio_settings": {
     "beat_sync": true,
