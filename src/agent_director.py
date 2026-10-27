@@ -455,6 +455,7 @@ def main():
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
         "-i", joined, "-stream_loop", "-1", "-i", MUSIC,
+        "-loop", "1", "-framerate", str(FPS), "-i", SKULL_ASSET,
         "-filter_complex", filter_graph, "-map", "[outv]", "-map", "1:a:0",
         "-af", audio_filter, "-t", f"{DURATION:.3f}",
         "-c:v", "libx264", "-preset", PRESET, "-crf", str(CRF),
@@ -462,18 +463,7 @@ def main():
         "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
         "-threads", "2", final_video
     ]
-    try:
-        run(cmd)
-    except subprocess.CalledProcessError:
-        print("[warn] Skull glyph/font unavailable; retrying with FREEZE text.")
-        fallback_graph = filter_graph.replace(
-            "drawtext=text='☠':fontcolor=white:fontsize=170:borderw=8:"
-            "bordercolor=black:x=(w-text_w)/2:y=(h-text_h)/2",
-            "drawtext=text='FREEZE':fontcolor=white:fontsize=88:borderw=6:"
-            "bordercolor=black:x=(w-text_w)/2:y=(h-text_h)/2"
-        )
-        cmd[cmd.index("-filter_complex") + 1] = fallback_graph
-        run(cmd)
+    run(cmd)
 
     print("[render 4/4] Verifying the rendered file...")
     actual, video_codec, audio_codec = verify_output(final_video)
