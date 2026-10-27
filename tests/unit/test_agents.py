@@ -95,9 +95,10 @@ class AgentTests(unittest.TestCase):
         result = planner({"settings": config(), "edl": edl})
         self.assertEqual(result.status, "needs_fix")
         self.assertIn("unsupported_crop_indices", result.evidence["mismatches"])
-        edl = sample_edl()
-        edl["video"].pop(0)
-        result = planner({"settings": config(), "edl": edl})
+        cfg = config()
+        cfg["edit_settings"]["min_clips"] = 7
+        cfg["edit_settings"]["max_clips"] = 7
+        result = planner({"settings": cfg, "edl": sample_edl()})
         self.assertEqual(result.status, "needs_fix")
         self.assertIn("clip_count", result.evidence["mismatches"])
 
