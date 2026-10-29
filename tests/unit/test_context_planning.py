@@ -11,6 +11,30 @@ from src.heyaa.agents import settings_agent
 
 
 class ContextPlanningTests(unittest.TestCase):
+    def test_long_source_tracking_status_reports_pending_scan_not_failure(self):
+        message = renderer.describe_subject_tracking_context(
+            "blur_fit", True,
+            {"detected": False, "reason": "Appearance tracking will run inside the selected contiguous source chapter."},
+        )
+        self.assertIn("will run inside the selected chapter", message)
+        self.assertNotIn("tracking unavailable", message.lower())
+        self.assertNotIn("fallback", message.lower())
+
+    def test_blur_fit_tracking_status_does_not_claim_subject_following_crop(self):
+        message = renderer.describe_subject_tracking_context(
+            "blur_fit", False,
+            {"detected": True, "track_span_seconds": 12.0, "track_quality_proxy": 0.8},
+        )
+        self.assertIn("preserves the full source frame", message)
+        self.assertNotIn("9:16 crops will", message)
+
+    def test_fill_tracking_status_explains_dynamic_crop_use(self):
+        message = renderer.describe_subject_tracking_context(
+            "fill", False,
+            {"detected": True, "track_span_seconds": 12.0, "track_quality_proxy": 0.8},
+        )
+        self.assertIn("smoothed 9:16 crops", message)
+
     def setUp(self):
         self.old_edit_duration = renderer.EDIT_DURATION
         self.old_beat_sync = renderer.BEAT_SYNC
