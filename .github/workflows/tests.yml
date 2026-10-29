@@ -37,4 +37,6 @@ jobs:
           test "$(cat output/.heyaa-render-canary)" = "heyaa-render-canary"
           cmp params.json "$RUNNER_TEMP/params-before-render-test.json"
           rm -f input/.heyaa-source-canary output/.heyaa-render-canary
-          rmdir input output
+          # Remove only empty directories; never delete artifacts restored by the test.
+          rmdir input 2>/dev/null || true
+          rmdir output 2>/dev/null || true
