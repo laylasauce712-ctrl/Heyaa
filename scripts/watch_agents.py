@@ -12,7 +12,7 @@ from typing import Any
 
 
 IMPORTANT_DETAIL_STAGES = {
-    "source_preparation", "source_selection_scope", "source_selection",
+    "source_preparation", "source_selection_scope", "source_chapter_selection", "character_lock", "source_selection",
     "media_analysis", "beat_analysis", "reference_analysis", "clip_planning",
     "edl_validation", "render_critique", "director_decision", "export_storage",
 }

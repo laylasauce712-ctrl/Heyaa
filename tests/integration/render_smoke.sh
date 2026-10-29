@@ -131,7 +131,7 @@ assert cursor == edl["total_frames"] == 192, (cursor, edl["total_frames"])
 assert edl["video"][-1]["type"] == "freeze"
 assert edl["video"][-1]["dur_f"] == round(2.0 * edl["fps_num"] / edl["fps_den"])
 assert edl["fps_num"] == 24
-assert len(report["events"]) == 12
+assert len(report["events"]) == 14
 print("Render smoke test passed: exact frame count, continuous EDL, audio, full decode, render Critic, Director decision and atomic export.")
 PY
 

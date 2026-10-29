@@ -68,6 +68,8 @@ MIN_CLIPS = None
 MAX_CLIPS = None
 MIN_SHOT_SECONDS = 0.75
 MIN_SOURCE_GAP_SECONDS = 0.05
+SOURCE_CHAPTER_SECONDS = 90.0
+SUBJECT_LOCK_ENABLED = True
 ENDING_SKULL_ENABLED = False
 ENDING_SKULL_SIZE_PX = 420
 ENDING_SKULL_POSITION_X = 0.5
@@ -148,6 +150,7 @@ def load_settings():
     global DURATION, FPS, WIDTH, HEIGHT, CRF, PRESET, SPEED, FREEZE, EDIT_DURATION
     global BEAT_SYNC, BEAT_FLASH, BASS_BOOST, REFERENCE_PACING, MIRROR_ENABLED, LAYOUT_MODE
     global MIN_CLIPS, MAX_CLIPS, MIN_SHOT_SECONDS, MUSIC_LOOP, CODEC, CONFIG, DROP_FREEZE_DURATION, MIN_SOURCE_GAP_SECONDS
+    global SOURCE_CHAPTER_SECONDS, SUBJECT_LOCK_ENABLED
     global ENDING_SKULL_ENABLED, ENDING_SKULL_SIZE_PX, ENDING_SKULL_POSITION_X, ENDING_SKULL_POSITION_Y
     global ENDING_SKULL_POP_SECONDS, ENDING_IMPACT_SFX_ENABLED, PREVIEW_MODE
     global AI_UPSCALE_ENABLED, AI_UPSCALE_MODEL, AI_UPSCALE_SCALE
@@ -252,6 +255,15 @@ def load_settings():
             not math.isfinite(float(source_gap_value)) or not 0.0 <= float(source_gap_value) <= 1.0):
         raise ValueError("edit_settings.source_min_gap_seconds must be between 0 and 1 second.")
     MIN_SOURCE_GAP_SECONDS = float(source_gap_value)
+    chapter_seconds = edit.get("source_chapter_seconds", 90)
+    if (isinstance(chapter_seconds, bool) or not isinstance(chapter_seconds, (int, float)) or
+            not math.isfinite(float(chapter_seconds)) or not 60.0 <= float(chapter_seconds) <= 120.0):
+        raise ValueError("edit_settings.source_chapter_seconds must be between 60 and 120 seconds.")
+    SOURCE_CHAPTER_SECONDS = float(chapter_seconds)
+    subject_lock_enabled = edit.get("subject_lock_enabled", True)
+    if not isinstance(subject_lock_enabled, bool):
+        raise ValueError("edit_settings.subject_lock_enabled must be an explicit boolean.")
+    SUBJECT_LOCK_ENABLED = subject_lock_enabled
     skull_enabled = edit.get("ending_skull_enabled", False)
     if not isinstance(skull_enabled, bool):
         raise ValueError("edit_settings.ending_skull_enabled must be an explicit boolean.")
@@ -974,7 +986,7 @@ def choose_context_window(source_duration, scene_cuts, target_duration):
         f"[context] Selected source window {best_start:.2f}s–{end:.2f}s "
         f"({best_count} scene cuts; temporal continuity proxy only)."
     )
-    print("[context] Same-person tracking/semantic action understanding is not available in this build.")
+    print("[context] Window scoring is only a temporal-continuity proxy; semantic action/identity understanding is not implied.")
     return {"start_seconds": round(best_start, 3), "end_seconds": round(end, 3),
             "scene_cuts": best_count, "window_seconds": round(end - best_start, 3),
             "target_cut_count": target_cut_count, "method": "moderate-scene-cut-density-window",
@@ -1363,11 +1375,120 @@ def rank_source_scene_segments(scene_segments):
         motion_values.append(motion_value if math.isfinite(motion_value) else 0.0)
     audio_ranks = _percentile_ranks(audio_values)
     motion_ranks = _percentile_ranks(motion_values)
+    subject_values = []
+    for segment in prepared:
+        try:
+            value = float(segment.get("subject_presence_score", 0.0))
+        except (TypeError, ValueError):
+            value = 0.0
+        subject_values.append(max(0.0, min(1.0, value)) if math.isfinite(value) else 0.0)
+    subject_evidence_available = any(value > 0.0 for value in subject_values)
     for index, segment in enumerate(prepared):
         segment["audio_rank"] = round(audio_ranks[index], 4)
         segment["motion_rank"] = round(motion_ranks[index], 4)
-        segment["selection_score"] = round(0.6 * audio_ranks[index] + 0.4 * motion_ranks[index], 4)
+        segment["subject_presence_score"] = round(subject_values[index], 4)
+        if subject_evidence_available:
+            score = 0.55 * subject_values[index] + 0.27 * audio_ranks[index] + 0.18 * motion_ranks[index]
+            segment["selection_score_method"] = "appearance_track_soft_lock_plus_audio_motion"
+        else:
+            score = 0.6 * audio_ranks[index] + 0.4 * motion_ranks[index]
+            segment["selection_score_method"] = "audio_motion_only"
+        segment["selection_score"] = round(score, 4)
     return prepared
+
+
+def choose_source_chapter(scene_segments, scope_start, scope_end, chapter_seconds=90.0):
+    """Choose one contiguous chapter using measured audio/motion proxies, not semantic scene meaning."""
+    numeric = (scope_start, scope_end, chapter_seconds)
+    if any(isinstance(value, bool) or not isinstance(value, (int, float)) or
+           not math.isfinite(float(value)) for value in numeric):
+        raise ValueError("Source-chapter boundaries and duration must be finite numbers.")
+    start, end, requested = map(float, numeric)
+    if start < 0 or end <= start:
+        raise ValueError("Source-chapter scope must have end > start and a non-negative start.")
+    if not 60.0 <= requested <= 120.0:
+        raise ValueError("chapter_seconds must be between 60 and 120 seconds.")
+    if not scene_segments:
+        raise RuntimeError("No measured source segments are available for chapter selection.")
+    ranked = rank_source_scene_segments(scene_segments)
+    span = end - start
+    chapter_count = max(1, int(math.ceil(span / requested)))
+    actual_length = span / chapter_count
+    candidates = []
+    for index in range(chapter_count):
+        left = start + index * actual_length
+        right = end if index == chapter_count - 1 else start + (index + 1) * actual_length
+        weighted_scores, covered = [], 0.0
+        for segment in ranked:
+            overlap = min(right, float(segment["end_seconds"])) - max(left, float(segment["start_seconds"]))
+            if overlap > 0:
+                weighted_scores.append((float(segment["selection_score"]), overlap))
+                covered += overlap
+        if weighted_scores:
+            total_weight = sum(weight for _, weight in weighted_scores)
+            mean_score = sum(score * weight for score, weight in weighted_scores) / total_weight
+            sorted_scores = sorted(score for score, _ in weighted_scores)
+            q75 = sorted_scores[round((len(sorted_scores) - 1) * 0.75)]
+            score = 0.8 * mean_score + 0.2 * q75
+        else:
+            mean_score = q75 = score = 0.0
+        candidates.append({
+            "index": index, "start_seconds": left, "end_seconds": right,
+            "duration_seconds": right - left, "selection_score": score,
+            "mean_activity_score": mean_score, "upper_quartile_activity_score": q75,
+            "coverage_ratio": min(1.0, covered / max(1e-9, right - left)),
+        })
+    selected = max(candidates, key=lambda item: (item["selection_score"], item["coverage_ratio"], -item["index"]))
+    left, right = selected["start_seconds"], selected["end_seconds"]
+    selected_segments = []
+    for segment in ranked:
+        overlap_start = max(left, float(segment["start_seconds"]))
+        overlap_end = min(right, float(segment["end_seconds"]))
+        if overlap_end - overlap_start < 0.25:
+            continue
+        selected_segments.append({**segment, "start_seconds": overlap_start, "end_seconds": overlap_end})
+    if not selected_segments:
+        raise RuntimeError("The selected source chapter contains no usable measured segments.")
+    return {
+        "applied": True, "method": "activity-ranked-contiguous-chapter",
+        "start_seconds": round(left, 3), "end_seconds": round(right, 3),
+        "duration_seconds": round(right - left, 3),
+        "selection_score": round(selected["selection_score"], 4),
+        "mean_activity_score": round(selected["mean_activity_score"], 4),
+        "upper_quartile_activity_score": round(selected["upper_quartile_activity_score"], 4),
+        "coverage_ratio": round(selected["coverage_ratio"], 4),
+        "candidate_chapters": len(candidates), "selected_chapter_index": selected["index"],
+        "measured_segment_count": len(ranked), "selected_segment_count": len(selected_segments),
+        "signals": ["source_audio_rms", "frame_difference_motion"],
+        "semantic_context_understanding": False,
+    }, selected_segments
+
+
+def add_subject_presence_scores(scene_segments, observations, sample_interval_seconds=0.75):
+    """Attach a soft within-chapter appearance-track overlap score to each measured segment."""
+    if (isinstance(sample_interval_seconds, bool) or
+            not isinstance(sample_interval_seconds, (int, float)) or
+            not math.isfinite(float(sample_interval_seconds)) or sample_interval_seconds <= 0):
+        raise ValueError("sample_interval_seconds must be a positive finite number.")
+    timestamps = []
+    for item in observations or []:
+        if not isinstance(item, dict):
+            continue
+        timestamp = item.get("time_seconds")
+        if isinstance(timestamp, (int, float)) and not isinstance(timestamp, bool) and math.isfinite(float(timestamp)):
+            timestamps.append(float(timestamp))
+    result = []
+    for segment in scene_segments:
+        item = dict(segment)
+        start, end = float(item["start_seconds"]), float(item["end_seconds"])
+        duration = end - start
+        if duration <= 0:
+            raise ValueError("Subject scoring received a non-positive segment.")
+        count = sum(1 for timestamp in timestamps if start <= timestamp < end)
+        item["subject_observation_count"] = count
+        item["subject_presence_score"] = round(min(1.0, count * float(sample_interval_seconds) / duration), 4)
+        result.append(item)
+    return result
 
 
 def plan_ranked_disjoint_source_ranges(source_durations_frames, scene_segments, fps, minimum_gap_frames):
@@ -2578,7 +2699,23 @@ def main(argv=None):
         cut - source_scope_start for cut in scenes
         if source_scope_start <= cut <= source_scope_end
     )
-    subject_analysis = detect_person_track(VIDEO, context_start, context_end)
+    long_source_mode = source_scope["method"] == "full_source_long_video"
+    if long_source_mode:
+        subject_analysis = {
+            "available": False, "detected": False, "method": "pending-source-chapter-selection",
+            "reason": "Appearance tracking will run inside the selected contiguous source chapter.",
+            "observations": [], "track_id": None, "track_quality_proxy": None,
+            "identity_semantics": False,
+        }
+    elif SUBJECT_LOCK_ENABLED:
+        subject_analysis = detect_person_track(VIDEO, context_start, context_end)
+    else:
+        subject_analysis = {
+            "available": False, "detected": False, "method": "subject-lock-disabled",
+            "reason": "Subject appearance lock is disabled in edit settings.",
+            "observations": [], "track_id": None, "track_quality_proxy": None,
+            "identity_semantics": False,
+        }
     SUBJECT_OBSERVATIONS = subject_analysis.get("observations", []) if subject_analysis.get("detected") else []
     context["subject_tracking"] = {
         key: value for key, value in subject_analysis.items() if key != "observations"
@@ -2610,6 +2747,21 @@ def main(argv=None):
         for start_f, end_f in zip(frame_boundaries, frame_boundaries[1:])
     ]
     planned_source_ranges = None
+    source_chapter_report = {
+        "applied": False, "method": "pending_chapter_selection" if long_source_mode else "short_source_context",
+        "start_seconds": round(source_scope_start, 3), "end_seconds": round(source_scope_end, 3),
+        "duration_seconds": round(source_scope_duration, 3), "semantic_context_understanding": False,
+    }
+    character_lock_report = {
+        "requested": SUBJECT_LOCK_ENABLED, "applied": False, "preference_applied": False,
+        "detected": bool(subject_analysis.get("detected")),
+        "method": "pending_source_chapter_selection" if long_source_mode else "short_source_framing_only",
+        "track_quality_proxy": subject_analysis.get("track_quality_proxy"),
+        "track_span_seconds": subject_analysis.get("track_span_seconds"),
+        "identity_semantics": False,
+    }
+    context["source_chapter"] = dict(source_chapter_report)
+    context["character_lock"] = dict(character_lock_report)
     source_selection_report = {
         "method": "legacy_snap_then_progression",
         "source_audio_available": False,
@@ -2634,62 +2786,211 @@ def main(argv=None):
             flush=True,
         )
     source_audio_available = _source_has_audio(VIDEO)
+    source_feature_error = None
+    measured_segment_count = 0
+    chapter_candidate_count = 0
+    source_chapter_cache_hit = False
     if source_audio_available:
         try:
-            bounded_segments = source_scope["method"] == "full_source_long_video"
-            scene_segments = build_source_scene_segments(
-                source_scope_start, source_scope_end, scenes,
-                max_segment_seconds=4.0 if bounded_segments else None,
-            )
+            bounded_segments = long_source_mode
+            if bounded_segments:
+                chapter_candidates = build_source_scene_segments(
+                    source_scope_start, source_scope_end, [], max_segment_seconds=SOURCE_CHAPTER_SECONDS
+                )
+                measured_chapters, source_chapter_cache_hit = cached_analysis(
+                    "source_chapter_features", [VIDEO],
+                    {"chapters": chapter_candidates, "fps": FPS, "feature_version": 1,
+                     "signals": ["source_audio_rms", "frame_difference_motion"]},
+                    lambda: measure_source_scene_features(VIDEO, chapter_candidates),
+                )
+                chapter_candidate_count = len(measured_chapters)
+                source_chapter_report, _ = choose_source_chapter(
+                    measured_chapters, source_scope_start, source_scope_end, SOURCE_CHAPTER_SECONDS
+                )
+                chapter_start, chapter_end = source_chapter_report["start_seconds"], source_chapter_report["end_seconds"]
+                context.update({
+                    "start_seconds": chapter_start, "end_seconds": chapter_end,
+                    "window_seconds": source_chapter_report["duration_seconds"],
+                    "scene_cuts": sum(1 for cut in scenes if chapter_start <= cut < chapter_end),
+                    "method": "activity-ranked-contiguous-chapter", "same_person_tracking": False,
+                    "source_chapter": dict(source_chapter_report),
+                })
+                context_start, context_end = chapter_start, chapter_end
+                context_duration = max(0.1, chapter_end - chapter_start)
+                context_scenes = sorted(cut - chapter_start for cut in scenes if chapter_start <= cut <= chapter_end)
+                print(
+                    f"[chapter] Chose {chapter_start:.2f}s–{chapter_end:.2f}s "
+                    f"({source_chapter_report['duration_seconds']:.2f}s) from {chapter_candidate_count} contiguous chapters "
+                    "using coarse audio/motion proxies; not semantic recognition.", flush=True,
+                )
+                progress_event(
+                    "source_chapter_selection", "completed",
+                    f"Selected source chapter {chapter_start:.2f}s–{chapter_end:.2f}s from "
+                    f"{chapter_candidate_count} coarse candidates using audio/motion evidence.",
+                    source_chapter_report,
+                )
+                if SUBJECT_LOCK_ENABLED:
+                    progress_event("character_lock", "running", "Tracking the dominant appearance proxy inside the selected chapter.")
+                    subject_analysis = detect_person_track(VIDEO, chapter_start, chapter_end)
+                else:
+                    subject_analysis = {
+                        "available": False, "detected": False, "method": "subject-lock-disabled",
+                        "reason": "Subject appearance lock is disabled in edit settings.",
+                        "observations": [], "track_id": None, "track_quality_proxy": None, "identity_semantics": False,
+                    }
+                SUBJECT_OBSERVATIONS = subject_analysis.get("observations", []) if subject_analysis.get("detected") else []
+                context["subject_tracking"] = {key: value for key, value in subject_analysis.items() if key != "observations"}
+                character_lock_report.update({
+                    "method": subject_analysis.get("method", "unavailable"),
+                    "detected": bool(subject_analysis.get("detected")),
+                    "track_id": subject_analysis.get("track_id"),
+                    "track_span_seconds": subject_analysis.get("track_span_seconds"),
+                    "track_quality_proxy": subject_analysis.get("track_quality_proxy"),
+                    "selected_chapter_start_seconds": chapter_start, "selected_chapter_end_seconds": chapter_end,
+                })
+                scene_segments = build_source_scene_segments(chapter_start, chapter_end, scenes, max_segment_seconds=4.0)
+                source_scope_for_features = "selected_source_chapter"
+            else:
+                scene_segments = build_source_scene_segments(source_scope_start, source_scope_end, scenes, max_segment_seconds=None)
+                source_scope_for_features = source_scope["method"]
             measured_segments, source_feature_cache_hit = cached_analysis(
                 "source_scene_features", [VIDEO],
                 {"scene_segments": scene_segments, "fps": FPS, "audio_weight": 0.6,
-                 "motion_weight": 0.4, "feature_version": 2,
-                 "scope_method": source_scope["method"],
+                 "motion_weight": 0.4, "feature_version": 4 if bounded_segments else 3,
+                 "scope_method": source_scope_for_features,
                  "max_segment_seconds": 4.0 if bounded_segments else None},
                 lambda: measure_source_scene_features(VIDEO, scene_segments),
             )
-            planned_source_ranges = plan_ranked_disjoint_source_ranges(
-                clip_source_durations, measured_segments, FPS, source_gap_frames
-            )
+            measured_segment_count = len(measured_segments)
+            if bounded_segments and SUBJECT_OBSERVATIONS:
+                measured_segments = add_subject_presence_scores(measured_segments, SUBJECT_OBSERVATIONS)
+            subject_segment_count = sum(1 for item in measured_segments if item.get("subject_presence_score", 0.0) > 0.0)
+            preference_applied = bool(bounded_segments and SUBJECT_LOCK_ENABLED and SUBJECT_OBSERVATIONS and subject_segment_count)
+            if bounded_segments:
+                character_lock_report.update({
+                    "applied": bool(SUBJECT_LOCK_ENABLED and subject_analysis.get("detected")),
+                    "preference_applied": preference_applied,
+                    "segments_with_subject_evidence": subject_segment_count,
+                    "identity_semantics": False,
+                    "note": "Appearance/location continuity is a soft ranking preference, not proof of player identity.",
+                })
+                context["character_lock"] = dict(character_lock_report)
+                context["dynamic_crop"] = {
+                    "configured_method": "piecewise_linear_low_pass" if LAYOUT_MODE == "fill" else "blur_fit_full_frame",
+                    "enabled_when_near_track_observations": bool(SUBJECT_OBSERVATIONS and LAYOUT_MODE == "fill"),
+                    "smoothing_tau_seconds": 0.65, "bounds_clamped_by_ffmpeg": True,
+                }
+                if preference_applied:
+                    print(f"[character-lock] Soft appearance preference added to {subject_segment_count} selected-chapter segments; not identity recognition.", flush=True)
+                    lock_status, lock_summary = "completed", "Applied an appearance-track soft preference to measured source segments."
+                else:
+                    print(f"[character-lock] No stable appearance track available for source preference: {subject_analysis.get('reason', 'not detected')}. Chapter-level coherence remains active.", flush=True)
+                    lock_status, lock_summary = "needs_review", "No verified character identity; source selection remains chapter-bounded."
+                progress_event("character_lock", lock_status, lock_summary, character_lock_report)
+            planned_source_ranges = plan_ranked_disjoint_source_ranges(clip_source_durations, measured_segments, FPS, source_gap_frames)
             used_segment_counts = {}
             for assignment in planned_source_ranges:
                 key = assignment["scene_segment_index"]
                 used_segment_counts[key] = used_segment_counts.get(key, 0) + 1
             source_selection_report = {
-                "method": "ranked_disjoint_scene_segments",
-                "source_audio_available": True,
-                "measured_scene_segment_count": len(measured_segments),
+                "method": "ranked_disjoint_scene_segments", "source_audio_available": True,
+                "measured_scene_segment_count": measured_segment_count,
+                "chapter_candidates_measured": chapter_candidate_count if bounded_segments else None,
+                "selected_chapter_segment_count": len(measured_segments) if bounded_segments else None,
                 "unique_scene_segments_used": len(used_segment_counts),
                 "scene_segments_reused_for_multiple_clips": sum(1 for count in used_segment_counts.values() if count > 1),
                 "forced_progression_shift_count": 0,
-                "audio_score_weight": 0.6,
-                "motion_score_weight": 0.4,
+                "audio_score_weight": 0.6 if not preference_applied else 0.27,
+                "motion_score_weight": 0.4 if not preference_applied else 0.18,
+                "subject_presence_score_weight": 0.55 if preference_applied else 0.0,
+                "source_chapter": dict(source_chapter_report), "character_lock": dict(character_lock_report),
                 "fallback_reason": None,
             }
             print(
-                f"[source] Ranked {len(measured_segments)} scene segments by source RMS loudness "
-                f"and motion; assigned {len(planned_source_ranges)} chronological, disjoint clip ranges."
+                f"[source] Ranked {measured_segment_count} detailed scene segments"
+                + (f" inside chapter {source_chapter_report['start_seconds']:.2f}s–{source_chapter_report['end_seconds']:.2f}s" if bounded_segments else "")
+                + f"; assigned {len(planned_source_ranges)} chronological, disjoint clip ranges."
             )
         except (RuntimeError, ValueError, OSError) as exc:
+            source_feature_error = str(exc)
             planned_source_ranges = None
             source_selection_report = {
-                "method": "legacy_snap_then_progression",
-                "source_audio_available": True,
-                "measured_scene_segment_count": len(scene_segments) if "scene_segments" in locals() else 0,
-                "unique_scene_segments_used": 0,
-                "forced_progression_shift_count": 0,
-                "fallback_reason": str(exc),
+                "method": "legacy_snap_then_progression", "source_audio_available": True,
+                "measured_scene_segment_count": measured_segment_count,
+                "chapter_candidates_measured": chapter_candidate_count if long_source_mode else None,
+                "unique_scene_segments_used": 0, "forced_progression_shift_count": 0,
+                "fallback_reason": source_feature_error,
             }
-            print(f"[warn] Ranked scene selection unavailable ({exc}); using legacy source progression.", flush=True)
+            print(f"[warn] Ranked scene selection unavailable ({exc}); using bounded source progression where possible.", flush=True)
     else:
-        print("[source] No audio stream in source video; using legacy scene-center selection.")
+        print("[source] No audio stream in source video; using bounded scene-context fallback where possible.")
+    if long_source_mode and planned_source_ranges is None:
+        fallback_chapter = choose_context_window(source_duration, scenes, SOURCE_CHAPTER_SECONDS / 2.0)
+        chapter_start, chapter_end = fallback_chapter["start_seconds"], fallback_chapter["end_seconds"]
+        source_chapter_report = {
+            "applied": True, "method": "scene-density-chapter-fallback",
+            "start_seconds": chapter_start, "end_seconds": chapter_end,
+            "duration_seconds": round(chapter_end - chapter_start, 3),
+            "selection_score": None, "candidate_chapters": chapter_candidate_count or None,
+            "selected_chapter_index": None, "measured_segment_count": measured_segment_count,
+            "fallback_reason": source_feature_error or "Source audio/features unavailable.",
+            "semantic_context_understanding": False,
+        }
+        source_scope = {**source_scope, "start_seconds": chapter_start, "end_seconds": chapter_end, "method": "scene_density_chapter_fallback"}
+        source_scope_start, source_scope_end = chapter_start, chapter_end
+        source_scope_duration = chapter_end - chapter_start
+        source_scope_scenes = sorted(cut - chapter_start for cut in scenes if chapter_start <= cut <= chapter_end)
+        context.update({
+            "start_seconds": chapter_start, "end_seconds": chapter_end,
+            "window_seconds": source_chapter_report["duration_seconds"],
+            "scene_cuts": fallback_chapter.get("scene_cuts", 0),
+            "method": "scene-density-chapter-fallback", "same_person_tracking": False,
+            "source_chapter": dict(source_chapter_report),
+        })
+        context_start, context_end = chapter_start, chapter_end
+        context_duration = max(0.1, chapter_end - chapter_start)
+        context_scenes = source_scope_scenes
+        if SUBJECT_LOCK_ENABLED:
+            subject_analysis = detect_person_track(VIDEO, chapter_start, chapter_end)
+        else:
+            subject_analysis = {
+                "available": False, "detected": False, "method": "subject-lock-disabled",
+                "reason": "Subject appearance lock is disabled in edit settings.",
+                "observations": [], "track_id": None, "track_quality_proxy": None, "identity_semantics": False,
+            }
+        SUBJECT_OBSERVATIONS = subject_analysis.get("observations", []) if subject_analysis.get("detected") else []
+        character_lock_report = {
+            "requested": SUBJECT_LOCK_ENABLED, "applied": False, "preference_applied": False,
+            "detected": bool(subject_analysis.get("detected")), "method": subject_analysis.get("method", "unavailable"),
+            "track_id": subject_analysis.get("track_id"), "track_span_seconds": subject_analysis.get("track_span_seconds"),
+            "track_quality_proxy": subject_analysis.get("track_quality_proxy"),
+            "selected_chapter_start_seconds": chapter_start, "selected_chapter_end_seconds": chapter_end,
+            "identity_semantics": False,
+            "note": "Fallback chapter is bounded by scene density; HOG observations may guide framing but are not a hard identity lock.",
+        }
+        context["subject_tracking"] = {key: value for key, value in subject_analysis.items() if key != "observations"}
+        context["character_lock"] = dict(character_lock_report)
+        progress_event("source_chapter_selection", "needs_review",
+                       f"Feature ranking was unavailable; bounded fallback chapter {chapter_start:.2f}s–{chapter_end:.2f}s selected by scene density.",
+                       source_chapter_report)
+        progress_event("character_lock", "needs_review",
+                       "Fallback chapter is bounded, but no subject-weighted source allocation was available.",
+                       character_lock_report)
+        source_selection_report.update({"source_chapter": dict(source_chapter_report), "character_lock": dict(character_lock_report)})
+    else:
+        context["source_chapter"] = dict(source_chapter_report)
+        context["character_lock"] = dict(character_lock_report)
+        source_selection_report.update({"source_chapter": dict(source_chapter_report), "character_lock": dict(character_lock_report)})
+    source_scope_scenes = sorted(cut - source_scope_start for cut in scenes if source_scope_start <= cut <= source_scope_end)
     source_selection_report.update({
         "scope_method": source_scope["method"],
         "scope_start_seconds": round(source_scope_start, 3),
         "scope_end_seconds": round(source_scope_end, 3),
         "scope_duration_seconds": round(source_scope_duration, 3),
         "candidate_window_max_seconds": 4.0 if source_scope["method"] == "full_source_long_video" else None,
+        "selected_chapter_start_seconds": source_chapter_report.get("start_seconds"),
+        "selected_chapter_end_seconds": source_chapter_report.get("end_seconds"),
+        "chapter_analysis_cache_hit": source_chapter_cache_hit,
         "analysis_cache_hit": source_feature_cache_hit if source_audio_available and "source_feature_cache_hit" in locals() else False,
     })
     source_selection_summary = (
@@ -3103,6 +3404,8 @@ def main(argv=None):
         "settings": CONFIG, "edl": edl,
         "media_analysis": media_analysis, "beat_analysis": beat_analysis,
         "reference_analysis": reference_analysis, "hook_analysis": hook_analysis,
+        "source_chapter": context.get("source_chapter", {}),
+        "character_lock": context.get("character_lock", {}),
         "render_critique": render_critique, "niche_metrics": niche_metrics,
         "niche_tags": ["phonk", "montagem", "vertical", "freeze"],
         "render_report": render_report,

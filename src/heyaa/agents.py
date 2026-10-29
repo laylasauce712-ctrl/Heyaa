@@ -102,6 +102,11 @@ def settings_agent(config: dict[str, Any]) -> AgentResult:
     for key in ("mirror_enabled", "reference_pacing"):
         if not isinstance(edit.get(key), bool):
             findings.append(f"edit_settings.{key} must be an explicit boolean.")
+    chapter_seconds = edit.get("source_chapter_seconds", 90)
+    if not _finite_number(chapter_seconds) or not 60 <= float(chapter_seconds) <= 120:
+        findings.append("edit_settings.source_chapter_seconds must be between 60 and 120 seconds.")
+    if not isinstance(edit.get("subject_lock_enabled", True), bool):
+        findings.append("edit_settings.subject_lock_enabled must be an explicit boolean.")
     source_gap = edit.get("source_min_gap_seconds", 0.05)
     if (not _finite_number(source_gap) or not 0.0 <= float(source_gap) <= 1.0):
         findings.append("edit_settings.source_min_gap_seconds must be between 0 and 1 second.")
@@ -144,12 +149,16 @@ def settings_agent(config: dict[str, Any]) -> AgentResult:
         return AgentResult("settings_agent", "blocked", None, 1.0,
                            tuple(findings), ("Correct params.json; unsupported settings must fail fast, not silently change.",),
                            {"resolution": video.get("resolution"), "fps": fps, "duration_seconds": duration,
-                            "speed": speed, "freeze_duration": freeze})
+                            "speed": speed, "freeze_duration": freeze,
+                            "source_chapter_seconds": chapter_seconds,
+                            "subject_lock_enabled": edit.get("subject_lock_enabled", True)})
     return AgentResult("settings_agent", "ok", None, 1.0,
                        ("All required settings are present and within renderer-supported bounds.",), (),
                        {"resolution": video["resolution"], "fps": fps, "duration_seconds": duration,
                         "speed": speed, "freeze_duration": freeze,
                         "ending_skull_enabled": ending_skull_enabled,
+                        "source_chapter_seconds": chapter_seconds,
+                        "subject_lock_enabled": edit.get("subject_lock_enabled", True),
                         "min_shot_seconds": float(min_shot_seconds),
                         "mirror_enabled": edit["mirror_enabled"], "layout_mode": layout_mode,
                         "ai_upscale_enabled": ai_upscale_enabled,
@@ -358,6 +367,67 @@ def reference_analyst(data: dict[str, Any]) -> AgentResult:
                         "pattern_passed_to_planner": bool(validated_intervals),
                         "semantic_reference_understanding": False,
                         "does_not_copy_reference_frames": True})
+
+
+def source_chapter_agent(data: dict[str, Any]) -> AgentResult:
+    """Review the selected contiguous source chapter and its measured basis."""
+    if not isinstance(data, dict) or not data:
+        return AgentResult("source_chapter_agent", "insufficient_evidence", None, 0.0,
+                           ("No source-chapter selection evidence was supplied.",),
+                           ("Select and report a bounded source chapter before clip planning.",), {})
+    method = data.get("method")
+    if method == "short_source_context" and data.get("applied") is False:
+        return AgentResult("source_chapter_agent", "ok", None, 1.0,
+                           ("The source is short enough to use its existing context window.",),
+                           (), {"chapter": dict(data), "semantic_context_understanding": False})
+    start, end = data.get("start_seconds"), data.get("end_seconds")
+    if not _finite_number(start) or not _finite_number(end) or float(start) < 0 or float(end) <= float(start):
+        return AgentResult("source_chapter_agent", "insufficient_evidence", None, 0.0,
+                           ("The source chapter has no valid measured boundaries.",),
+                           ("Repair chapter-selection evidence before reviewing the edit.",), {"chapter": dict(data)})
+    if data.get("applied") is not True:
+        return AgentResult("source_chapter_agent", "insufficient_evidence", None, 0.0,
+                           ("Chapter selection did not complete.",),
+                           ("Use a measured activity-ranked chapter or a documented bounded fallback.",),
+                           {"chapter": dict(data), "semantic_context_understanding": False})
+    evidence = {"chapter": dict(data), "semantic_context_understanding": False}
+    if method == "scene-density-chapter-fallback":
+        return AgentResult("source_chapter_agent", "needs_review", None, 0.7,
+                           ("A contiguous fallback chapter was chosen using scene-cut density; semantic meaning was not assessed.",),
+                           ("Review the selected chapter before publishing.",), evidence)
+    if method != "activity-ranked-contiguous-chapter":
+        return AgentResult("source_chapter_agent", "needs_review", None, 0.7,
+                           ("A contiguous chapter was selected with an unrecognized method.",),
+                           ("Review chapter-selection evidence.",), evidence)
+    return AgentResult("source_chapter_agent", "ok", None, 0.9,
+                       ("One contiguous chapter was ranked from measured audio/motion proxies.",),
+                       ("Confirm the selected chapter contains the intended football action.",), evidence)
+
+
+def character_lock_agent(data: dict[str, Any]) -> AgentResult:
+    """Report whether a soft, appearance-based subject preference was available."""
+    if not isinstance(data, dict) or not data:
+        return AgentResult("character_lock_agent", "insufficient_evidence", None, 0.0,
+                           ("No character-lock evidence was supplied.",),
+                           ("Report the selected chapter's appearance tracking results.",), {})
+    if data.get("requested") is False:
+        return AgentResult("character_lock_agent", "ok", None, 1.0,
+                           ("Appearance-based selection preference is disabled by settings.",),
+                           (), {"character_lock": dict(data), "identity_semantics": False})
+    if data.get("method") == "short_source_framing_only":
+        return AgentResult("character_lock_agent", "ok", None, 1.0,
+                           ("For a short source, the available appearance track is used for framing only; a cross-source character lock is not needed.",),
+                           (), {"character_lock": dict(data), "identity_semantics": False})
+    evidence = {"character_lock": dict(data), "identity_semantics": False}
+    if data.get("preference_applied") is True and data.get("detected") is True:
+        return AgentResult("character_lock_agent", "needs_review", None, 0.7,
+                           ("A tracked appearance was used as a soft source-selection preference, not verified player identity.",),
+                           ("Check selected clips visually for player consistency; HOG tracking cannot establish identity or football role.",),
+                           evidence)
+    return AgentResult("character_lock_agent", "needs_review", None, 0.35,
+                       ("No reliable appearance-track preference was applied; only chapter-level continuity is guaranteed by this stage.",),
+                       ("Review the montage for changes of player; the current tracker is not a semantic identity model.",),
+                       evidence)
 
 
 def framing_agent(config: dict[str, Any], edl: dict[str, Any],
@@ -696,7 +766,7 @@ def director_agent(results: dict[str, AgentResult]) -> AgentResult:
     nonblocking = {
         name: {"status": result.status, "findings": list(result.findings)}
         for name, result in results.items()
-        if name in ("media_analyst", "beat_sync_agent", "reference_analyst", "hook_analyst", "niche_analyst", "render_critic")
+        if name in ("media_analyst", "beat_sync_agent", "reference_analyst", "source_chapter_agent", "character_lock_agent", "hook_analyst", "niche_analyst", "render_critic")
         and result.status not in ("ok",)
     }
     recommendations = ["Human visual review is required before considering the edit finished or publishing."]
@@ -785,6 +855,12 @@ def run_agent_team(context: dict[str, Any],
     announce("reference_analyst", "reference_analysis")
     reference = reference_analyst(context.get("reference_analysis", {}))
     record(reference, "reference_analysis")
+    announce("source_chapter_agent", "source_chapter_review")
+    source_chapter = source_chapter_agent(context.get("source_chapter", {}))
+    record(source_chapter, "source_chapter_review")
+    announce("character_lock_agent", "character_lock_review")
+    character_lock = character_lock_agent(context.get("character_lock", {}))
+    record(character_lock, "character_lock_review")
     announce("framing_agent", "framing_review")
     framing = framing_agent(settings, context.get("edl", {}), context.get("media_analysis", {}))
     record(framing, "framing_review")
@@ -809,7 +885,25 @@ def run_agent_team(context: dict[str, Any],
     reference_payload = context.get("reference_analysis", {}) if isinstance(context.get("reference_analysis"), dict) else {}
     hook_payload = context.get("hook_analysis", {}) if isinstance(context.get("hook_analysis"), dict) else {}
     niche_missing = list(niche.evidence.get("missing_metrics", []))
+    chapter_evidence = source_chapter.evidence.get("chapter", {})
+    lock_evidence = character_lock.evidence.get("character_lock", {})
     dialogue = [
+        {
+            "turn": 7, "speaker": "Source Chapter Agent", "to": "Planner",
+            "message": (
+                f"Selected chapter={chapter_evidence.get('start_seconds')}–{chapter_evidence.get('end_seconds')}s "
+                f"using method={chapter_evidence.get('method')}; measured proxies do not establish semantic scene meaning."
+            ),
+            "evidence": {"source_chapter": chapter_evidence, "semantic_context_understanding": False},
+        },
+        {
+            "turn": 8, "speaker": "Character Lock Agent", "to": "Planner",
+            "message": (
+                f"Appearance preference applied={lock_evidence.get('preference_applied')}; "
+                f"track span={lock_evidence.get('track_span_seconds')}s. This is not verified player identity."
+            ),
+            "evidence": {"character_lock": lock_evidence, "identity_semantics": False},
+        },
         {
             "turn": 1, "speaker": "Beat Sync Agent", "to": "Planner",
             "message": (
@@ -884,7 +978,8 @@ def run_agent_team(context: dict[str, Any],
     announce("director", "orchestration_decision")
     director = director_agent({
         "settings_agent": setting_result, "media_analyst": media, "beat_sync_agent": beat,
-        "reference_analyst": reference, "framing_agent": framing, "hook_analyst": hook,
+        "reference_analyst": reference, "source_chapter_agent": source_chapter,
+        "character_lock_agent": character_lock, "framing_agent": framing, "hook_analyst": hook,
         "planner": plan, "niche_analyst": niche, "inspector": qa, "render_critic": critic,
     })
     record(director, "orchestration_decision")
@@ -896,6 +991,7 @@ def run_agent_team(context: dict[str, Any],
         "summary": director.findings[0],
         "results": {"settings_agent": asdict(setting_result), "media_analyst": asdict(media),
                     "beat_sync_agent": asdict(beat), "reference_analyst": asdict(reference),
+                    "source_chapter_agent": asdict(source_chapter), "character_lock_agent": asdict(character_lock),
                     "framing_agent": asdict(framing), "hook_analyst": asdict(hook),
                     "planner": asdict(plan), "niche_analyst": asdict(niche), "inspector": asdict(qa),
                     "render_critic": asdict(critic), "director": asdict(director)},

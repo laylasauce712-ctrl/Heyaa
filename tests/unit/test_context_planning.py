@@ -152,6 +152,44 @@ class ContextPlanningTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "max_segment_seconds"):
             renderer.build_source_scene_segments(0.0, 10.0, [], max_segment_seconds=0.1)
 
+    def test_choose_source_chapter_selects_one_contiguous_activity_peak(self):
+        segments = []
+        for index in range(18):
+            start = index * 10.0
+            active = start >= 90.0
+            segments.append({
+                "start_seconds": start, "end_seconds": start + 10.0,
+                "audio_loudness_db": -18.0 if active else -55.0,
+                "motion_score": 32.0 if active else 2.0,
+            })
+        chapter, selected = renderer.choose_source_chapter(segments, 0.0, 180.0, 90.0)
+        self.assertEqual(chapter["method"], "activity-ranked-contiguous-chapter")
+        self.assertEqual((chapter["start_seconds"], chapter["end_seconds"]), (90.0, 180.0))
+        self.assertTrue(selected)
+        self.assertTrue(all(item["start_seconds"] >= 90.0 and item["end_seconds"] <= 180.0 for item in selected))
+
+    def test_subject_presence_soft_lock_changes_rank_only_with_positive_track_evidence(self):
+        segments = [
+            {"start_seconds": 10.0, "end_seconds": 12.0, "audio_loudness_db": -20.0, "motion_score": 10.0},
+            {"start_seconds": 12.0, "end_seconds": 14.0, "audio_loudness_db": -20.0, "motion_score": 10.0},
+            {"start_seconds": 14.0, "end_seconds": 16.0, "audio_loudness_db": -20.0, "motion_score": 10.0},
+        ]
+        observations = [{"time_seconds": 10.4}, {"time_seconds": 11.1}, {"time_seconds": 11.8}]
+        scored = renderer.add_subject_presence_scores(segments, observations)
+        ranked = renderer.rank_source_scene_segments(scored)
+        self.assertGreater(ranked[0]["selection_score"], ranked[1]["selection_score"])
+        self.assertEqual(ranked[0]["selection_score_method"], "appearance_track_soft_lock_plus_audio_motion")
+        without_track = renderer.rank_source_scene_segments(segments)
+        self.assertTrue(all(item["selection_score_method"] == "audio_motion_only" for item in without_track))
+        self.assertAlmostEqual(without_track[0]["selection_score"], 0.5, places=4)
+
+    def test_source_chapter_rejects_out_of_range_duration(self):
+        with self.assertRaisesRegex(ValueError, "60 and 120"):
+            renderer.choose_source_chapter(
+                [{"start_seconds": 0.0, "end_seconds": 90.0, "audio_loudness_db": -20, "motion_score": 10}],
+                0.0, 90.0, 45.0,
+            )
+
     def test_scene_detection_scales_down_before_scoring(self):
         filt = renderer.scene_detection_filter(threshold=0.22, width=320)
         self.assertLess(filt.index("scale=320:-2"), filt.index("select="))

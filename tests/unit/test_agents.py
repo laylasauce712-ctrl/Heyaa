@@ -5,7 +5,7 @@ from pathlib import Path
 from src.heyaa.agents import (
     beat_sync_agent, director_agent, export_storage_agent, framing_agent, hook_analyst,
     inspector, media_analyst, niche_analyst, planner, reference_analyst,
-    render_critic, run_agent_team, settings_agent,
+    render_critic, run_agent_team, settings_agent, source_chapter_agent, character_lock_agent,
 )
 
 
@@ -15,7 +15,8 @@ def config():
         "video_settings": {"resolution": "1080x1920", "fps": 24, "codec": "libx264", "crf": 26, "preset": "ultrafast"},
         "edit_settings": {"duration_seconds": 8, "speed": 1.1, "freeze_duration": 2.0, "drop_freeze_duration": 0.25, "edl_mode": "on",
                           "min_clips": 6, "max_clips": 6, "reference_pacing": False,
-                          "mirror_enabled": False, "layout_mode": "fill"},
+                          "mirror_enabled": False, "layout_mode": "fill",
+                          "source_chapter_seconds": 90, "subject_lock_enabled": True},
         "audio_settings": {"beat_sync": False, "beat_flash": False, "bass_boost": False, "music_loop": True},
     }
 
@@ -122,6 +123,46 @@ class AgentTests(unittest.TestCase):
         edl = sample_edl()
         freeze = next(item for item in edl["video"] if item.get("effect") == "phonk-freeze")
         self.assertEqual(freeze["dur_f"], 48)
+
+    def test_settings_agent_validates_chapter_and_character_lock_settings(self):
+        cfg = config()
+        cfg["edit_settings"]["source_chapter_seconds"] = 45
+        result = settings_agent(cfg)
+        self.assertEqual(result.status, "blocked")
+        self.assertTrue(any("source_chapter_seconds" in finding for finding in result.findings))
+        cfg = config()
+        cfg["edit_settings"]["subject_lock_enabled"] = "true"
+        result = settings_agent(cfg)
+        self.assertEqual(result.status, "blocked")
+        self.assertTrue(any("subject_lock_enabled" in finding for finding in result.findings))
+
+    def test_source_chapter_agent_distinguishes_ranked_and_fallback_chapters(self):
+        ranked = source_chapter_agent({
+            "applied": True, "method": "activity-ranked-contiguous-chapter",
+            "start_seconds": 90.0, "end_seconds": 180.0, "duration_seconds": 90.0,
+            "selection_score": 0.82, "semantic_context_understanding": False,
+        })
+        self.assertEqual(ranked.status, "ok")
+        self.assertFalse(ranked.evidence["semantic_context_understanding"])
+        fallback = source_chapter_agent({
+            "applied": True, "method": "scene-density-chapter-fallback",
+            "start_seconds": 90.0, "end_seconds": 180.0, "duration_seconds": 90.0,
+        })
+        self.assertEqual(fallback.status, "needs_review")
+
+    def test_character_lock_agent_never_claims_verified_identity(self):
+        result = character_lock_agent({
+            "requested": True, "applied": True, "preference_applied": True,
+            "detected": True, "method": "opencv-hog-appearance-consistency-proxy",
+            "track_span_seconds": 6.0, "track_quality_proxy": 0.8,
+        })
+        self.assertEqual(result.status, "needs_review")
+        self.assertFalse(result.evidence["identity_semantics"])
+        unavailable = character_lock_agent({
+            "requested": True, "applied": False, "preference_applied": False,
+            "detected": False, "method": "opencv-hog-unavailable",
+        })
+        self.assertEqual(unavailable.status, "needs_review")
 
     def test_settings_agent_blocks_unsupported_settings(self):
         cfg = config()
