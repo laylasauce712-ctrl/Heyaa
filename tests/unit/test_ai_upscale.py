@@ -1,3 +1,6 @@
+import contextlib
+import io
+import json
 import subprocess
 import tempfile
 import unittest
@@ -170,6 +173,56 @@ class AIUpscaleTests(unittest.TestCase):
             with self.assertRaisesRegex(FileNotFoundError, "missing model"):
                 renderer.main(["--variants", "1"])
         prepare_sources.assert_not_called()
+
+
+    def test_doctor_requires_selected_model_weights_and_executable(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            executable = root / "realesrgan-ncnn-vulkan"
+            executable.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
+            executable.chmod(0o755)
+            models = root / "models"
+            models.mkdir()
+            settings = root / "params.json"
+            settings.write_text(json.dumps({
+                "video_settings": {
+                    "ai_upscale_enabled": True,
+                    "ai_upscale_binary": str(executable),
+                    "ai_upscale_model_dir": str(models),
+                    "ai_upscale_model": "realesrgan-x4plus",
+                    "ai_upscale_scale": 2,
+                }
+            }), encoding="utf-8")
+
+            with (
+                patch("src.agent_director._settings_path", return_value=str(settings)),
+                patch("src.agent_director.shutil.which", side_effect=lambda name: f"/usr/bin/{name}"),
+                patch(
+                    "src.agent_director.subprocess.run",
+                    return_value=subprocess.CompletedProcess([], 0, "", ""),
+                ),
+            ):
+                with contextlib.redirect_stdout(io.StringIO()) as output:
+                    status_without_weights = renderer.run_doctor()
+                report = json.loads(output.getvalue())
+
+                self.assertEqual(status_without_weights, 1)
+                self.assertEqual(report["status"], "fail")
+                self.assertFalse(report["checks"]["vulkan_realesrgan"]["model_files_exist"])
+                self.assertEqual(
+                    len(report["checks"]["vulkan_realesrgan"]["missing_model_files"]), 2
+                )
+
+                (models / "realesrgan-x4plus.param").write_text("param", encoding="utf-8")
+                (models / "realesrgan-x4plus.bin").write_bytes(b"weights")
+                with contextlib.redirect_stdout(io.StringIO()) as output:
+                    status_with_weights = renderer.run_doctor()
+                good_report = json.loads(output.getvalue())
+
+                self.assertEqual(status_with_weights, 0)
+                self.assertEqual(good_report["status"], "ok")
+                self.assertTrue(good_report["checks"]["vulkan_realesrgan"]["binary_executable"])
+                self.assertTrue(good_report["checks"]["vulkan_realesrgan"]["model_files_exist"])
 
     def test_disabled_mode_does_not_require_real_esrgan_binary(self):
         renderer.AI_UPSCALE_ENABLED = False

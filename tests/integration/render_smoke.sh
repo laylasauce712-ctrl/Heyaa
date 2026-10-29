@@ -1,30 +1,51 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# This smoke test temporarily replaces the project settings with a tiny fixture.
-# Preserve and restore the user's real params.json even if the render/test fails.
-PARAMS_BACKUP="$(mktemp)"
-cp params.json "$PARAMS_BACKUP"
+# This integration test renders the normal 20-second, 1080x1920/60-FPS edit profile
+# with generated fixtures. Preserve any existing user media and render artifacts.
+# AI upscaling is disabled here because CI does not install the external Vulkan binary/models;
+# its explicit enable/fail-fast behavior is covered by the unit tests.
+BACKUP_DIR="$(mktemp -d)"
+cp params.json "$BACKUP_DIR/params.json"
+HAD_INPUT=0
+HAD_OUTPUT=0
+if [[ -e input || -L input ]]; then
+  mv input "$BACKUP_DIR/input"
+  HAD_INPUT=1
+fi
+if [[ -e output || -L output ]]; then
+  mv output "$BACKUP_DIR/output"
+  HAD_OUTPUT=1
+fi
 mkdir -p input output
 cleanup() {
+  local exit_code=$?
+  trap - EXIT
   rm -rf input output
-  cp "$PARAMS_BACKUP" params.json
-  rm -f "$PARAMS_BACKUP"
+  cp "$BACKUP_DIR/params.json" params.json
+  if [[ "$HAD_INPUT" == "1" ]]; then
+    mv "$BACKUP_DIR/input" input
+  fi
+  if [[ "$HAD_OUTPUT" == "1" ]]; then
+    mv "$BACKUP_DIR/output" output
+  fi
+  rm -rf "$BACKUP_DIR"
+  exit "$exit_code"
 }
 trap cleanup EXIT
 cat > params.json <<'JSON'
 {
   "style": "phonk_montagem",
-  "video_settings": {"resolution": "1080x1920", "fps": 24, "codec": "libx264", "crf": 26, "preset": "ultrafast"},
-  "edit_settings": {"duration_seconds": 8, "speed": 1.1, "freeze_duration": 2.0, "drop_freeze_duration": 0.25, "edl_mode": "on", "min_clips": 6, "max_clips": 6, "reference_pacing": false, "mirror_enabled": false, "layout_mode": "blur_fit"},
-  "audio_settings": {"beat_sync": false, "beat_flash": false, "bass_boost": false, "music_loop": true}
+  "video_settings": {"resolution": "1080x1920", "fps": 60, "codec": "libx264", "crf": 18, "preset": "veryfast", "ai_upscale_enabled": false},
+  "edit_settings": {"duration_seconds": 20, "speed": 1.1, "freeze_duration": 2.0, "drop_freeze_duration": 0.25, "edl_mode": "on", "min_clips": 8, "max_clips": 40, "min_shot_seconds": 0.35, "reference_pacing": true, "mirror_enabled": true, "layout_mode": "blur_fit", "source_min_gap_seconds": 0.05, "source_chapter_seconds": 90, "subject_lock_enabled": true, "ending_skull_enabled": true, "skull_size_px": 520, "skull_position_x": 0.5, "skull_position_y": 0.5, "skull_pop_seconds": 0.18, "impact_sfx_enabled": true},
+  "audio_settings": {"beat_sync": true, "beat_flash": true, "bass_boost": true, "music_loop": true}
 }
 JSON
-ffmpeg -hide_banner -loglevel error -y -f lavfi -i "testsrc2=size=640x360:rate=24:duration=10" -an -c:v libx264 -pix_fmt yuv420p input/test_video.mp4
+ffmpeg -hide_banner -loglevel error -y -f lavfi -i "testsrc2=size=640x360:rate=30:duration=45" -an -c:v libx264 -pix_fmt yuv420p input/test_video.mp4
 # Deliberately hot input: the final output limiter must keep the export below clipping.
-ffmpeg -hide_banner -loglevel error -y -f lavfi -i "sine=frequency=70:sample_rate=44100:duration=2.5" -af "volume=20dB" -c:a libmp3lame input/phonk.mp3
+ffmpeg -hide_banner -loglevel error -y -f lavfi -i "sine=frequency=70:sample_rate=44100:duration=25" -af "volume=20dB" -c:a libmp3lame input/phonk.mp3
 # Exercise reference-audio extraction independently from the renderer's local-music path.
 ffmpeg -hide_banner -loglevel error -y \
-  -f lavfi -i "testsrc2=size=640x360:rate=24:duration=4" \
+  -f lavfi -i "testsrc2=size=640x360:rate=30:duration=4" \
   -f lavfi -i "sine=frequency=440:sample_rate=44100:duration=4" \
   -map 0:v:0 -map 1:a:0 -shortest -c:v libx264 -pix_fmt yuv420p -c:a aac input/reference.mp4
 python - <<'PY'
@@ -59,8 +80,8 @@ python src/agent_director.py --variants 1
 # Synthetic pixel-statistics fixture: the transparent skull must alter the freeze's
 # otherwise uniform background, not just exist as a file or metadata flag.
 ffmpeg -hide_banner -loglevel error -y \
-  -f lavfi -i "color=c=gray:s=270x480:r=24:d=0.25" \
-  -loop 1 -framerate 24 -i src/heyaa/assets/skull_freeze.svg \
+  -f lavfi -i "color=c=gray:s=270x480:r=60:d=0.25" \
+  -loop 1 -framerate 60 -i src/heyaa/assets/skull_freeze.svg \
   -filter_complex "[1:v]scale=w='if(lt(n,4),105*(0.62+0.38*n/4),105)':h=-1:eval=frame[skull];[0:v][skull]overlay=(W-w)/2:(H-h)/2:shortest=1,format=rgb24[out]" \
   -map "[out]" -frames:v 6 -f rawvideo output/skull-overlay.rgb
 python - <<'PY'
@@ -117,9 +138,9 @@ probe = json.loads(subprocess.check_output([
 video = next(s for s in probe["streams"] if s["codec_type"] == "video")
 audio = next(s for s in probe["streams"] if s["codec_type"] == "audio")
 assert (video["width"], video["height"]) == (1080, 1920), video
-assert int(video["nb_read_frames"]) == 192, video
-assert video["avg_frame_rate"] in ("24/1", "24/1"), video
-assert abs(float(probe["format"]["duration"]) - 8.0) <= (1 / 24 + 0.005)
+assert int(video["nb_read_frames"]) == 1200, video
+assert video["avg_frame_rate"] == "60/1", video
+assert abs(float(probe["format"]["duration"]) - 20.0) <= (1 / 60 + 0.005)
 assert audio["codec_type"] == "audio"
 edl = json.loads(Path("output/latest/edit_decision_list.json").read_text(encoding="utf-8"))
 assert edl["version"] == 1
@@ -127,12 +148,12 @@ cursor = 0
 for item in edl["video"]:
     assert item["start_f"] == cursor, (cursor, item)
     cursor += item["dur_f"]
-assert cursor == edl["total_frames"] == 192, (cursor, edl["total_frames"])
+assert cursor == edl["total_frames"] == 1200, (cursor, edl["total_frames"])
 assert edl["video"][-1]["type"] == "freeze"
 assert edl["video"][-1]["dur_f"] == round(2.0 * edl["fps_num"] / edl["fps_den"])
-assert edl["fps_num"] == 24
-assert len(report["events"]) == 14
-print("Render smoke test passed: exact frame count, continuous EDL, audio, full decode, render Critic, Director decision and atomic export.")
+assert edl["fps_num"] == 60
+assert len(report["events"]) >= 14
+print("Full-profile render test passed: 20 seconds at 1080x1920/60 FPS (1200 decoded frames), continuous EDL, exact 2-second freeze, audio, full decode, Render Critic, Director decision and atomic export.")
 PY
 
 # A rejected render invocation must propagate a non-zero process exit code.
