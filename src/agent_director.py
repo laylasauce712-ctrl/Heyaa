@@ -2644,12 +2644,18 @@ def run_doctor():
     ai_enabled = False
     binary = "tools/realesrgan/realesrgan-ncnn-vulkan"
     model_dir = "tools/realesrgan/models"
+    model_name = "realesrgan-x4plus"
+    model_scale = 2
     try:
         settings = json.loads(Path(settings_path).read_text(encoding="utf-8"))
         video_settings = settings.get("video_settings", {})
+        if not isinstance(video_settings, dict):
+            raise ValueError("video_settings must be an object")
         ai_enabled = video_settings.get("ai_upscale_enabled", False) is True
         binary = video_settings.get("ai_upscale_binary", binary)
         model_dir = video_settings.get("ai_upscale_model_dir", model_dir)
+        model_name = video_settings.get("ai_upscale_model", model_name)
+        model_scale = video_settings.get("ai_upscale_scale", model_scale)
     except (OSError, ValueError, AttributeError):
         checks["settings"] = {"status": "warning", "detail": f"Could not inspect {settings_path}"}
     binary_path = Path(binary)
@@ -2658,11 +2664,32 @@ def run_doctor():
     models_path = Path(model_dir)
     if not models_path.is_absolute():
         models_path = Path.cwd() / models_path
-    upscale_ok = binary_path.is_file() and models_path.is_dir()
+    # Match the renderer's preflight exactly: a directory alone is not enough;
+    # the selected model's .param and .bin weights must both be present.
+    model_file_stem = (
+        f"{model_name}-x{model_scale}"
+        if model_name == "realesr-animevideov3"
+        else str(model_name)
+    )
+    required_model_files = [
+        models_path / f"{model_file_stem}{suffix}" for suffix in (".param", ".bin")
+    ]
+    missing_model_files = [str(path) for path in required_model_files if not path.is_file()]
+    binary_executable = binary_path.is_file() and os.access(binary_path, os.X_OK)
+    model_files_exist = not missing_model_files
+    upscale_ok = (
+        binary_executable and models_path.is_dir() and model_files_exist
+    )
     checks["vulkan_realesrgan"] = {
         "status": "ok" if upscale_ok else ("fail" if ai_enabled else "warning"),
-        "enabled_in_settings": ai_enabled, "binary_exists": binary_path.is_file(),
+        "enabled_in_settings": ai_enabled,
+        "binary_exists": binary_path.is_file(),
+        "binary_executable": binary_executable,
         "models_directory_exists": models_path.is_dir(),
+        "selected_model": model_name,
+        "selected_scale": model_scale,
+        "model_files_exist": model_files_exist,
+        "missing_model_files": missing_model_files,
     }
     free_bytes = shutil.disk_usage(".").free
     checks["disk"] = {
