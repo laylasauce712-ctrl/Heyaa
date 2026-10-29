@@ -194,10 +194,14 @@ class AIUpscaleTests(unittest.TestCase):
                 }
             }), encoding="utf-8")
 
-            with patch("src.agent_director._settings_path", return_value=str(settings)), \\
-                 patch("src.agent_director.shutil.which", side_effect=lambda name: f"/usr/bin/{name}"), \\
-                 patch("src.agent_director.subprocess.run",
-                       return_value=subprocess.CompletedProcess([], 0, "", "")):
+            with (
+                patch("src.agent_director._settings_path", return_value=str(settings)),
+                patch("src.agent_director.shutil.which", side_effect=lambda name: f"/usr/bin/{name}"),
+                patch(
+                    "src.agent_director.subprocess.run",
+                    return_value=subprocess.CompletedProcess([], 0, "", ""),
+                ),
+            ):
                 with contextlib.redirect_stdout(io.StringIO()) as output:
                     status_without_weights = renderer.run_doctor()
                 report = json.loads(output.getvalue())
