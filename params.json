@@ -29,7 +29,7 @@
     "source_chapter_seconds": 90,
     "subject_lock_enabled": true,
     "edl_mode": "on",
-    "ending_skull_enabled": false,
+    "ending_skull_enabled": true,
     "skull_size_px": 520,
     "skull_position_x": 0.5,
     "skull_position_y": 0.5,
