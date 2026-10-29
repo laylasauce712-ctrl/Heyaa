@@ -2582,6 +2582,38 @@ def create_contact_sheet(video_path, output_path, duration_seconds):
     return str(output_path)
 
 
+def describe_subject_tracking_context(layout_mode, long_source_mode, analysis):
+    """Describe tracking state without claiming future detections or disabled crops."""
+    analysis = analysis if isinstance(analysis, dict) else {}
+    if long_source_mode:
+        return (
+            "Long-source chapter search is active; appearance tracking will run inside "
+            "the selected chapter before clip allocation."
+        )
+
+    if analysis.get("detected"):
+        span = analysis.get("track_span_seconds")
+        quality = analysis.get("track_quality_proxy")
+        summary = (
+            "OpenCV found an appearance-consistent person track "
+            f"({span}s span; quality proxy={quality}). "
+        )
+        if layout_mode == "fill":
+            return summary + "Per-shot source timing and smoothed 9:16 crops will use nearby appearance observations."
+        return (
+            summary
+            + "Source timing may use nearby appearance observations; blur-fit framing preserves "
+            "the full source frame over a blurred background."
+        )
+
+    reason = str(analysis.get("reason") or "no stable track was detected")
+    if layout_mode == "fill":
+        fallback = "Using scene-density context and a centered 9:16 crop fallback."
+    else:
+        fallback = "Using audio/motion scene context and blur-fit full-frame framing."
+    return f"Person tracking unavailable: {reason}. {fallback}"
+
+
 def run_doctor():
     """Check core render dependencies plus optional OpenCV, Vulkan and free disk space."""
     checks = {}
@@ -2903,18 +2935,9 @@ def main(argv=None):
         "smoothing_tau_seconds": 0.65,
         "bounds_clamped_by_ffmpeg": True,
     }
-    if subject_analysis.get("detected"):
-        print(
-            f"[context] OpenCV found an appearance-consistent person track "
-            f"({subject_analysis.get('track_span_seconds')}s span; "
-            f"quality proxy={subject_analysis.get('track_quality_proxy')}). "
-            "Per-shot source centers and 9:16 crops will follow nearby observations."
-        )
-    else:
-        print(
-            f"[context] Person tracking unavailable: {subject_analysis.get('reason', 'no stable track')}. "
-            "Using scene-density context and centered-crop fallback."
-        )
+    print(
+        f"[context] {describe_subject_tracking_context(LAYOUT_MODE, long_source_mode, subject_analysis)}"
+    )
     context_duration = max(0.1, context_end - context_start)
     context_scenes = sorted(cut - context_start for cut in scenes if context_start <= cut <= context_end)
     source_gap_frames = round(MIN_SOURCE_GAP_SECONDS * FPS)
@@ -3687,7 +3710,7 @@ def main(argv=None):
         })
         with open(report_path, "w", encoding="utf-8") as handle:
             json.dump(agent_report, handle, ensure_ascii=False, indent=2)
-        raise RuntimeError("Technical QA blocked export; previous final file was preserved. See output/agent_report.json.")
+        raise RuntimeError(f"Technical QA blocked export; previous final file was preserved. See {report_path}.")
     # Export Storage performs the actual atomic promotion after the Director decision.
     export_result_obj = export_storage_agent(
         final_video, FINAL,
@@ -3717,7 +3740,7 @@ def main(argv=None):
         agent_report["summary"] = "Export Storage blocked promotion; the existing final video was preserved."
         with open(report_path, "w", encoding="utf-8") as handle:
             json.dump(agent_report, handle, ensure_ascii=False, indent=2)
-        raise RuntimeError("Export Storage could not promote the verified render; see output/agent_report.json.")
+        raise RuntimeError(f"Export Storage could not promote the verified render; see {report_path}.")
     render_report["file"] = FINAL
     agent_report["render_report"]["file"] = FINAL
     with open(report_path, "w", encoding="utf-8") as handle:
