@@ -15,7 +15,7 @@ cat > params.json <<'JSON'
 {
   "style": "phonk_montagem",
   "video_settings": {"resolution": "1080x1920", "fps": 24, "codec": "libx264", "crf": 26, "preset": "ultrafast"},
-  "edit_settings": {"duration_seconds": 8, "speed": 1.1, "freeze_duration": 1.7, "drop_freeze_duration": 0.25, "edl_mode": "on", "min_clips": 6, "max_clips": 6, "reference_pacing": false, "mirror_enabled": false, "layout_mode": "blur_fit"},
+  "edit_settings": {"duration_seconds": 8, "speed": 1.1, "freeze_duration": 2.0, "drop_freeze_duration": 0.25, "edl_mode": "on", "min_clips": 6, "max_clips": 6, "reference_pacing": false, "mirror_enabled": false, "layout_mode": "blur_fit"},
   "audio_settings": {"beat_sync": false, "beat_flash": false, "bass_boost": false, "music_loop": true}
 }
 JSON
@@ -129,7 +129,7 @@ for item in edl["video"]:
     cursor += item["dur_f"]
 assert cursor == edl["total_frames"] == 192, (cursor, edl["total_frames"])
 assert edl["video"][-1]["type"] == "freeze"
-assert edl["video"][-1]["dur_f"] >= round(1.7 * edl["fps_num"] / edl["fps_den"])
+assert edl["video"][-1]["dur_f"] == round(2.0 * edl["fps_num"] / edl["fps_den"])
 assert edl["fps_num"] == 24
 assert len(report["events"]) == 12
 print("Render smoke test passed: exact frame count, continuous EDL, audio, full decode, render Critic, Director decision and atomic export.")
