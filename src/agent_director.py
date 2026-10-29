@@ -2600,10 +2600,14 @@ def main(argv=None):
         "forced_progression_shift_count": 0,
         "fallback_reason": "source_has_no_audio_or_feature_measurement_unavailable",
     }
-    print(
-        f"[source] Search scope: {source_scope_start:.2f}s–{source_scope_end:.2f}s "
+    progress_event(
+        "source_selection_scope", "completed",
+        f"Search scope is {source_scope_start:.2f}s–{source_scope_end:.2f}s "
         f"({source_scope_duration:.2f}s; {source_scope['method']}).",
-        flush=True,
+        {"method": source_scope["method"], "start_seconds": source_scope_start,
+         "end_seconds": source_scope_end, "duration_seconds": source_scope_duration,
+         "threshold_seconds": source_scope["threshold_seconds"],
+         "candidate_window_max_seconds": 4.0 if source_scope["method"] == "full_source_long_video" else None},
     )
     if source_scope["method"] == "full_source_long_video":
         print(
@@ -2670,6 +2674,16 @@ def main(argv=None):
         "candidate_window_max_seconds": 4.0 if source_scope["method"] == "full_source_long_video" else None,
         "analysis_cache_hit": source_feature_cache_hit if source_audio_available and "source_feature_cache_hit" in locals() else False,
     })
+    source_selection_summary = (
+        f"Selected {len(planned_source_ranges)} non-overlapping clip ranges from "
+        f"{source_selection_report['measured_scene_segment_count']} measured candidate windows."
+        if planned_source_ranges is not None else
+        f"Using source-progression fallback: {source_selection_report['fallback_reason']}."
+    )
+    progress_event(
+        "source_selection", "completed" if planned_source_ranges is not None else "fallback",
+        source_selection_summary, source_selection_report,
+    )
     context["source_selection_scope"] = dict(source_scope)
     context["source_selection"] = source_selection_report
     edl_video = []

@@ -2,7 +2,7 @@
 
 ## Implemented stages
 
-The current repository runs deterministic Python modules—not an independent LLM swarm. Each stage returns a structured result with status, findings, recommendations and evidence; events in `output/agent_report.json` are emitted from real execution, not fabricated agent chat.
+The current repository runs deterministic Python modules—not an independent LLM swarm. Each stage returns a structured result with status, findings, recommendations and evidence; events in `output/agent_report.json` are emitted from real execution, not fabricated agent chat. Use `scripts/watch_agents.py` to read a human-friendly live trace and inspect the final structured report.
 
 1. **Settings Agent** — validates the actual `params.json` structure, numeric types/ranges, supported codec/preset, clip limits (up to 40), explicit booleans and EDL mode. `edit_settings.min_shot_seconds` defaults to 0.75s and supports 0.3–3.0s; when no exact `--clip-count` is provided, the selected count is derived from measured reference cadence and bounded by the configured limits.
 2. **Media Analyst** — reports measured source duration, dimensions, detected scene-change count and music duration. Scene cuts are visual-change heuristics, not semantic scene understanding.
@@ -20,7 +20,7 @@ The current repository runs deterministic Python modules—not an independent LL
 
 ## Not implemented yet
 
-- No independent LLM agents, online trend research agent, semantic vision-model reviewer, identity/action recognition, frontend/Agent Room, publish agent or autonomous publishing. Live progress is currently exposed through terminal events plus an append-only `progress.jsonl` trace; this is telemetry for a future interface, not a GUI or independent LLM conversation.
+- No independent LLM agents, online trend research agent, semantic vision-model reviewer, identity/action recognition, graphical Agent Room, publish agent or autonomous publishing. The text-mode `scripts/watch_agents.py` viewer exposes live events and evidence; it is not an independent LLM conversation or GUI.
 - Real-ESRGAN AI restoration is controlled by `video_settings.ai_upscale_enabled`; it runs only when enabled. In `fill` layout, frames are cropped to 9:16 before restoration and extracted at the source video's nominal frame rate, then resampled to output FPS during composition. `blur_fit` deliberately retains full frames for its blurred background effect. The per-batch timeout is configurable with `video_settings.ai_upscale_batch_timeout_seconds` (30–1800 seconds; default 600). Intermediate clips use `video_settings.intermediate_crf` (default 10) to reduce compounded encoding loss before the final encode. Scene detection scales down to 320px wide first. Scene cuts, beat grids, reference pacing and audio/motion segment measurements are cached under `output/cache/`, keyed by SHA-256 of each input plus analysis parameters; cache hits/misses are recorded in `agent_report.json`. The executable and weights must be installed separately or the renderer fails fast. The model may synthesize plausible texture and cannot guarantee source-truth detail. It does not recognize the person or action in the footage. The renderer has an optional OpenCV HOG appearance-track proxy for framing/cut selection; it can be absent if OpenCV is not installed and cannot identify a real person.
 - To enable that lightweight local detector, install `requirements-vision.txt` in the same Python environment used for rendering. For an existing Linux/WSL worktree, `bash scripts/prepare_local_worktree.sh --disable-ai-upscale ../Heyaa-ai-upscale-run` can safely reuse the source worktree's untracked `input/`, local `params.json`, and Real-ESRGAN install, then install OpenCV into an isolated `.venv`. The optional `--disable-ai-upscale` flag disables Real-ESRGAN only in the destination worktree for a faster diagnostic render; omit it when deliberately testing AI restoration. The helper preflights Python venv support and all existing link targets before changing local paths, refuses to overwrite an unrelated `params.local.json`, and leaves tracked `params.json` unchanged. It writes the requested settings to ignored `params.local.json`; start the diagnostic render with `HEYAA_PARAMS_PATH=params.local.json .venv/bin/python src/agent_director.py --variants 1 --clip-count 8`. The helper never modifies the source worktree and expects `input/test_video.mp4` plus `input/phonk.mp3`; a reference video is optional. HOG may still miss small or distant football players, so a missing/stable track remains explicitly reported as a fallback rather than semantic subject understanding.
 - No semantic hook score or complete aesthetic craft score. Technical metrics cannot determine whether framing, timing or style feels right for a human viewer.
@@ -31,6 +31,23 @@ The current repository runs deterministic Python modules—not an independent LL
 ## Live progress and clip-count comparisons
 
 Each render writes `output/progress.jsonl` (or `output/variants/variant_NN/progress.jsonl` for comparison renders). Each JSONL row has a UTC timestamp, stage, status, summary and structured details. It records source/settings preflight, analysis, selected clip count, per-clip render completion, EDL validation, Inspector, the structured agent results, Director decision and Export Storage result. The terminal remains the live stream; `progress.jsonl` is the durable machine-readable trace. The existing `agent_report.json`, `pre_render_review.json` and `edit_decision_list.json` remain in place.
+
+### Watch agents live
+
+Start a render in one WSL terminal. In a second terminal, run:
+
+```bash
+python3 scripts/watch_agents.py
+```
+
+It follows the newest timestamped run under `output/runs/` and prints pipeline stages, pre-render review messages, and completed agent results with findings, recommendations and compact evidence. Stop live view with `Ctrl+C`. To inspect the final report after the render, run:
+
+```bash
+python3 scripts/watch_agents.py --once
+```
+
+For an explicit run directory, pass `--run-dir output/runs/<timestamp>`. The viewer only displays decisions and measurements actually recorded by the pipeline; it does not expose fictional hidden thoughts or create additional agents. Full evidence remains in `agent_report.json`, `pre_render_review.json` and `progress.jsonl`.
+
 
 The renderer can compare exact motion-clip counts while retaining the same selected source, music, edit style and configured effects. The `--clip-count-options` parser accepts counts from 6 through 40, matching `edit_settings.max_clips`; it does not impose a separate 18-clip ceiling. In count-comparison mode, source-time progression is held to the same balanced profile so the primary planned difference is the number of clips. For the configured 8–40 clip bounds, use:
 
