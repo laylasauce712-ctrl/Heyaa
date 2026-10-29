@@ -31,8 +31,8 @@ class YouTubeUrlTests(unittest.TestCase):
             def fake_download(url, target_path, kind):
                 return Path(target_path)
 
-            with patch("src.heyaa.media_sources.download_media_source", side_effect=fake_download) as downloader, \\
-                 patch("src.heyaa.media_sources.validate_media_file") as validator, \\
+            with patch("src.heyaa.media_sources.download_media_source", side_effect=fake_download) as downloader, \
+                 patch("src.heyaa.media_sources.validate_media_file") as validator, \
                  patch("src.heyaa.media_sources.extract_reference_audio") as extract_audio:
                 result = prepare_media_sources(
                     video_url="https://media.example/source.mp4",
@@ -59,8 +59,8 @@ class YouTubeUrlTests(unittest.TestCase):
             def fake_download(url, target_path, kind):
                 return Path(target_path)
 
-            with patch("src.heyaa.media_sources.download_media_source", side_effect=fake_download) as downloader, \\
-                 patch("src.heyaa.media_sources.validate_media_file"), \\
+            with patch("src.heyaa.media_sources.download_media_source", side_effect=fake_download) as downloader, \
+                 patch("src.heyaa.media_sources.validate_media_file"), \
                  patch("src.heyaa.media_sources.extract_reference_audio") as extract_audio:
                 prepare_media_sources(
                     video_url="https://media.example/source.mp4",
