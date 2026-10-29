@@ -218,7 +218,7 @@ class AIUpscaleTests(unittest.TestCase):
                 self.assertEqual(status_with_weights, 0)
                 self.assertEqual(good_report["status"], "ok")
                 self.assertTrue(good_report["checks"]["vulkan_realesrgan"]["binary_executable"])
-                self.assertTrue(good_report["checks"]["vulkan_realesrgan"]["model_files_exist")
+                self.assertTrue(good_report["checks"]["vulkan_realesrgan"]["model_files_exist"])
 
     def test_disabled_mode_does_not_require_real_esrgan_binary(self):
         renderer.AI_UPSCALE_ENABLED = False
