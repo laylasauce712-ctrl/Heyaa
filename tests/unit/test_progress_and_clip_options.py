@@ -291,7 +291,7 @@ class ProgressTraceTests(unittest.TestCase):
             event["agent"] == "director" and event["status"] == "running"
             for event in progress_events
         ))
-        self.assertEqual(len(completed_events), 11)
+        self.assertEqual(len(completed_events), 13)
         self.assertEqual(len(report["events"]), 11)  # Stable completed-results contract.
 
 

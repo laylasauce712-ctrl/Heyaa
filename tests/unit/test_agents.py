@@ -382,7 +382,7 @@ class AgentTests(unittest.TestCase):
             "render_report": render_report(), "render_critique": render_critique(),
         }, emit=emitted.append)
         self.assertEqual(result["status"], "ready_for_human_review")
-        self.assertEqual(len(emitted), 11)
+        self.assertEqual(len(emitted), 13)
         self.assertEqual(emitted, result["events"])
         self.assertFalse(result["viral_guarantee"])
         self.assertEqual(result["results"]["niche_analyst"]["status"], "insufficient_evidence")
