@@ -36,7 +36,7 @@ cat > params.json <<'JSON'
 {
   "style": "phonk_montagem",
   "video_settings": {"resolution": "1080x1920", "fps": 60, "codec": "libx264", "crf": 18, "preset": "veryfast", "ai_upscale_enabled": false},
-  "edit_settings": {"duration_seconds": 20, "speed": 1.1, "freeze_duration": 2.0, "drop_freeze_duration": 0.25, "edl_mode": "on", "min_clips": 8, "max_clips": 40, "min_shot_seconds": 0.35, "reference_pacing": true, "mirror_enabled": true, "layout_mode": "blur_fit", "source_min_gap_seconds": 0.05, "source_chapter_seconds": 90, "subject_lock_enabled": true, "ending_skull_enabled": false, "impact_sfx_enabled": true},
+  "edit_settings": {"duration_seconds": 20, "speed": 1.1, "freeze_duration": 2.0, "drop_freeze_duration": 0.25, "edl_mode": "on", "min_clips": 8, "max_clips": 40, "min_shot_seconds": 0.35, "reference_pacing": true, "mirror_enabled": true, "layout_mode": "blur_fit", "source_min_gap_seconds": 0.05, "source_chapter_seconds": 90, "subject_lock_enabled": true, "ending_skull_enabled": true, "skull_size_px": 520, "skull_position_x": 0.5, "skull_position_y": 0.5, "skull_pop_seconds": 0.18, "impact_sfx_enabled": true},
   "audio_settings": {"beat_sync": true, "beat_flash": true, "bass_boost": true, "music_loop": true}
 }
 JSON
