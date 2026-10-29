@@ -168,6 +168,66 @@ class ContextPlanningTests(unittest.TestCase):
         self.assertTrue(selected)
         self.assertTrue(all(item["start_seconds"] >= 90.0 and item["end_seconds"] <= 180.0 for item in selected))
 
+    def test_choose_source_chapter_uses_persistent_appearance_evidence(self):
+        segments = []
+        for index in range(18):
+            start = index * 10.0
+            active = start < 90.0
+            segments.append({
+                "start_seconds": start, "end_seconds": start + 10.0,
+                "audio_loudness_db": -18.0 if active else -22.0,
+                "motion_score": 32.0 if active else 20.0,
+            })
+        activity_only, _ = renderer.choose_source_chapter(segments, 0.0, 180.0, 90.0)
+        shortlist = activity_only["candidate_chapters_ranked"][:3]
+        self.assertTrue(shortlist)
+        self.assertEqual(shortlist[0]["index"], 0)
+        track_reports = [
+            {"chapter_index": item["index"], "detected": True,
+             "track_quality_proxy": 0.15 if item["index"] == 0 else 0.95,
+             "track_span_seconds": 2.0 if item["index"] == 0 else 12.0}
+            for item in shortlist[:2]
+        ]
+        selected, _ = renderer.choose_source_chapter(
+            segments, 0.0, 180.0, 90.0, subject_chapter_reports=track_reports
+        )
+        self.assertEqual(selected["selection_policy"], "activity_plus_subject_track")
+        self.assertEqual(selected["selected_chapter_index"], track_reports[1]["chapter_index"])
+        self.assertFalse(selected["semantic_context_understanding"])
+
+    def test_hard_subject_lock_constrains_ranges_when_coverage_is_sufficient(self):
+        segments = [
+            {"start_seconds": 0.0, "end_seconds": 3.0, "audio_loudness_db": -5.0,
+             "motion_score": 30.0, "subject_presence_score": 0.0},
+            {"start_seconds": 3.0, "end_seconds": 6.0, "audio_loudness_db": -25.0,
+             "motion_score": 5.0, "subject_presence_score": 0.9},
+            {"start_seconds": 6.0, "end_seconds": 9.0, "audio_loudness_db": -25.0,
+             "motion_score": 5.0, "subject_presence_score": 0.9},
+            {"start_seconds": 9.0, "end_seconds": 12.0, "audio_loudness_db": -5.0,
+             "motion_score": 30.0, "subject_presence_score": 0.0},
+        ]
+        assignments, evidence = renderer.plan_subject_locked_source_ranges(
+            [2, 2], segments, fps=1, minimum_gap_frames=0
+        )
+        self.assertTrue(evidence["applied"], evidence)
+        self.assertEqual(len(assignments), 2)
+        self.assertTrue(all(3 <= item["source_start_f"] < 9 for item in assignments))
+        self.assertTrue(all(item["source_start_f"] + item["source_dur_f"] <= 9 for item in assignments))
+
+    def test_hard_subject_lock_falls_back_when_track_coverage_cannot_fit_the_edit(self):
+        segments = [
+            {"start_seconds": 0.0, "end_seconds": 2.0, "audio_loudness_db": -20.0,
+             "motion_score": 10.0, "subject_presence_score": 0.9},
+            {"start_seconds": 2.0, "end_seconds": 10.0, "audio_loudness_db": -10.0,
+             "motion_score": 20.0, "subject_presence_score": 0.0},
+        ]
+        assignments, evidence = renderer.plan_subject_locked_source_ranges(
+            [2, 2], segments, fps=1, minimum_gap_frames=0
+        )
+        self.assertIsNone(assignments)
+        self.assertFalse(evidence["applied"])
+        self.assertIn("enough footage", evidence["reason"])
+
     def test_subject_presence_soft_lock_changes_rank_only_with_positive_track_evidence(self):
         segments = [
             {"start_seconds": 10.0, "end_seconds": 12.0, "audio_loudness_db": -20.0, "motion_score": 10.0},

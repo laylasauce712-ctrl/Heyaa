@@ -389,7 +389,7 @@ class AgentTests(unittest.TestCase):
         self.assertIn("planner", result["results"])
         self.assertIn("director", result["results"])
         self.assertEqual(result["results"]["hook_analyst"]["status"], "needs_review")
-        self.assertEqual(len(result["agent_dialogue"]), 6)
+        self.assertEqual(len(result["agent_dialogue"]), 8)
         self.assertTrue(any(turn["speaker"] == "Reference Analyst" for turn in result["agent_dialogue"]))
         self.assertEqual(result["results"]["reference_analyst"]["status"], "skipped")
         self.assertEqual(result["results"]["framing_agent"]["status"], "ok")

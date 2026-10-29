@@ -292,7 +292,7 @@ class ProgressTraceTests(unittest.TestCase):
             for event in progress_events
         ))
         self.assertEqual(len(completed_events), 13)
-        self.assertEqual(len(report["events"]), 11)  # Stable completed-results contract.
+        self.assertEqual(len(report["events"]), 13)  # One result per implemented structured stage.
 
 
 if __name__ == "__main__":
