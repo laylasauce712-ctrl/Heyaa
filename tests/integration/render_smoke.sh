@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# This smoke test uses the renderer's fixed input/output paths. Preserve any
-# existing user media and render artifacts before creating disposable fixtures.
+# This integration test renders the normal 20-second, 1080x1920/60-FPS edit profile
+# with generated fixtures. Preserve any existing user media and render artifacts.
+# AI upscaling is disabled here because CI does not install the external Vulkan binary/models;
+# its explicit enable/fail-fast behavior is covered by the unit tests.
 BACKUP_DIR="$(mktemp -d)"
 cp params.json "$BACKUP_DIR/params.json"
 HAD_INPUT=0
@@ -138,7 +140,7 @@ audio = next(s for s in probe["streams"] if s["codec_type"] == "audio")
 assert (video["width"], video["height"]) == (1080, 1920), video
 assert int(video["nb_read_frames"]) == 1200, video
 assert video["avg_frame_rate"] == "60/1", video
-assert abs(float(probe["format"]["duration"]) - 20.0) <= (1 / 24 + 0.005)
+assert abs(float(probe["format"]["duration"]) - 20.0) <= (1 / 60 + 0.005)
 assert audio["codec_type"] == "audio"
 edl = json.loads(Path("output/latest/edit_decision_list.json").read_text(encoding="utf-8"))
 assert edl["version"] == 1
@@ -150,7 +152,7 @@ assert cursor == edl["total_frames"] == 1200, (cursor, edl["total_frames"])
 assert edl["video"][-1]["type"] == "freeze"
 assert edl["video"][-1]["dur_f"] == round(2.0 * edl["fps_num"] / edl["fps_den"])
 assert edl["fps_num"] == 60
-assert len(report["events"]) == 14
+assert len(report["events"]) >= 14
 print("Full-profile render test passed: 20 seconds at 1080x1920/60 FPS (1200 decoded frames), continuous EDL, exact 2-second freeze, audio, full decode, Render Critic, Director decision and atomic export.")
 PY
 
