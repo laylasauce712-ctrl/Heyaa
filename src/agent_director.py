@@ -942,11 +942,8 @@ def insert_drop_boundary(boundaries, desired_time, min_gap=0.75, max_gap=3.3):
 
 
 def choose_context_window(source_duration, scene_cuts, target_duration):
-    """Prefer a coherent temporal window over sampling across an entire long recording.
+    """Choose a bounded framing/tracking context; this is not the source-search limit."""
 
-    This is a scene-cut-density proxy only; it does not identify a person or
-    understand the semantics of a 20-minute scene.
-    """
     if not math.isfinite(float(source_duration)) or source_duration <= 0:
         return {"start_seconds": 0.0, "end_seconds": 0.0, "scene_cuts": 0, "method": "unavailable"}
     window = min(float(source_duration), max(8.0, float(target_duration) * 2.0))
@@ -977,6 +974,37 @@ def choose_context_window(source_duration, scene_cuts, target_duration):
             "scene_cuts": best_count, "window_seconds": round(end - best_start, 3),
             "target_cut_count": target_cut_count, "method": "moderate-scene-cut-density-window",
             "same_person_tracking": False}
+
+
+def choose_source_selection_scope(source_duration, target_duration, context_start, context_end):
+    """Use the full recording for long sources; retain the selected context for short sources.
+
+    The full-source threshold avoids changing established behavior for short clips while
+    letting a 12-minute input contribute candidate moments throughout its timeline.
+    Selection is still a loudness/motion proxy, not semantic action recognition.
+    """
+    values = (source_duration, target_duration, context_start, context_end)
+    if any(not isinstance(value, (int, float)) or isinstance(value, bool)
+           or not math.isfinite(float(value)) for value in values):
+        raise ValueError("Source-selection scope values must be finite numbers.")
+    source_length, target_length = float(source_duration), float(target_duration)
+    context_start, context_end = float(context_start), float(context_end)
+    if source_length <= 0 or target_length <= 0 or context_start < 0 or context_end <= context_start:
+        raise ValueError("Source-selection scope boundaries are invalid.")
+    threshold = max(60.0, target_length * 3.0)
+    if source_length >= threshold:
+        return {
+            "start_seconds": 0.0,
+            "end_seconds": source_length,
+            "method": "full_source_long_video",
+            "threshold_seconds": round(threshold, 3),
+        }
+    return {
+        "start_seconds": context_start,
+        "end_seconds": min(source_length, context_end),
+        "method": "context_window_short_video",
+        "threshold_seconds": round(threshold, 3),
+    }
 
 
 def _reference_boundaries(clip_count, total_duration, profile):
@@ -1196,23 +1224,39 @@ def _source_has_audio(path):
     return result.returncode == 0 and bool(result.stdout.strip())
 
 
-def build_source_scene_segments(start_seconds, end_seconds, scene_cuts):
-    """Split a source context into chronological, non-overlapping scene intervals."""
+def build_source_scene_segments(start_seconds, end_seconds, scene_cuts, max_segment_seconds=None):
+    """Split scene intervals into chronological candidates, optionally bounding their duration."""
     start, end = float(start_seconds), float(end_seconds)
     if not math.isfinite(start) or not math.isfinite(end) or start < 0 or end <= start:
         raise ValueError("Source context must have finite non-negative start and end > start.")
+    if max_segment_seconds is not None:
+        if (isinstance(max_segment_seconds, bool) or
+                not isinstance(max_segment_seconds, (int, float)) or
+                not math.isfinite(float(max_segment_seconds)) or float(max_segment_seconds) < 0.25):
+            raise ValueError("max_segment_seconds must be None or a finite number >= 0.25.")
+        max_segment_seconds = float(max_segment_seconds)
     cuts = sorted({
         float(value) for value in scene_cuts
         if isinstance(value, (int, float)) and not isinstance(value, bool)
         and math.isfinite(float(value)) and start + 1e-6 < float(value) < end - 1e-6
     })
     positions = [start] + cuts + [end]
-    return [
-        {"start_seconds": left, "end_seconds": right,
-         "audio_loudness_db": None, "motion_score": None}
-        for left, right in zip(positions, positions[1:])
-        if right - left >= 0.25
-    ]
+    segments = []
+    for scene_start, scene_end in zip(positions, positions[1:]):
+        scene_duration = scene_end - scene_start
+        if scene_duration < 0.25:
+            continue
+        piece_count = (max(1, math.ceil(scene_duration / max_segment_seconds))
+                       if max_segment_seconds is not None else 1)
+        for piece in range(piece_count):
+            left = scene_start + scene_duration * piece / piece_count
+            right = scene_start + scene_duration * (piece + 1) / piece_count
+            if right - left >= 0.25:
+                segments.append({
+                    "start_seconds": left, "end_seconds": right,
+                    "audio_loudness_db": None, "motion_score": None,
+                })
+    return segments
 
 
 def measure_source_scene_features(path, scene_segments):
@@ -2506,6 +2550,16 @@ def main(argv=None):
     drop_frame = round(planned_drop_position * FPS) if planned_drop_position is not None else None
     context = choose_context_window(source_duration, scenes, EDIT_DURATION)
     context_start, context_end = context["start_seconds"], context["end_seconds"]
+    source_scope = choose_source_selection_scope(
+        source_duration, EDIT_DURATION, context_start, context_end
+    )
+    source_scope_start = source_scope["start_seconds"]
+    source_scope_end = source_scope["end_seconds"]
+    source_scope_duration = source_scope_end - source_scope_start
+    source_scope_scenes = sorted(
+        cut - source_scope_start for cut in scenes
+        if source_scope_start <= cut <= source_scope_end
+    )
     subject_analysis = detect_person_track(VIDEO, context_start, context_end)
     SUBJECT_OBSERVATIONS = subject_analysis.get("observations", []) if subject_analysis.get("detected") else []
     context["subject_tracking"] = {
@@ -2546,14 +2600,31 @@ def main(argv=None):
         "forced_progression_shift_count": 0,
         "fallback_reason": "source_has_no_audio_or_feature_measurement_unavailable",
     }
+    print(
+        f"[source] Search scope: {source_scope_start:.2f}s–{source_scope_end:.2f}s "
+        f"({source_scope_duration:.2f}s; {source_scope['method']}).",
+        flush=True,
+    )
+    if source_scope["method"] == "full_source_long_video":
+        print(
+            "[source] Long-source mode scores bounded windows across the full recording; "
+            "loudness/motion are proxies, not semantic action or identity recognition.",
+            flush=True,
+        )
     source_audio_available = _source_has_audio(VIDEO)
     if source_audio_available:
         try:
-            scene_segments = build_source_scene_segments(context_start, context_end, scenes)
+            bounded_segments = source_scope["method"] == "full_source_long_video"
+            scene_segments = build_source_scene_segments(
+                source_scope_start, source_scope_end, scenes,
+                max_segment_seconds=4.0 if bounded_segments else None,
+            )
             measured_segments, source_feature_cache_hit = cached_analysis(
                 "source_scene_features", [VIDEO],
                 {"scene_segments": scene_segments, "fps": FPS, "audio_weight": 0.6,
-                 "motion_weight": 0.4, "feature_version": 1},
+                 "motion_weight": 0.4, "feature_version": 2,
+                 "scope_method": source_scope["method"],
+                 "max_segment_seconds": 4.0 if bounded_segments else None},
                 lambda: measure_source_scene_features(VIDEO, scene_segments),
             )
             planned_source_ranges = plan_ranked_disjoint_source_ranges(
@@ -2591,6 +2662,15 @@ def main(argv=None):
             print(f"[warn] Ranked scene selection unavailable ({exc}); using legacy source progression.", flush=True)
     else:
         print("[source] No audio stream in source video; using legacy scene-center selection.")
+    source_selection_report.update({
+        "scope_method": source_scope["method"],
+        "scope_start_seconds": round(source_scope_start, 3),
+        "scope_end_seconds": round(source_scope_end, 3),
+        "scope_duration_seconds": round(source_scope_duration, 3),
+        "candidate_window_max_seconds": 4.0 if source_scope["method"] == "full_source_long_video" else None,
+        "analysis_cache_hit": source_feature_cache_hit if source_audio_available and "source_feature_cache_hit" in locals() else False,
+    })
+    context["source_selection_scope"] = dict(source_scope)
     context["source_selection"] = source_selection_report
     edl_video = []
     output_cursor = 0
@@ -2612,9 +2692,9 @@ def main(argv=None):
             source_power = 1.0 if args.same_source_progression else VARIANT_SOURCE_POWERS.get(VARIANT_INDEX, 1.0)
             # Legacy fallback: snap a target to nearby scene cuts, then enforce
             # the EDL's chronological source progression constraint.
-            local_target = (progress ** source_power) * context_duration
-            local_center = choose_source_center(local_target, context_scenes, context_duration)
-            source_center = context_start + local_center
+            local_target = (progress ** source_power) * source_scope_duration
+            local_center = choose_source_center(local_target, source_scope_scenes, source_scope_duration)
+            source_center = source_scope_start + local_center
             track_observation = subject_observation_near(
                 SUBJECT_OBSERVATIONS, source_center,
                 max_distance_seconds=max(1.5, dur_f / FPS)

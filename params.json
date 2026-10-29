@@ -19,7 +19,7 @@
     "speed": 1.1,
     "min_clips": 8,
     "max_clips": 40,
-    "min_shot_seconds": 0.75,
+    "min_shot_seconds": 0.35,
     "reference_pacing": true,
     "mirror_enabled": true,
     "layout_mode": "blur_fit",

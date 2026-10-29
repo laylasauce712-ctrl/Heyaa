@@ -116,6 +116,42 @@ class ContextPlanningTests(unittest.TestCase):
             self.assertEqual(first["candidate_count"], 1)
             self.assertEqual(third["candidate_count"], 2)
 
+    def test_long_source_selection_uses_full_timeline_while_short_source_keeps_context(self):
+        long_scope = renderer.choose_source_selection_scope(
+            source_duration=12 * 60.0, target_duration=18.0,
+            context_start=260.0, context_end=296.0,
+        )
+        self.assertEqual(long_scope["method"], "full_source_long_video")
+        self.assertEqual(long_scope["start_seconds"], 0.0)
+        self.assertEqual(long_scope["end_seconds"], 720.0)
+
+        short_scope = renderer.choose_source_selection_scope(
+            source_duration=45.0, target_duration=18.0,
+            context_start=5.0, context_end=41.0,
+        )
+        self.assertEqual(short_scope["method"], "context_window_short_video")
+        self.assertEqual(short_scope["start_seconds"], 5.0)
+        self.assertEqual(short_scope["end_seconds"], 41.0)
+
+    def test_long_source_candidates_cover_timeline_in_bounded_non_overlapping_windows(self):
+        segments = renderer.build_source_scene_segments(
+            0.0, 12.0, [5.0], max_segment_seconds=4.0,
+        )
+        self.assertGreaterEqual(len(segments), 4)
+        self.assertAlmostEqual(segments[0]["start_seconds"], 0.0)
+        self.assertAlmostEqual(segments[-1]["end_seconds"], 12.0)
+        for segment in segments:
+            self.assertGreaterEqual(segment["end_seconds"] - segment["start_seconds"], 0.25)
+            self.assertLessEqual(segment["end_seconds"] - segment["start_seconds"], 4.0 + 1e-9)
+        for left, right in zip(segments, segments[1:]):
+            self.assertAlmostEqual(left["end_seconds"], right["start_seconds"])
+
+    def test_invalid_source_scope_and_candidate_window_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, "scope"):
+            renderer.choose_source_selection_scope(720.0, 18.0, 10.0, 5.0)
+        with self.assertRaisesRegex(ValueError, "max_segment_seconds"):
+            renderer.build_source_scene_segments(0.0, 10.0, [], max_segment_seconds=0.1)
+
     def test_scene_detection_scales_down_before_scoring(self):
         filt = renderer.scene_detection_filter(threshold=0.22, width=320)
         self.assertLess(filt.index("scale=320:-2"), filt.index("select="))

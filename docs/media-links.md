@@ -50,6 +50,23 @@ The reference is optional; omit --reference-url if you do not have one. You may
 mix URLs with local files: if --video-url is omitted, input/test_video.mp4 must
 already exist; if --music-url is omitted, input/phonk.mp3 must already exist.
 
+## Long source footage and 20-second edits
+
+The default project profile targets a 20-second Phonk/Montagem edit. When source
+footage is at least 60 seconds long (or three times the moving-edit duration,
+whichever is greater), the source selector searches the full recording rather
+than only the shorter framing/tracking context window. It measures bounded
+candidate windows (up to 4 seconds each, split at detected scene changes when
+possible) and ranks them using source loudness and motion proxies; clips are then
+assigned in source-time order without reusing overlapping ranges. The report
+records the search scope, candidate count, selected segments and cache status.
+
+This selection does not understand football events, identify the same player, or
+guarantee that a loud/moving interval is a goal, skill, or meaningful action.
+Human review is still required. If feature measurement is unavailable, the
+fallback progresses through the selected source scope instead of limiting a
+long recording to the tracking context window.
+
 YouTube downloads show live yt-dlp progress and use IPv4 to avoid networks
 where the IPv6 route to media/CDN hosts is broken. Source footage is capped at
 1080p landscape or 1080x1920 portrait (matching the 1080x1920 output); the optional
