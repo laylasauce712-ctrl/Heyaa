@@ -52,10 +52,16 @@ def settings_agent(config: dict[str, Any]) -> AgentResult:
         return AgentResult("settings_agent", "blocked", None, 0.0,
                            ("video_settings, edit_settings and audio_settings must be objects.",),
                            ("Repair params.json before rendering.",), {})
+    layout_mode = edit.get("layout_mode")
+    if layout_mode is None:
+        legacy_smart_crop = edit.get("smart_crop")
+        layout_mode = ("fill" if legacy_smart_crop else "blur_fit") if isinstance(legacy_smart_crop, bool) else "fill"
     if config.get("style") != "phonk_montagem":
         findings.append("Only style='phonk_montagem' is implemented.")
-    if str(video.get("resolution", "")).lower() != "1080x1920":
-        findings.append("This renderer's required output is 1080x1920 (9:16).")
+    preview_mode = config.get("_preview_mode") is True
+    required_resolution = "540x960" if preview_mode else "1080x1920"
+    if str(video.get("resolution", "")).lower() != required_resolution:
+        findings.append(f"This renderer requires {required_resolution} output for the selected mode.")
     ai_upscale_enabled = video.get("ai_upscale_enabled", False)
     if not isinstance(ai_upscale_enabled, bool):
         findings.append("video_settings.ai_upscale_enabled must be an explicit boolean.")
@@ -68,6 +74,9 @@ def settings_agent(config: dict[str, Any]) -> AgentResult:
     for path_key in ("ai_upscale_binary", "ai_upscale_model_dir"):
         if path_key in video and not isinstance(video[path_key], str):
             findings.append(f"video_settings.{path_key} must be a path string.")
+    upscale_timeout = video.get("ai_upscale_batch_timeout_seconds", 600)
+    if isinstance(upscale_timeout, bool) or not isinstance(upscale_timeout, int) or not 30 <= upscale_timeout <= 1800:
+        findings.append("video_settings.ai_upscale_batch_timeout_seconds must be an integer from 30 to 1800.")
     fps = video.get("fps")
     if not isinstance(fps, int) or isinstance(fps, bool) or not 24 <= fps <= 60:
         findings.append("video_settings.fps must be an integer from 24 to 60.")
@@ -79,14 +88,42 @@ def settings_agent(config: dict[str, Any]) -> AgentResult:
         findings.append("edit_settings.speed must be between 1.0x and 1.35x.")
     freeze = edit.get("freeze_duration")
     if (not _finite_number(freeze) or not _finite_number(duration) or
-            not 1.7 <= float(freeze) <= 3.0 or float(freeze) >= float(duration)):
-        findings.append("freeze_duration must be 1.7–3.0 seconds and shorter than the edit.")
+            abs(float(freeze) - 2.0) > 1e-9 or float(freeze) >= float(duration)):
+        findings.append("edit_settings.freeze_duration must be exactly 2.0 seconds and shorter than the edit.")
+    ending_skull_enabled = edit.get("ending_skull_enabled", False)
+    if not isinstance(ending_skull_enabled, bool):
+        findings.append("edit_settings.ending_skull_enabled must be an explicit boolean.")
     drop_freeze = edit.get("drop_freeze_duration", 0.25)
     if not _finite_number(drop_freeze) or not 0.1 <= float(drop_freeze) <= 0.6:
         findings.append("drop_freeze_duration must be between 0.1 and 0.6 seconds.")
-    for key in ("mirror_enabled", "smart_crop", "reference_pacing"):
+    min_shot_seconds = edit.get("min_shot_seconds", 0.75)
+    if not _finite_number(min_shot_seconds) or not 0.3 <= float(min_shot_seconds) <= 3.0:
+        findings.append("edit_settings.min_shot_seconds must be between 0.3 and 3.0 seconds.")
+    for key in ("mirror_enabled", "reference_pacing"):
         if not isinstance(edit.get(key), bool):
             findings.append(f"edit_settings.{key} must be an explicit boolean.")
+    chapter_seconds = edit.get("source_chapter_seconds", 90)
+    if not _finite_number(chapter_seconds) or not 60 <= float(chapter_seconds) <= 120:
+        findings.append("edit_settings.source_chapter_seconds must be between 60 and 120 seconds.")
+    if not isinstance(edit.get("subject_lock_enabled", True), bool):
+        findings.append("edit_settings.subject_lock_enabled must be an explicit boolean.")
+    source_gap = edit.get("source_min_gap_seconds", 0.05)
+    if (not _finite_number(source_gap) or not 0.0 <= float(source_gap) <= 1.0):
+        findings.append("edit_settings.source_min_gap_seconds must be between 0 and 1 second.")
+    skull_size = edit.get("skull_size_px", 420)
+    if isinstance(skull_size, bool) or not isinstance(skull_size, int) or not 160 <= skull_size <= 960:
+        findings.append("edit_settings.skull_size_px must be an integer from 160 to 960.")
+    for key in ("skull_position_x", "skull_position_y"):
+        value = edit.get(key, 0.5)
+        if not _finite_number(value) or not 0.0 <= float(value) <= 1.0:
+            findings.append(f"edit_settings.{key} must be between 0 and 1.")
+    pop_seconds = edit.get("skull_pop_seconds", 0.18)
+    if not _finite_number(pop_seconds) or not 0.08 <= float(pop_seconds) <= 0.6:
+        findings.append("edit_settings.skull_pop_seconds must be between 0.08 and 0.6 seconds.")
+    if not isinstance(edit.get("impact_sfx_enabled", True), bool):
+        findings.append("edit_settings.impact_sfx_enabled must be an explicit boolean.")
+    if layout_mode not in {"fill", "blur_fit"}:
+        findings.append("edit_settings.layout_mode must be either 'fill' or 'blur_fit'.")
     for key in ("beat_sync", "beat_flash", "bass_boost", "music_loop"):
         if not isinstance(audio.get(key), bool):
             findings.append(f"audio_settings.{key} must be an explicit boolean.")
@@ -95,11 +132,14 @@ def settings_agent(config: dict[str, Any]) -> AgentResult:
     minimum, maximum = edit.get("min_clips"), edit.get("max_clips")
     if (not isinstance(minimum, int) or isinstance(minimum, bool) or
             not isinstance(maximum, int) or isinstance(maximum, bool) or
-            not 6 <= minimum <= 12 or not minimum <= maximum <= 18):
-        findings.append("Clip bounds must satisfy 6 <= min_clips <= 12 and min_clips <= max_clips <= 18.")
+            not 6 <= minimum <= 12 or not minimum <= maximum <= 40):
+        findings.append("Clip bounds must satisfy 6 <= min_clips <= 12 and min_clips <= max_clips <= 40.")
     crf = video.get("crf")
     if not isinstance(crf, int) or isinstance(crf, bool) or not 16 <= crf <= 26:
         findings.append("video_settings.crf must be an integer from 16 to 26.")
+    intermediate_crf = video.get("intermediate_crf", 10)
+    if not isinstance(intermediate_crf, int) or isinstance(intermediate_crf, bool) or not 0 <= intermediate_crf <= 18:
+        findings.append("video_settings.intermediate_crf must be an integer from 0 to 18.")
     preset = video.get("preset")
     if preset not in {"ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow"}:
         findings.append("video_settings.preset is not an implemented x264 preset.")
@@ -109,12 +149,18 @@ def settings_agent(config: dict[str, Any]) -> AgentResult:
         return AgentResult("settings_agent", "blocked", None, 1.0,
                            tuple(findings), ("Correct params.json; unsupported settings must fail fast, not silently change.",),
                            {"resolution": video.get("resolution"), "fps": fps, "duration_seconds": duration,
-                            "speed": speed, "freeze_duration": freeze})
+                            "speed": speed, "freeze_duration": freeze,
+                            "source_chapter_seconds": chapter_seconds,
+                            "subject_lock_enabled": edit.get("subject_lock_enabled", True)})
     return AgentResult("settings_agent", "ok", None, 1.0,
                        ("All required settings are present and within renderer-supported bounds.",), (),
                        {"resolution": video["resolution"], "fps": fps, "duration_seconds": duration,
                         "speed": speed, "freeze_duration": freeze,
-                        "mirror_enabled": edit["mirror_enabled"], "smart_crop": edit["smart_crop"],
+                        "ending_skull_enabled": ending_skull_enabled,
+                        "source_chapter_seconds": chapter_seconds,
+                        "subject_lock_enabled": edit.get("subject_lock_enabled", True),
+                        "min_shot_seconds": float(min_shot_seconds),
+                        "mirror_enabled": edit["mirror_enabled"], "layout_mode": layout_mode,
                         "ai_upscale_enabled": ai_upscale_enabled,
                         "ai_upscale_model": ai_upscale_model,
                         "ai_upscale_scale": ai_upscale_scale,
@@ -188,7 +234,11 @@ def planner(context: dict[str, Any]) -> AgentResult:
                            ("The renderer did not provide an EDL.",),
                            ("Build and validate the EDL before rendering.",), {"edl_present": False})
     try:
-        validate_edl(edl)
+        gap_seconds = edit.get("source_min_gap_seconds", 0.05)
+        fps_num = edl.get("fps_num", 1)
+        fps_den = edl.get("fps_den", 1)
+        minimum_source_gap_f = round(float(gap_seconds) * float(fps_num) / float(fps_den))
+        validate_edl(edl, min_source_gap_f=minimum_source_gap_f)
     except (TypeError, ValueError, KeyError) as exc:
         return AgentResult("planner", "blocked", None, 1.0,
                            (f"EDL validation failed: {exc}",), ("Repair the EDL before export.",),
@@ -319,6 +369,67 @@ def reference_analyst(data: dict[str, Any]) -> AgentResult:
                         "does_not_copy_reference_frames": True})
 
 
+def source_chapter_agent(data: dict[str, Any]) -> AgentResult:
+    """Review the selected contiguous source chapter and its measured basis."""
+    if not isinstance(data, dict) or not data:
+        return AgentResult("source_chapter_agent", "insufficient_evidence", None, 0.0,
+                           ("No source-chapter selection evidence was supplied.",),
+                           ("Select and report a bounded source chapter before clip planning.",), {})
+    method = data.get("method")
+    if method == "short_source_context" and data.get("applied") is False:
+        return AgentResult("source_chapter_agent", "ok", None, 1.0,
+                           ("The source is short enough to use its existing context window.",),
+                           (), {"chapter": dict(data), "semantic_context_understanding": False})
+    start, end = data.get("start_seconds"), data.get("end_seconds")
+    if not _finite_number(start) or not _finite_number(end) or float(start) < 0 or float(end) <= float(start):
+        return AgentResult("source_chapter_agent", "insufficient_evidence", None, 0.0,
+                           ("The source chapter has no valid measured boundaries.",),
+                           ("Repair chapter-selection evidence before reviewing the edit.",), {"chapter": dict(data)})
+    if data.get("applied") is not True:
+        return AgentResult("source_chapter_agent", "insufficient_evidence", None, 0.0,
+                           ("Chapter selection did not complete.",),
+                           ("Use a measured activity-ranked chapter or a documented bounded fallback.",),
+                           {"chapter": dict(data), "semantic_context_understanding": False})
+    evidence = {"chapter": dict(data), "semantic_context_understanding": False}
+    if method == "scene-density-chapter-fallback":
+        return AgentResult("source_chapter_agent", "needs_review", None, 0.7,
+                           ("A contiguous fallback chapter was chosen using scene-cut density; semantic meaning was not assessed.",),
+                           ("Review the selected chapter before publishing.",), evidence)
+    if method != "activity-ranked-contiguous-chapter":
+        return AgentResult("source_chapter_agent", "needs_review", None, 0.7,
+                           ("A contiguous chapter was selected with an unrecognized method.",),
+                           ("Review chapter-selection evidence.",), evidence)
+    return AgentResult("source_chapter_agent", "ok", None, 0.9,
+                       ("One contiguous chapter was ranked from measured audio/motion proxies.",),
+                       ("Confirm the selected chapter contains the intended football action.",), evidence)
+
+
+def character_lock_agent(data: dict[str, Any]) -> AgentResult:
+    """Report whether a soft, appearance-based subject preference was available."""
+    if not isinstance(data, dict) or not data:
+        return AgentResult("character_lock_agent", "insufficient_evidence", None, 0.0,
+                           ("No character-lock evidence was supplied.",),
+                           ("Report the selected chapter's appearance tracking results.",), {})
+    if data.get("requested") is False:
+        return AgentResult("character_lock_agent", "ok", None, 1.0,
+                           ("Appearance-based selection preference is disabled by settings.",),
+                           (), {"character_lock": dict(data), "identity_semantics": False})
+    if data.get("method") == "short_source_framing_only":
+        return AgentResult("character_lock_agent", "ok", None, 1.0,
+                           ("For a short source, the available appearance track is used for framing only; a cross-source character lock is not needed.",),
+                           (), {"character_lock": dict(data), "identity_semantics": False})
+    evidence = {"character_lock": dict(data), "identity_semantics": False}
+    if data.get("preference_applied") is True and data.get("detected") is True:
+        return AgentResult("character_lock_agent", "needs_review", None, 0.7,
+                           ("A tracked appearance was used as a soft source-selection preference, not verified player identity.",),
+                           ("Check selected clips visually for player consistency; HOG tracking cannot establish identity or football role.",),
+                           evidence)
+    return AgentResult("character_lock_agent", "needs_review", None, 0.35,
+                       ("No reliable appearance-track preference was applied; only chapter-level continuity is guaranteed by this stage.",),
+                       ("Review the montage for changes of player; the current tracker is not a semantic identity model.",),
+                       evidence)
+
+
 def framing_agent(config: dict[str, Any], edl: dict[str, Any],
                   media_analysis: dict[str, Any] | None = None) -> AgentResult:
     """Check actual framing and report whether optional person-track guidance was measured."""
@@ -352,23 +463,31 @@ def framing_agent(config: dict[str, Any], edl: dict[str, Any],
                            ("EDL contains per-shot crop rectangles the current FFmpeg renderer does not implement.",),
                            ("Use the supported full-source crop or implement and test arbitrary EDL crop rectangles before rendering.",),
                            {"unsupported_crop_indices": unsupported, "clip_count": len(clips)})
-    smart_crop = edit.get("smart_crop")
+    layout_mode = edit.get("layout_mode")
+    if layout_mode is None:
+        legacy_smart_crop = edit.get("smart_crop")
+        layout_mode = ("fill" if legacy_smart_crop else "blur_fit") if isinstance(legacy_smart_crop, bool) else "fill"
+    if layout_mode not in {"fill", "blur_fit"}:
+        return AgentResult("framing_agent", "needs_fix", None, 1.0,
+                           ("The configured framing layout is unsupported.",),
+                           ("Set edit_settings.layout_mode to 'fill' or 'blur_fit'.",),
+                           {"layout_mode": layout_mode})
     mirror = edit.get("mirror_enabled")
-    mode = "center_crop_9_16" if smart_crop is True else "blurred_background_legacy"
+    mode = "fill_center_crop_9_16" if layout_mode == "fill" else "blur_fit_preserve_full_frame"
     recs = []
     findings = ["Every EDL clip uses the framing mode currently implemented by FFmpeg."]
     if mirror is True:
         recs.append("Mirroring is active; inspect any visible text because horizontal flipping reverses writing.")
     if subject_tracked:
-        if smart_crop is True:
-            findings.append("Optional OpenCV HOG detections guided nearby source-frame selection and 9:16 crop centers.")
+        if layout_mode == "fill":
+            findings.append("Optional OpenCV HOG detections guided nearby source-frame selection and fill-layout crop centers.")
         else:
-            findings.append("Optional OpenCV HOG detections guided source-time selection; the selected blurred-background foreground crop remains centered.")
+            findings.append("Optional OpenCV HOG detections guided source-time selection only; blur_fit preserves the entire source frame in the foreground.")
         findings.append("The tracker uses person-shape plus short-term appearance consistency; it does not verify identity or understand story roles.")
     else:
         findings.append("Subject tracking was unavailable or no stable person track was found; deterministic center crop remains the fallback.")
     return AgentResult("framing_agent", "ok", None, 0.7 if subject_tracked else 1.0, tuple(findings), tuple(recs),
-                       {"mode": "subject_aware_crop_proxy" if subject_tracked and smart_crop is True else mode,
+                       {"mode": "subject_aware_crop_proxy" if subject_tracked and layout_mode == "fill" else mode,
                         "mirror_enabled": mirror, "clip_count": len(clips),
                         "subject_tracking": subject_tracked,
                         "subject_tracking_method": subject_tracking.get("method"),
@@ -395,13 +514,27 @@ def hook_analyst(data: dict[str, Any]) -> AgentResult:
         0.0,
         min(1.0, 1.0 - abs(float(count) - expected_changes) / max(2.0, expected_changes * 1.5))
     )
+    overdense_threshold = expected_changes + max(2.0, expected_changes * 1.5)
+    if count > overdense_threshold:
+        interpretation = "overdense_scene_changes"
+    elif count < expected_changes / 2.0:
+        interpretation = "sparse_scene_changes"
+    else:
+        interpretation = "moderate_scene_change_cadence"
+    interpretation_finding = {
+        "overdense_scene_changes": "The opening contains unusually many detected changes, so the cadence proxy is zero; this does not mean no activity was detected.",
+        "sparse_scene_changes": "Few scene changes were detected in the opening window; this is a pacing proxy, not semantic hook analysis.",
+        "moderate_scene_change_cadence": "The detected opening cadence is within the heuristic range; semantic hook strength was not assessed.",
+    }[interpretation]
     return AgentResult("hook_analyst", "needs_review", round(activity_proxy, 4), 0.25,
-                       ("Opening cut-activity proxy was measured; semantic hook strength was not assessed.",),
+                       (interpretation_finding,),
                        ("Human-review the first seconds for a clear subject, readable action and immediate reason to keep watching.",
                         "The proxy rewards moderate opening change cadence only; it cannot identify the subject or judge meaning."),
                        {"measurement": data.get("measurement", "ffmpeg_scene_change"),
                         "window_seconds": float(window), "opening_scene_change_count": count,
                         "hook_activity_proxy": round(activity_proxy, 4),
+                        "activity_proxy_interpretation": interpretation,
+                        "overdense_threshold_scene_changes": overdense_threshold,
                         "proxy_formula": "distance of opening cut count from roughly one cut per second",
                         "semantic_hook_assessed": False})
 
@@ -481,8 +614,8 @@ def inspector(report: dict[str, Any]) -> AgentResult:
     failures: list[str] = []
     if missing:
         failures.append("Missing render QA fields: " + ", ".join(missing))
-    if report.get("width") != 1080 or report.get("height") != 1920:
-        failures.append("Output must be 1080x1920 (9:16).")
+    if (report.get("width"), report.get("height")) not in ((1080, 1920), (540, 960)):
+        failures.append("Output must be 1080x1920, or 540x960 for a preview.")
     fps = report.get("fps")
     expected_fps = report.get("expected_fps")
     if not _finite_number(fps) or float(fps) <= 0:
@@ -519,7 +652,7 @@ def render_critic(metrics: dict[str, Any]) -> AgentResult:
     """Critique measurable black-frame/audio risks; never claim to judge aesthetics."""
     if not isinstance(metrics, dict):
         metrics = {}
-    required = ("black_segments", "duration_seconds", "mean_volume_db", "max_volume_db", "audio_silent")
+    required = ("black_segments", "duration_seconds", "mean_volume_db", "max_volume_db", "true_peak_dbfs", "audio_silent")
     missing = [key for key in required if key not in metrics]
     if missing:
         return AgentResult("render_critic", "insufficient_evidence", None, 0.0,
@@ -529,6 +662,7 @@ def render_critic(metrics: dict[str, Any]) -> AgentResult:
     duration = metrics.get("duration_seconds")
     segments = metrics.get("black_segments")
     mean_db, peak_db = metrics.get("mean_volume_db"), metrics.get("max_volume_db")
+    true_peak_dbfs = metrics.get("true_peak_dbfs")
     if not _finite_number(duration) or float(duration) <= 0 or not isinstance(segments, list):
         return AgentResult("render_critic", "blocked", None, 0.0,
                            ("Technical critique input is malformed.",), ("Fix the measurement payload.",),
@@ -544,6 +678,11 @@ def render_critic(metrics: dict[str, Any]) -> AgentResult:
                            ("Inspect FFmpeg volumedetect output and listen to the rendered soundtrack.",),
                            {"mean_volume_db": mean_db, "max_volume_db": peak_db,
                             "semantic_visual_review": False})
+    if not metrics["audio_silent"] and not _finite_number(true_peak_dbfs):
+        return AgentResult("render_critic", "insufficient_evidence", None, 0.0,
+                           ("Encoded true-peak measurement is missing or invalid.",),
+                           ("Run FFmpeg ebur128 true-peak measurement before allowing export.",),
+                           {"true_peak_dbfs": true_peak_dbfs, "semantic_visual_review": False})
     checked_segments = []
     for index, segment in enumerate(segments):
         if not isinstance(segment, dict) or not _finite_number(segment.get("start_seconds")) or not _finite_number(segment.get("duration_seconds")) or float(segment["duration_seconds"]) < 0:
@@ -562,7 +701,8 @@ def render_critic(metrics: dict[str, Any]) -> AgentResult:
                            ("The output soundtrack appears silent or near-silent.",),
                            ("Do not promote this render; verify the music input, stream mapping and audio filters.",),
                            {"decision": "reject_silent_audio", "mean_volume_db": mean_db,
-                            "max_volume_db": peak_db, "audio_silent": metrics["audio_silent"],
+                            "max_volume_db": peak_db, "true_peak_dbfs": true_peak_dbfs,
+                            "audio_silent": metrics["audio_silent"],
                             "black_segments": checked_segments, "semantic_visual_review": False})
     measurement_errors = metrics.get("measurement_errors", [])
     if isinstance(measurement_errors, list) and measurement_errors:
@@ -570,7 +710,16 @@ def render_critic(metrics: dict[str, Any]) -> AgentResult:
     if longest_black >= max(0.75, float(duration) * 0.20):
         warnings.append("A long black interval was detected; review whether it is intentional.")
     if _finite_number(peak_db) and float(peak_db) >= -0.1:
-        warnings.append("Audio peak is near 0 dBFS; listen for clipping or harsh limiting.")
+        warnings.append("Audio sample peak is near 0 dBFS; listen for clipping or harsh limiting.")
+    if _finite_number(true_peak_dbfs) and float(true_peak_dbfs) >= 0.0:
+        return AgentResult("render_critic", "reject", None, 1.0,
+                           ("Encoded audio true peak reaches or exceeds 0 dBFS.",),
+                           ("Do not promote the render; lower the audio ceiling and measure the encoded file again.",),
+                           {"decision": "reject_true_peak_clipping", "true_peak_dbfs": true_peak_dbfs,
+                            "mean_volume_db": mean_db, "max_volume_db": peak_db,
+                            "black_segments": checked_segments, "semantic_visual_review": False})
+    if _finite_number(true_peak_dbfs) and float(true_peak_dbfs) > -0.5:
+        warnings.append("Encoded audio true peak is above the -0.5 dBFS safety target; review the limiter ceiling.")
     if _finite_number(mean_db) and float(mean_db) <= -35.0:
         warnings.append("Average audio level is very low; check perceived loudness on a real device.")
     status = "needs_review" if warnings else "ok"
@@ -580,6 +729,7 @@ def render_critic(metrics: dict[str, Any]) -> AgentResult:
                        {"longest_black_interval_seconds": round(longest_black, 4),
                         "black_interval_count": len(checked_segments),
                         "mean_volume_db": mean_db, "max_volume_db": peak_db,
+                        "true_peak_dbfs": true_peak_dbfs,
                         "warnings": warnings, "semantic_visual_review": False})
 
 
@@ -616,7 +766,7 @@ def director_agent(results: dict[str, AgentResult]) -> AgentResult:
     nonblocking = {
         name: {"status": result.status, "findings": list(result.findings)}
         for name, result in results.items()
-        if name in ("media_analyst", "beat_sync_agent", "reference_analyst", "hook_analyst", "niche_analyst", "render_critic")
+        if name in ("media_analyst", "beat_sync_agent", "reference_analyst", "source_chapter_agent", "character_lock_agent", "hook_analyst", "niche_analyst", "render_critic")
         and result.status not in ("ok",)
     }
     recommendations = ["Human visual review is required before considering the edit finished or publishing."]
@@ -705,6 +855,12 @@ def run_agent_team(context: dict[str, Any],
     announce("reference_analyst", "reference_analysis")
     reference = reference_analyst(context.get("reference_analysis", {}))
     record(reference, "reference_analysis")
+    announce("source_chapter_agent", "source_chapter_review")
+    source_chapter = source_chapter_agent(context.get("source_chapter", {}))
+    record(source_chapter, "source_chapter_review")
+    announce("character_lock_agent", "character_lock_review")
+    character_lock = character_lock_agent(context.get("character_lock", {}))
+    record(character_lock, "character_lock_review")
     announce("framing_agent", "framing_review")
     framing = framing_agent(settings, context.get("edl", {}), context.get("media_analysis", {}))
     record(framing, "framing_review")
@@ -729,7 +885,25 @@ def run_agent_team(context: dict[str, Any],
     reference_payload = context.get("reference_analysis", {}) if isinstance(context.get("reference_analysis"), dict) else {}
     hook_payload = context.get("hook_analysis", {}) if isinstance(context.get("hook_analysis"), dict) else {}
     niche_missing = list(niche.evidence.get("missing_metrics", []))
+    chapter_evidence = source_chapter.evidence.get("chapter", {})
+    lock_evidence = character_lock.evidence.get("character_lock", {})
     dialogue = [
+        {
+            "turn": 7, "speaker": "Source Chapter Agent", "to": "Planner",
+            "message": (
+                f"Selected chapter={chapter_evidence.get('start_seconds')}–{chapter_evidence.get('end_seconds')}s "
+                f"using method={chapter_evidence.get('method')}; measured proxies do not establish semantic scene meaning."
+            ),
+            "evidence": {"source_chapter": chapter_evidence, "semantic_context_understanding": False},
+        },
+        {
+            "turn": 8, "speaker": "Character Lock Agent", "to": "Planner",
+            "message": (
+                f"Appearance preference applied={lock_evidence.get('preference_applied')}; "
+                f"track span={lock_evidence.get('track_span_seconds')}s. This is not verified player identity."
+            ),
+            "evidence": {"character_lock": lock_evidence, "identity_semantics": False},
+        },
         {
             "turn": 1, "speaker": "Beat Sync Agent", "to": "Planner",
             "message": (
@@ -804,7 +978,8 @@ def run_agent_team(context: dict[str, Any],
     announce("director", "orchestration_decision")
     director = director_agent({
         "settings_agent": setting_result, "media_analyst": media, "beat_sync_agent": beat,
-        "reference_analyst": reference, "framing_agent": framing, "hook_analyst": hook,
+        "reference_analyst": reference, "source_chapter_agent": source_chapter,
+        "character_lock_agent": character_lock, "framing_agent": framing, "hook_analyst": hook,
         "planner": plan, "niche_analyst": niche, "inspector": qa, "render_critic": critic,
     })
     record(director, "orchestration_decision")
@@ -816,6 +991,7 @@ def run_agent_team(context: dict[str, Any],
         "summary": director.findings[0],
         "results": {"settings_agent": asdict(setting_result), "media_analyst": asdict(media),
                     "beat_sync_agent": asdict(beat), "reference_analyst": asdict(reference),
+                    "source_chapter_agent": asdict(source_chapter), "character_lock_agent": asdict(character_lock),
                     "framing_agent": asdict(framing), "hook_analyst": asdict(hook),
                     "planner": asdict(plan), "niche_analyst": asdict(niche), "inspector": asdict(qa),
                     "render_critic": asdict(critic), "director": asdict(director)},

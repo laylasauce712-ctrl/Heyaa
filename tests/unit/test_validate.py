@@ -19,6 +19,31 @@ class ValidateTests(unittest.TestCase):
         for start in (29,31):
             e=sample(); e["video"][1]["start_f"]=start
             with self.assertRaises(EDLValidationError): validate_edl(e)
+    def test_source_ranges_must_not_overlap(self):
+        e = sample()
+        first = e["video"][0]
+        second = dict(first)
+        second.update({"source_start_f": 29, "source_dur_f": 20,
+                       "start_f": 30, "dur_f": 20})
+        final_freeze = e["video"][1]
+        final_freeze.update({"source_frame_f": 49, "start_f": 50, "dur_f": 10})
+        e["video"] = [first, second, final_freeze]
+        with self.assertRaisesRegex(EDLValidationError, "overlaps"):
+            validate_edl(e)
+
+    def test_configured_source_gap_is_enforced(self):
+        e = sample()
+        first = e["video"][0]
+        second = dict(first)
+        second.update({"source_start_f": 30, "source_dur_f": 20,
+                       "start_f": 30, "dur_f": 20})
+        final_freeze = e["video"][1]
+        final_freeze.update({"source_frame_f": 49, "start_f": 50, "dur_f": 10})
+        e["video"] = [first, second, final_freeze]
+        with self.assertRaisesRegex(EDLValidationError, "configured source gap"):
+            validate_edl(e, min_source_gap_f=3)
+        self.assertIs(validate_edl(e), e)
+
     def test_total_mismatch(self):
         e=sample(); e["total_frames"]=59
         with self.assertRaisesRegex(EDLValidationError,"total_frames"): validate_edl(e)

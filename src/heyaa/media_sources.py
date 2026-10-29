@@ -260,8 +260,8 @@ def parse_clip_count_options(value: str) -> tuple[int, ...]:
         raise argparse.ArgumentTypeError("At most five clip-count alternatives are supported.")
     if len(set(values)) != len(values):
         raise argparse.ArgumentTypeError("Clip-count alternatives must be distinct.")
-    if any(count < 6 or count > 18 for count in values):
-        raise argparse.ArgumentTypeError("Every clip count must be between 6 and 18.")
+    if any(count < 6 or count > 40 for count in values):
+        raise argparse.ArgumentTypeError("Every clip count must be between 6 and 40.")
     return values
 
 
@@ -269,6 +269,10 @@ def parse_media_source_args(argv=None):
     parser = argparse.ArgumentParser(
         description="Render a Heyaa Phonk montage from local files, direct HTTPS media links, or YouTube video links."
     )
+    parser.add_argument("command", nargs="?", choices=("render", "doctor"), default="render",
+                        help="Use 'doctor' to check local render dependencies without starting a render.")
+    parser.add_argument("--preview", action="store_true",
+                        help="Render a single 540x960 30fps preview with AI upscaling disabled.")
     parser.add_argument("--video-url", help="HTTPS video URL (YouTube page or direct media URL) used as source footage.")
     parser.add_argument("--music-url", help="HTTPS audio URL (YouTube page or direct media URL) used as the soundtrack.")
     parser.add_argument("--reference-url", help="HTTPS video URL (YouTube page or direct media URL) used as the visual timing reference.")
@@ -331,7 +335,11 @@ def extract_reference_audio(reference_path: str | Path, music_path: str | Path) 
 
 
 def prepare_media_sources(video_url, music_url, reference_url, video_path, music_path, reference_path):
-    """Download supplied URLs, then validate all required media before rendering."""
+    """Resolve separate source, soundtrack and visual reference files before rendering.
+
+    Reference audio is never promoted to the edit soundtrack implicitly.
+    """
+
     if video_url:
         video_url = validate_media_url(video_url, "video")
     if music_url:
@@ -345,10 +353,8 @@ def prepare_media_sources(video_url, music_url, reference_url, video_path, music
         resolved_reference = download_media_source(reference_url, resolved_reference, "reference")
     if music_url:
         resolved_music = download_media_source(music_url, resolved_music, "music")
-    elif reference_url:
-        # When a URL reference is supplied without a separate music URL, use its soundtrack.
-        # Explicit --music-url always takes precedence.
-        resolved_music = extract_reference_audio(resolved_reference, resolved_music)
+    # The reference video is only a visual pacing source. Never extract its audio
+    # implicitly or overwrite the user's separate local Phonk soundtrack.
     validate_media_file(resolved_video, "video")
     validate_media_file(resolved_music, "music")
     if resolved_reference.is_file():

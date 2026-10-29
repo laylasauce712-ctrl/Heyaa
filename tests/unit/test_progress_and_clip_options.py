@@ -1,16 +1,134 @@
 import json
 import tempfile
 import unittest
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
 from src import agent_director as renderer
 from src.heyaa import agents as agent_modules
 from src.heyaa.agents import AgentResult, run_agent_team
-from src.heyaa.media_sources import parse_media_source_args
+from src.heyaa.media_sources import parse_clip_count_options, parse_media_source_args
 
 
 class ProgressTraceTests(unittest.TestCase):
+    def test_clip_count_options_accept_configured_maximum_of_40(self):
+        self.assertEqual(parse_clip_count_options("24,32,40"), (24, 32, 40))
+        with self.assertRaises(Exception) as raised:
+            parse_clip_count_options("40,41")
+        self.assertIsInstance(raised.exception, __import__("argparse").ArgumentTypeError)
+
+    def test_preview_and_doctor_cli_options_are_available(self):
+        preview = parse_media_source_args(["--preview"])
+        doctor = parse_media_source_args(["doctor"])
+        self.assertTrue(preview.preview)
+        self.assertEqual(preview.variants, 3)
+        self.assertEqual(doctor.command, "doctor")
+
+    def test_cleanup_part_files_and_publish_latest_run(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            input_dir = root / "input"
+            output_dir = root / "output"
+            run_dir = output_dir / "runs" / "run-001"
+            input_dir.mkdir()
+            run_dir.mkdir(parents=True)
+            (input_dir / "stale.part").write_text("x", encoding="utf-8")
+            kept = input_dir / "keep.mp4"
+            kept.write_text("x", encoding="utf-8")
+            removed = renderer.cleanup_part_files((input_dir, output_dir))
+            self.assertEqual(len(removed), 1)
+            self.assertFalse((input_dir / "stale.part").exists())
+            latest = renderer.publish_latest_run(run_dir, output_root=output_dir)
+            self.assertTrue(Path(latest).is_symlink())
+            self.assertEqual(Path(latest).resolve(), run_dir.resolve())
+            self.assertTrue(kept.is_file())
+
+    def test_local_settings_path_can_be_selected_without_editing_params_json(self):
+        with patch.dict("os.environ", {"HEYAA_PARAMS_PATH": "params.local.json"}):
+            self.assertEqual(renderer._settings_path(), "params.local.json")
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(renderer._settings_path(), "params.json")
+
+    def test_drop_boundary_falls_back_instead_of_exceeding_max_shot_length(self):
+        boundaries = [0.0, 1.74, 3.48, 5.57, 7.66, 9.40, 11.14, 14.44, 17.74]
+        updated, freeze_time = renderer.insert_drop_boundary(boundaries, 10.74)
+
+        # Snapping to 10.74s would make the following shot 3.70s (> 3.3s).
+        # Keep the validated boundaries and move the freeze to the nearest cut.
+        self.assertEqual(updated, boundaries)
+        self.assertAlmostEqual(freeze_time, 11.14)
+        durations = [right - left for left, right in zip(updated, updated[1:])]
+        self.assertTrue(all(0.75 <= duration <= 3.3 for duration in durations))
+
+    def test_drop_boundary_snaps_when_both_adjacent_shots_remain_bounded(self):
+        updated, freeze_time = renderer.insert_drop_boundary([0.0, 2.0, 4.0, 6.0], 3.0)
+        self.assertEqual(updated, [0.0, 3.0, 4.0, 6.0])
+        self.assertAlmostEqual(freeze_time, 3.0)
+        durations = [right - left for left, right in zip(updated, updated[1:])]
+        self.assertTrue(all(0.75 <= duration <= 3.3 for duration in durations))
+
+    def test_reference_pacing_reports_when_clip_count_stretches_cadence(self):
+        diagnostics = renderer._reference_pacing_diagnostics(
+            {
+                "median_cut_interval_seconds": 0.55,
+                "shot_intervals_seconds": [0.5, 0.6, 0.5, 1.001],
+            },
+            [1.74, 1.74, 2.09, 2.09, 1.74, 1.74, 3.30, 3.30],
+        )
+        self.assertIsNotNone(diagnostics)
+        self.assertEqual(diagnostics["planned_clip_count"], 8)
+        self.assertEqual(diagnostics["reference_median_seconds"], 0.55)
+        self.assertGreater(diagnostics["cadence_stretch_ratio"], 3.0)
+
+        self.assertIsNone(renderer._reference_pacing_diagnostics(None, [1.0]))
+        self.assertIsNone(renderer._reference_pacing_diagnostics(
+            {"median_cut_interval_seconds": 0.0}, [1.0]
+        ))
+
+    def test_reference_availability_comes_from_measured_pacing_evidence(self):
+        # reference_pacing_profile() returns measured fields; it does not need an
+        # additional "available" flag for progress reporting.
+        profile = {
+            "median_cut_interval_seconds": 0.55,
+            "shot_intervals_seconds": [0.5, 0.6, 0.5],
+        }
+        self.assertTrue(renderer._has_usable_reference_profile(profile))
+        self.assertFalse(renderer._has_usable_reference_profile({
+            "median_cut_interval_seconds": None,
+            "shot_intervals_seconds": [],
+        }))
+        self.assertFalse(renderer._has_usable_reference_profile(None))
+
+    def test_variant_interrupt_stops_child_and_exits_with_130(self):
+        child = unittest.mock.Mock()
+        child.pid = 4321
+        child.wait.side_effect = [KeyboardInterrupt(), 0]
+        child.poll.return_value = None
+        events = []
+
+        with (
+            patch("src.agent_director.subprocess.Popen", return_value=child) as popen,
+            patch("src.agent_director.os.killpg") as killpg,
+            patch.object(
+                renderer,
+                "progress_event",
+                side_effect=lambda stage, status, summary, details=None, **kwargs:
+                    events.append((stage, status, details or {})),
+            ),
+        ):
+            with self.assertRaises(SystemExit) as raised:
+                renderer._run_variant_process(["python", "child.py"], 2)
+
+        self.assertEqual(raised.exception.code, 130)
+        popen.assert_called_once()
+        self.assertEqual(popen.call_args.kwargs, {"start_new_session": True})
+        killpg.assert_called_once_with(4321, renderer.signal.SIGINT)
+        self.assertEqual([(stage, status) for stage, status, _ in events], [
+            ("variant_interrupt", "running"),
+            ("variant_interrupt", "cancelled"),
+        ])
+
     def test_progress_event_appends_machine_readable_jsonl(self):
         with tempfile.TemporaryDirectory() as temporary:
             with patch.object(renderer, "OUTDIR", temporary), patch("builtins.print"):
@@ -27,6 +145,79 @@ class ProgressTraceTests(unittest.TestCase):
             self.assertEqual(rows[0]["details"]["clip_number"], 1)
             self.assertEqual(event["summary"], "Motion clip 1/8 rendered.")
             self.assertTrue(rows[0]["timestamp"].endswith("Z"))
+
+    def test_ai_upscaling_emits_extract_and_batch_progress(self):
+        events = []
+        with tempfile.TemporaryDirectory() as temporary:
+            def fake_run(command, **kwargs):
+                if command[0] == "ffmpeg":
+                    pattern = Path(command[-1])
+                    for frame in range(1, 3):
+                        Path(str(pattern).replace("%08d", f"{frame:08d}")).write_bytes(b"fake-png")
+                else:
+                    output_dir = Path(command[command.index("-o") + 1])
+                    for frame in range(1, 3):
+                        (output_dir / f"frame_{frame:08d}.png").write_bytes(b"fake-upscaled-png")
+                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+            def record(stage, status, summary, details=None, **kwargs):
+                events.append((stage, status, summary, details or {}))
+
+            with patch.object(renderer, "WORK", temporary), \
+                 patch.object(renderer, "VIDEO", "input/test_video.mp4"), \
+                 patch.object(renderer, "FPS", 24), \
+                 patch.object(renderer, "AI_UPSCALE_ENABLED", True), \
+                 patch.object(renderer, "AI_UPSCALER_EXECUTABLE", "fake-realesrgan"), \
+                 patch.object(renderer, "AI_UPSCALER_MODEL_DIR", "fake-models"), \
+                 patch.object(renderer, "AI_UPSCALE_MODEL", "realesrgan-x4plus"), \
+                 patch.object(renderer, "AI_UPSCALE_SCALE", 2), \
+                 patch.object(renderer, "progress_event", side_effect=record), \
+                 patch("src.agent_director.subprocess.run", side_effect=fake_run):
+                output_pattern, root = renderer.prepare_ai_upscaled_frames(0, 0.0, 1.0, 2)
+
+            self.assertTrue((root / "upscaled" / "frame_00000001.png").is_file())
+            self.assertEqual(output_pattern.parent, root / "upscaled")
+            self.assertEqual([(stage, status) for stage, status, _, _ in events], [
+                ("upscale_extract", "running"),
+                ("upscale_extract", "completed"),
+                ("upscale_batch", "running"),
+                ("upscale_batch", "completed"),
+            ])
+
+    def test_ai_upscaling_timeout_emits_error_and_fails_clearly(self):
+        events = []
+        with tempfile.TemporaryDirectory() as temporary:
+            def fake_run(command, **kwargs):
+                if command[0] == "ffmpeg":
+                    pattern = Path(command[-1])
+                    for frame in range(1, 3):
+                        Path(str(pattern).replace("%08d", f"{frame:08d}")).write_bytes(b"fake-png")
+                    return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+                self.assertEqual(kwargs.get("timeout"), 600)
+                raise subprocess.TimeoutExpired(command, timeout=600)
+
+            def record(stage, status, summary, details=None, **kwargs):
+                events.append((stage, status, summary, details or {}))
+
+            with patch.object(renderer, "WORK", temporary), \
+                 patch.object(renderer, "VIDEO", "input/test_video.mp4"), \
+                 patch.object(renderer, "FPS", 24), \
+                 patch.object(renderer, "AI_UPSCALE_ENABLED", True), \
+                 patch.object(renderer, "AI_UPSCALER_EXECUTABLE", "fake-realesrgan"), \
+                 patch.object(renderer, "AI_UPSCALER_MODEL_DIR", "fake-models"), \
+                 patch.object(renderer, "AI_UPSCALE_MODEL", "realesrgan-x4plus"), \
+                 patch.object(renderer, "AI_UPSCALE_SCALE", 2), \
+                 patch.object(renderer, "progress_event", side_effect=record), \
+                 patch("src.agent_director.subprocess.run", side_effect=fake_run):
+                with self.assertRaisesRegex(RuntimeError, "timed out after 600 seconds"):
+                    renderer.prepare_ai_upscaled_frames(0, 0.0, 1.0, 2)
+
+            self.assertEqual([(stage, status) for stage, status, _, _ in events], [
+                ("upscale_extract", "running"),
+                ("upscale_extract", "completed"),
+                ("upscale_batch", "running"),
+                ("upscale_batch", "error"),
+            ])
 
     def test_exact_clip_count_override_respects_settings_bounds(self):
         with patch.object(renderer, "MIN_CLIPS", 8), patch.object(renderer, "MAX_CLIPS", 16):
@@ -100,8 +291,8 @@ class ProgressTraceTests(unittest.TestCase):
             event["agent"] == "director" and event["status"] == "running"
             for event in progress_events
         ))
-        self.assertEqual(len(completed_events), 11)
-        self.assertEqual(len(report["events"]), 11)  # Stable completed-results contract.
+        self.assertEqual(len(completed_events), 13)
+        self.assertEqual(len(report["events"]), 13)  # One result per implemented structured stage.
 
 
 if __name__ == "__main__":

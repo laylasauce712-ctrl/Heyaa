@@ -5,7 +5,7 @@ from pathlib import Path
 from src.heyaa.agents import (
     beat_sync_agent, director_agent, export_storage_agent, framing_agent, hook_analyst,
     inspector, media_analyst, niche_analyst, planner, reference_analyst,
-    render_critic, run_agent_team, settings_agent,
+    render_critic, run_agent_team, settings_agent, source_chapter_agent, character_lock_agent,
 )
 
 
@@ -13,9 +13,10 @@ def config():
     return {
         "style": "phonk_montagem",
         "video_settings": {"resolution": "1080x1920", "fps": 24, "codec": "libx264", "crf": 26, "preset": "ultrafast"},
-        "edit_settings": {"duration_seconds": 8, "speed": 1.1, "freeze_duration": 1.7, "drop_freeze_duration": 0.25, "edl_mode": "on",
+        "edit_settings": {"duration_seconds": 8, "speed": 1.1, "freeze_duration": 2.0, "drop_freeze_duration": 0.25, "edl_mode": "on",
                           "min_clips": 6, "max_clips": 6, "reference_pacing": False,
-                          "mirror_enabled": False, "smart_crop": True},
+                          "mirror_enabled": False, "layout_mode": "fill",
+                          "source_chapter_seconds": 90, "subject_lock_enabled": True},
         "audio_settings": {"beat_sync": False, "beat_flash": False, "bass_boost": False, "music_loop": True},
     }
 
@@ -23,7 +24,7 @@ def config():
 def sample_edl(include_drop_freeze=False):
     clips = []
     cursor = 0
-    durations = [25, 24, 24, 24, 24, 24] if include_drop_freeze else [26, 25, 25, 25, 25, 25]
+    durations = [23, 23, 23, 23, 23, 23] if include_drop_freeze else [24, 24, 24, 24, 24, 24]
     for i, duration in enumerate(durations):
         source_duration = round(duration * 1.1)
         clips.append({
@@ -55,7 +56,7 @@ def render_report():
 
 def render_critique():
     return {"black_segments": [], "duration_seconds": 8.0, "mean_volume_db": -18.0,
-            "max_volume_db": -2.0, "audio_silent": False, "measurement_errors": []}
+            "max_volume_db": -2.0, "true_peak_dbfs": -1.2, "audio_silent": False, "measurement_errors": []}
 
 
 class AgentTests(unittest.TestCase):
@@ -65,12 +66,12 @@ class AgentTests(unittest.TestCase):
         cfg["edit_settings"]["smart_crop"] = False
         self.assertEqual(settings_agent(cfg).status, "ok")
 
-    def test_settings_agent_requires_final_freeze_of_at_least_1_7_seconds(self):
+    def test_settings_agent_requires_exact_two_second_final_freeze(self):
         cfg = config()
-        cfg["edit_settings"]["freeze_duration"] = 1.2
+        cfg["edit_settings"]["freeze_duration"] = 1.7
         result = settings_agent(cfg)
         self.assertEqual(result.status, "blocked")
-        self.assertTrue(any("1.7–3.0" in finding for finding in result.findings))
+        self.assertTrue(any("exactly 2.0 seconds" in finding for finding in result.findings))
 
     def test_framing_agent_reports_optional_person_track_evidence(self):
         media = {"context_window": {"subject_tracking": {
@@ -93,6 +94,75 @@ class AgentTests(unittest.TestCase):
         cfg = config()
         cfg["edit_settings"]["duration_seconds"] = True
         self.assertEqual(settings_agent(cfg).status, "blocked")
+
+    def test_settings_agent_validates_configurable_skull_and_impact_effects(self):
+        cfg = config()
+        cfg["edit_settings"].update({
+            "skull_size_px": 520, "skull_position_x": 0.4,
+            "skull_position_y": 0.6, "skull_pop_seconds": 0.2,
+            "impact_sfx_enabled": True,
+        })
+        self.assertEqual(settings_agent(cfg).status, "ok")
+        cfg["edit_settings"]["skull_size_px"] = 1000
+        result = settings_agent(cfg)
+        self.assertEqual(result.status, "blocked")
+        self.assertTrue(any("skull_size_px" in finding for finding in result.findings))
+
+    def test_settings_agent_validates_skull_visibility_flag(self):
+        cfg = config()
+        cfg["edit_settings"]["ending_skull_enabled"] = False
+        self.assertEqual(settings_agent(cfg).status, "ok")
+        cfg["edit_settings"]["ending_skull_enabled"] = True
+        self.assertEqual(settings_agent(cfg).status, "ok")
+        cfg["edit_settings"]["ending_skull_enabled"] = "false"
+        result = settings_agent(cfg)
+        self.assertEqual(result.status, "blocked")
+        self.assertTrue(any("ending_skull_enabled" in finding for finding in result.findings))
+
+    def test_sample_edl_keeps_exact_two_second_final_freeze(self):
+        edl = sample_edl()
+        freeze = next(item for item in edl["video"] if item.get("effect") == "phonk-freeze")
+        self.assertEqual(freeze["dur_f"], 48)
+
+    def test_settings_agent_validates_chapter_and_character_lock_settings(self):
+        cfg = config()
+        cfg["edit_settings"]["source_chapter_seconds"] = 45
+        result = settings_agent(cfg)
+        self.assertEqual(result.status, "blocked")
+        self.assertTrue(any("source_chapter_seconds" in finding for finding in result.findings))
+        cfg = config()
+        cfg["edit_settings"]["subject_lock_enabled"] = "true"
+        result = settings_agent(cfg)
+        self.assertEqual(result.status, "blocked")
+        self.assertTrue(any("subject_lock_enabled" in finding for finding in result.findings))
+
+    def test_source_chapter_agent_distinguishes_ranked_and_fallback_chapters(self):
+        ranked = source_chapter_agent({
+            "applied": True, "method": "activity-ranked-contiguous-chapter",
+            "start_seconds": 90.0, "end_seconds": 180.0, "duration_seconds": 90.0,
+            "selection_score": 0.82, "semantic_context_understanding": False,
+        })
+        self.assertEqual(ranked.status, "ok")
+        self.assertFalse(ranked.evidence["semantic_context_understanding"])
+        fallback = source_chapter_agent({
+            "applied": True, "method": "scene-density-chapter-fallback",
+            "start_seconds": 90.0, "end_seconds": 180.0, "duration_seconds": 90.0,
+        })
+        self.assertEqual(fallback.status, "needs_review")
+
+    def test_character_lock_agent_never_claims_verified_identity(self):
+        result = character_lock_agent({
+            "requested": True, "applied": True, "preference_applied": True,
+            "detected": True, "method": "opencv-hog-appearance-consistency-proxy",
+            "track_span_seconds": 6.0, "track_quality_proxy": 0.8,
+        })
+        self.assertEqual(result.status, "needs_review")
+        self.assertFalse(result.evidence["identity_semantics"])
+        unavailable = character_lock_agent({
+            "requested": True, "applied": False, "preference_applied": False,
+            "detected": False, "method": "opencv-hog-unavailable",
+        })
+        self.assertEqual(unavailable.status, "needs_review")
 
     def test_settings_agent_blocks_unsupported_settings(self):
         cfg = config()
@@ -183,6 +253,15 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(result.evidence["shot_intervals_seconds"], [0.8, 1.7, 1.1, 2.2, 0.9, 1.2])
         self.assertFalse(result.evidence["semantic_reference_understanding"])
 
+    def test_framing_agent_reports_blur_fit_as_full_frame_preserving(self):
+        cfg = config()
+        cfg["edit_settings"].pop("smart_crop", None)
+        cfg["edit_settings"]["layout_mode"] = "blur_fit"
+        result = framing_agent(cfg, sample_edl())
+        self.assertEqual(result.status, "ok", result.findings)
+        self.assertEqual(result.evidence["mode"], "blur_fit_preserve_full_frame")
+        self.assertFalse(result.evidence["identity_recognition"])
+
     def test_framing_agent_rejects_ignored_edl_crop(self):
         edl = sample_edl()
         edl["video"][0]["crop"] = {"x": 0.2, "y": 0.0, "w": 0.8, "h": 1.0}
@@ -197,6 +276,9 @@ class AgentTests(unittest.TestCase):
         self.assertLessEqual(result.score, 1.0)
         self.assertEqual(result.evidence["hook_activity_proxy"], result.score)
         self.assertFalse(result.evidence["semantic_hook_assessed"])
+        overdense = hook_analyst({"window_seconds": 2.0, "opening_scene_change_count": 9})
+        self.assertEqual(overdense.evidence["hook_activity_proxy"], 0.0)
+        self.assertEqual(overdense.evidence["activity_proxy_interpretation"], "overdense_scene_changes")
 
 
     def test_agents_fail_closed_on_malformed_context(self):
@@ -207,13 +289,27 @@ class AgentTests(unittest.TestCase):
 
     def test_render_critic_rejects_silence_and_flags_black_clipping_risks(self):
         silent = render_critic({"black_segments": [], "duration_seconds": 8.0,
-                                "mean_volume_db": None, "max_volume_db": None, "audio_silent": True})
+                                "mean_volume_db": None, "max_volume_db": None, "true_peak_dbfs": None, "audio_silent": True})
         self.assertEqual(silent.status, "reject")
         risky = render_critic({"black_segments": [{"start_seconds": 1.0, "duration_seconds": 2.0}],
                                "duration_seconds": 8.0, "mean_volume_db": -38.0,
-                               "max_volume_db": -0.05, "audio_silent": False})
+                               "max_volume_db": -0.05, "true_peak_dbfs": -0.2, "audio_silent": False})
         self.assertEqual(risky.status, "needs_review")
-        self.assertGreaterEqual(len(risky.evidence["warnings"]), 2)
+        self.assertGreaterEqual(len(risky.evidence["warnings"]), 3)
+        self.assertIn("true peak", " ".join(risky.evidence["warnings"]).lower())
+
+    def test_render_critic_rejects_encoded_true_peak_at_or_above_zero(self):
+        result = render_critic({"black_segments": [], "duration_seconds": 8.0,
+                                "mean_volume_db": -18.0, "max_volume_db": -1.0,
+                                "true_peak_dbfs": 0.1, "audio_silent": False})
+        self.assertEqual(result.status, "reject")
+        self.assertEqual(result.evidence["decision"], "reject_true_peak_clipping")
+
+    def test_render_critic_requires_true_peak_measurement(self):
+        result = render_critic({"black_segments": [], "duration_seconds": 8.0,
+                                "mean_volume_db": -18.0, "max_volume_db": -2.0,
+                                "true_peak_dbfs": None, "audio_silent": False})
+        self.assertEqual(result.status, "insufficient_evidence")
 
     def test_director_blocks_when_render_critic_is_missing_or_malformed(self):
         from src.heyaa.agents import AgentResult
@@ -237,7 +333,7 @@ class AgentTests(unittest.TestCase):
             "inspector": AgentResult("inspector", "ok", None, 1.0, (), (), {}),
             "framing_agent": AgentResult("framing_agent", "ok", None, 1.0, (), (), {}),
             "render_critic": render_critic({"black_segments": [], "duration_seconds": 8.0,
-                                             "mean_volume_db": None, "max_volume_db": None, "audio_silent": True}),
+                                             "mean_volume_db": None, "max_volume_db": None, "true_peak_dbfs": None, "audio_silent": True}),
         })
         self.assertEqual(blocked.status, "blocked")
         self.assertTrue(any(item["agent"] == "render_critic" for item in blocked.evidence["blockers"]))
@@ -286,14 +382,14 @@ class AgentTests(unittest.TestCase):
             "render_report": render_report(), "render_critique": render_critique(),
         }, emit=emitted.append)
         self.assertEqual(result["status"], "ready_for_human_review")
-        self.assertEqual(len(emitted), 11)
+        self.assertEqual(len(emitted), 13)
         self.assertEqual(emitted, result["events"])
         self.assertFalse(result["viral_guarantee"])
         self.assertEqual(result["results"]["niche_analyst"]["status"], "insufficient_evidence")
         self.assertIn("planner", result["results"])
         self.assertIn("director", result["results"])
         self.assertEqual(result["results"]["hook_analyst"]["status"], "needs_review")
-        self.assertEqual(len(result["agent_dialogue"]), 6)
+        self.assertEqual(len(result["agent_dialogue"]), 8)
         self.assertTrue(any(turn["speaker"] == "Reference Analyst" for turn in result["agent_dialogue"]))
         self.assertEqual(result["results"]["reference_analyst"]["status"], "skipped")
         self.assertEqual(result["results"]["framing_agent"]["status"], "ok")

@@ -20,8 +20,9 @@ def _num(v, name, lo=None, hi=None):
     if lo is not None and v < lo: raise EDLValidationError(f"{name} must be >= {lo}")
     if hi is not None and v > hi: raise EDLValidationError(f"{name} must be <= {hi}")
 
-def validate_edl(edl):
-    """Validate and return an EDL; raise EDLValidationError on any contract violation."""
+def validate_edl(edl, min_source_gap_f=0):
+    """Validate timeline continuity and reject overlapping ranges from the same source."""
+    minimum_source_gap = require_int(min_source_gap_f, "min_source_gap_f", 0)
     edl = _obj(edl, "edl"); _keys(edl, TOP, "edl")
     version = require_int(edl.get("version"), "version", 1)
     if version != EDL_VERSION: raise EDLValidationError(f"unsupported EDL version: {version}")
@@ -31,6 +32,7 @@ def validate_edl(edl):
     video = edl.get("video")
     if not isinstance(video, list) or not video: raise EDLValidationError("video must be a non-empty list")
     cursor = 0
+    source_ends = {}
     for i, raw in enumerate(video):
         name = f"video[{i}]"; item = _obj(raw, name); kind = item.get("type")
         if kind == "clip": _keys(item, CLIP, name)
@@ -44,6 +46,14 @@ def validate_edl(edl):
         if kind == "clip":
             require_int(item.get("source_start_f"), f"{name}.source_start_f")
             source_dur = require_int(item.get("source_dur_f"), f"{name}.source_dur_f", 1)
+            source_start = item["source_start_f"]
+            previous_end = source_ends.get(item["source"])
+            if previous_end is not None and source_start < previous_end + minimum_source_gap:
+                raise EDLValidationError(
+                    f"{name}.source_start_f overlaps or violates the configured source gap: "
+                    f"must be >= {previous_end + minimum_source_gap}, got {source_start}"
+                )
+            source_ends[item["source"]] = source_start + source_dur
             speed = item.get("speed"); _num(speed, f"{name}.speed", MIN_SPEED, MAX_SPEED)
             if abs(dur - source_dur / speed) > 1: raise EDLValidationError(f"{name}.dur_f inconsistent with source_dur_f / speed")
             crop = _obj(item.get("crop"), f"{name}.crop"); _keys(crop, {"x","y","w","h"}, f"{name}.crop")

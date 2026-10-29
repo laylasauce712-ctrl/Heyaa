@@ -10,19 +10,31 @@
     "ai_upscale_model": "realesrgan-x4plus",
     "ai_upscale_scale": 2,
     "ai_upscale_binary": "tools/realesrgan/realesrgan-ncnn-vulkan",
-    "ai_upscale_model_dir": "tools/realesrgan/models"
+    "ai_upscale_model_dir": "tools/realesrgan/models",
+    "ai_upscale_batch_timeout_seconds": 600,
+    "intermediate_crf": 10
   },
   "edit_settings": {
     "duration_seconds": 20,
     "speed": 1.1,
     "min_clips": 8,
-    "max_clips": 16,
+    "max_clips": 40,
+    "min_shot_seconds": 0.35,
     "reference_pacing": true,
     "mirror_enabled": true,
-    "smart_crop": true,
+    "layout_mode": "blur_fit",
     "freeze_duration": 2,
     "drop_freeze_duration": 0.25,
-    "edl_mode": "on"
+    "source_min_gap_seconds": 0.05,
+    "source_chapter_seconds": 90,
+    "subject_lock_enabled": true,
+    "edl_mode": "on",
+    "ending_skull_enabled": false,
+    "skull_size_px": 520,
+    "skull_position_x": 0.5,
+    "skull_position_y": 0.5,
+    "skull_pop_seconds": 0.18,
+    "impact_sfx_enabled": true
   },
   "audio_settings": {
     "beat_sync": true,
