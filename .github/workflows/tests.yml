@@ -25,5 +25,16 @@ jobs:
           bash -n scripts/prepare_local_worktree.sh
       - name: Run dependency-free unit tests
         run: python -m unittest discover -s tests/unit -v
-      - name: Run synthetic end-to-end render smoke test
-        run: bash tests/integration/render_smoke.sh
+      - name: Run normal-profile render and local-data preservation regression
+        run: |
+          set -euo pipefail
+          mkdir -p input output
+          printf 'hey aa-source-canary\n' > input/.heyaa-source-canary
+          printf 'heyaa-render-canary\n' > output/.heyaa-render-canary
+          cp params.json "$RUNNER_TEMP/params-before-render-test.json"
+          bash tests/integration/render_smoke.sh
+          test "$(cat input/.heyaa-source-canary)" = "hey aa-source-canary"
+          test "$(cat output/.heyaa-render-canary)" = "heyaa-render-canary"
+          cmp params.json "$RUNNER_TEMP/params-before-render-test.json"
+          rm -f input/.heyaa-source-canary output/.heyaa-render-canary
+          rmdir input output
