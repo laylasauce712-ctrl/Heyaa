@@ -1,14 +1,16 @@
 # Run Heyaa from media links or local files
 
-Heyaa accepts YouTube video pages and direct HTTPS media URLs for source footage,
-the Phonk soundtrack, and an optional pacing reference. Local files remain supported.
+Heyaa accepts YouTube video pages, TikTok post/share URLs, and direct HTTPS media URLs
+for source footage, the Phonk soundtrack, and an optional pacing reference. Local files
+remain supported. Use only media you own or have permission to download and reuse; platform
+terms and copyright still apply.
 Use media you own or have permission to download and reuse. Platform restrictions apply.
 
 ## Requirements
 
 - Python 3.10+
 - FFmpeg and ffprobe available on PATH
-- yt-dlp for YouTube page URLs
+- yt-dlp for YouTube and TikTok post/share URLs
 - Optional: OpenCV for a lightweight person-shape / appearance-consistency tracking proxy
 
 Install yt-dlp in WSL:
@@ -33,6 +35,19 @@ From the repository root:
       --video-url 'https://www.youtube.com/watch?v=SOURCE_VIDEO_ID' \
       --music-url 'https://www.youtube.com/watch?v=PHONK_TRACK_ID' \
       --reference-url 'https://www.youtube.com/watch?v=REFERENCE_VIDEO_ID'
+
+You can download a TikTok post directly as source footage with the dedicated option:
+
+    python3 src/agent_director.py --tiktok-url 'https://www.tiktok.com/@creator/video/1234567890123456789'
+
+The existing `--video-url` option also accepts TikTok post/share URLs. TikTok links can be used
+for the soundtrack or optional visual reference through `--music-url` and `--reference-url`.
+Use one post URL or an official TikTok short share link (for example, `https://vm.tiktok.com/...`).
+Do not pass both `--video-url` and `--tiktok-url`.
+
+TikTok downloads use yt-dlp with bounded timeouts and retries, and do not use browser cookies or
+login credentials. Private, login-gated, removed, or region-restricted posts may not be downloadable;
+Heyaa does not bypass those restrictions. Use media you own or have permission to download and reuse.
 
 You can also supply direct HTTPS media URLs, for example a host-provided MP4 or
 MP3 download URL:
@@ -72,7 +87,7 @@ Human review is still required. If feature measurement is unavailable, the
 fallback progresses through the selected source scope instead of limiting a
 long recording to the tracking context window.
 
-YouTube downloads show live yt-dlp progress and use IPv4 to avoid networks
+YouTube and TikTok downloads show live yt-dlp progress and use IPv4 to avoid networks
 where the IPv6 route to media/CDN hosts is broken. Source footage is capped at
 1080p landscape or 1080x1920 portrait (matching the 1080x1920 output); the optional
 pacing reference is capped at 720p landscape or 720x1280 portrait. This helps

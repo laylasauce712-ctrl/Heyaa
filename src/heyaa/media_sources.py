@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import shutil
 import subprocess
 import sys
@@ -13,6 +14,8 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be", "www.youtu.be"}
+TIKTOK_HOSTS = {"tiktok.com", "www.tiktok.com", "m.tiktok.com", "vm.tiktok.com", "vt.tiktok.com"}
+TIKTOK_SHORT_HOSTS = {"vm.tiktok.com", "vt.tiktok.com"}
 # Bound source formats to 1080p landscape or 1080x1920 portrait. This avoids
 # downloading enormous 1440p/4K originals when the output is 1080x1920.
 SOURCE_VIDEO_FORMAT = (
@@ -66,11 +69,51 @@ def validate_youtube_url(url: str, label: str = "media") -> str:
     return value
 
 
+def validate_tiktok_url(url: str, label: str = "media") -> str:
+    """Accept an HTTPS TikTok post URL or TikTok-owned short share link only."""
+    parsed, host, value = _parsed_https_url(url, label)
+    if host not in TIKTOK_HOSTS:
+        raise MediaSourceError(f"{label} is not a recognized TikTok URL.")
+
+    parts = [part for part in parsed.path.split("/") if part]
+    if host in TIKTOK_SHORT_HOSTS:
+        # TikTok short links contain a single opaque post/share token.
+        valid = len(parts) == 1 and bool(re.fullmatch(r"[A-Za-z0-9_-]+", parts[0]))
+    else:
+        # Accept one post, not profiles, feeds, search pages, or collections.
+        canonical_post = (
+            len(parts) == 3
+            and parts[0].startswith("@")
+            and len(parts[0]) > 1
+            and parts[1] == "video"
+            and parts[2].isdigit()
+        )
+        share_redirect = (
+            len(parts) == 2
+            and parts[0] == "t"
+            and bool(re.fullmatch(r"[A-Za-z0-9_-]+", parts[1]))
+        )
+        legacy_post = (
+            len(parts) == 2
+            and parts[0] == "v"
+            and bool(re.fullmatch(r"\d+(?:\.html)?", parts[1]))
+        )
+        valid = canonical_post or share_redirect or legacy_post
+
+    if not valid:
+        raise MediaSourceError(
+            f"{label} must link to one TikTok post/share URL, not a profile, feed, or collection."
+        )
+    return value
+
+
 def validate_media_url(url: str, label: str = "media") -> str:
     """Accept a YouTube video page or a direct HTTPS media URL."""
     parsed, host, value = _parsed_https_url(url, label)
     if host in YOUTUBE_HOSTS:
         return validate_youtube_url(value, label)
+    if host in TIKTOK_HOSTS:
+        return validate_tiktok_url(value, label)
     if not parsed.path or parsed.path == "/":
         raise MediaSourceError(f"{label} direct URL must point to a media resource.")
     return value
@@ -162,9 +205,9 @@ def download_direct_https(url: str, target_path: str | Path, kind: str) -> Path:
         temporary.unlink(missing_ok=True)
 
 
-def download_youtube(url: str, target_path: str | Path, kind: str) -> Path:
-    """Download a YouTube video/audio with visible progress and a hard timeout."""
-    url = validate_youtube_url(url, kind)
+def _download_ytdlp_page(url: str, target_path: str | Path, kind: str, platform: str, validator) -> Path:
+    """Download one validated platform post through yt-dlp with bounded resources."""
+    url = validator(url, kind)
     target = Path(target_path)
     target.parent.mkdir(parents=True, exist_ok=True)
     path_report = target.parent / f".{target.stem}.{kind}.yt-dlp-path.txt"
@@ -178,7 +221,7 @@ def download_youtube(url: str, target_path: str | Path, kind: str) -> Path:
             import yt_dlp  # noqa: F401
         except ImportError as exc:
             raise MediaSourceError(
-                "yt-dlp is required for YouTube links. Install it with: python3 -m pip install -U \"yt-dlp[default]\""
+                f"yt-dlp is required for {platform} links. Install it with: python3 -m pip install -U \"yt-dlp[default]\""
             ) from exc
         command = [sys.executable, "-m", "yt_dlp"]
     command += [
@@ -198,7 +241,7 @@ def download_youtube(url: str, target_path: str | Path, kind: str) -> Path:
         command += ["-f", SOURCE_VIDEO_FORMAT, "--merge-output-format", "mp4", "--remux-video", "mp4"]
     command.append(url)
     print(
-        f"[sources] Downloading YouTube {kind}; live progress enabled "
+        f"[sources] Downloading {platform} {kind}; live progress enabled "
         f"(timeout: {timeout_seconds}s; max format: "
         f"{'audio-only' if kind == 'music' else '720p' if kind == 'reference' else '1080p'})...",
         flush=True,
@@ -210,17 +253,17 @@ def download_youtube(url: str, target_path: str | Path, kind: str) -> Path:
         result = subprocess.run(command, check=False, timeout=timeout_seconds)
     except subprocess.TimeoutExpired as exc:
         raise MediaSourceError(
-            f"YouTube {kind} download timed out after {timeout_seconds}s. "
+            f"{platform} {kind} download timed out after {timeout_seconds}s. "
             "Read the live yt-dlp output above; if network/CDN access failed, use a permitted local file "
             "or a direct HTTPS media URL instead."
         ) from exc
     except OSError as exc:
-        raise MediaSourceError(f"Could not start yt-dlp: {exc}") from exc
+        raise MediaSourceError(f"Could not start yt-dlp for {platform}: {exc}") from exc
 
     try:
         if result.returncode != 0:
             raise MediaSourceError(
-                f"YouTube {kind} download failed (yt-dlp exit code {result.returncode}). "
+                f"{platform} {kind} download failed (yt-dlp exit code {result.returncode}). "
                 "The exact network/extractor error is printed above."
             )
         if not path_report.is_file():
@@ -239,11 +282,24 @@ def download_youtube(url: str, target_path: str | Path, kind: str) -> Path:
     finally:
         path_report.unlink(missing_ok=True)
 
+
+def download_youtube(url: str, target_path: str | Path, kind: str) -> Path:
+    """Download a YouTube video/audio with visible progress and a hard timeout."""
+    return _download_ytdlp_page(url, target_path, kind, "YouTube", validate_youtube_url)
+
+
+def download_tiktok(url: str, target_path: str | Path, kind: str) -> Path:
+    """Download one accessible TikTok post/share URL with yt-dlp."""
+    return _download_ytdlp_page(url, target_path, kind, "TikTok", validate_tiktok_url)
+
+
 def download_media_source(url: str, target_path: str | Path, kind: str) -> Path:
     """Route YouTube pages to yt-dlp and direct HTTPS media links to a bounded downloader."""
     _, host, value = _parsed_https_url(url, kind)
     if host in YOUTUBE_HOSTS:
         return download_youtube(value, target_path, kind)
+    if host in TIKTOK_HOSTS:
+        return download_tiktok(value, target_path, kind)
     return download_direct_https(value, target_path, kind)
 
 
@@ -267,15 +323,16 @@ def parse_clip_count_options(value: str) -> tuple[int, ...]:
 
 def parse_media_source_args(argv=None):
     parser = argparse.ArgumentParser(
-        description="Render a Heyaa Phonk montage from local files, direct HTTPS media links, or YouTube video links."
+        description="Render a Heyaa Phonk montage from local files, direct HTTPS media links, or YouTube/TikTok video links."
     )
     parser.add_argument("command", nargs="?", choices=("render", "doctor"), default="render",
                         help="Use 'doctor' to check local render dependencies without starting a render.")
     parser.add_argument("--preview", action="store_true",
                         help="Render a single 540x960 30fps preview with AI upscaling disabled.")
-    parser.add_argument("--video-url", help="HTTPS video URL (YouTube page or direct media URL) used as source footage.")
-    parser.add_argument("--music-url", help="HTTPS audio URL (YouTube page or direct media URL) used as the soundtrack.")
-    parser.add_argument("--reference-url", help="HTTPS video URL (YouTube page or direct media URL) used as the visual timing reference.")
+    parser.add_argument("--video-url", help="HTTPS video URL (YouTube/TikTok post or direct media URL) used as source footage.")
+    parser.add_argument("--tiktok-url", help="TikTok post/share URL used as source footage; alternative to --video-url.")
+    parser.add_argument("--music-url", help="HTTPS audio URL (YouTube/TikTok post or direct media URL) used as the soundtrack.")
+    parser.add_argument("--reference-url", help="HTTPS video URL (YouTube/TikTok post or direct media URL) used as the visual timing reference.")
     parser.add_argument(
         "--variants", type=int, choices=(1, 2, 3, 4, 5), default=3,
         help="Render 3 comparison variants by default (1–5 supported)."
@@ -296,7 +353,15 @@ def parse_media_source_args(argv=None):
         "--variant-index", type=int, choices=(1, 2, 3, 4, 5), default=None,
         help=argparse.SUPPRESS
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.video_url and args.tiktok_url:
+        parser.error("Use either --video-url or --tiktok-url, not both.")
+    if args.tiktok_url:
+        try:
+            args.video_url = validate_tiktok_url(args.tiktok_url, "video")
+        except MediaSourceError as exc:
+            parser.error(str(exc))
+    return args
 
 
 def extract_reference_audio(reference_path: str | Path, music_path: str | Path) -> Path:

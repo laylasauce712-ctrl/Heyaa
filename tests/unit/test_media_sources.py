@@ -8,6 +8,9 @@ from src.heyaa.media_sources import (
     MediaSourceError,
     download_media_source,
     download_youtube,
+    download_tiktok,
+    validate_tiktok_url,
+    parse_media_source_args,
     SOURCE_VIDEO_FORMAT,
     REFERENCE_VIDEO_FORMAT,
     VIDEO_DOWNLOAD_TIMEOUT_SECONDS,
@@ -18,6 +21,91 @@ from src.heyaa.media_sources import (
     validate_youtube_url,
     prepare_media_sources,
 )
+
+
+class TikTokUrlTests(unittest.TestCase):
+    def test_accepts_canonical_and_short_post_urls(self):
+        urls = (
+            "https://www.tiktok.com/@creator/video/1234567890123456789",
+            "https://m.tiktok.com/@creator/video/1234567890123456789?lang=en",
+            "https://vm.tiktok.com/ZMabcdef1/",
+            "https://vt.tiktok.com/ZMabcdef1/",
+            "https://www.tiktok.com/t/ZMabcdef1/",
+            "https://m.tiktok.com/v/123456789.html",
+        )
+        for url in urls:
+            with self.subTest(url=url):
+                self.assertEqual(validate_tiktok_url(url), url)
+
+    def test_rejects_non_https_wrong_host_profiles_and_collections(self):
+        urls = (
+            "http://www.tiktok.com/@creator/video/123",
+            "https://tiktok.com.evil.example/@creator/video/123",
+            "https://user:pass@www.tiktok.com/@creator/video/123",
+            "https://www.tiktok.com/@creator",
+            "https://www.tiktok.com/@creator/favorites",
+            "https://www.tiktok.com/search?q=phonk",
+            "https://example.com/@creator/video/123",
+            "https://vm.tiktok.com/",
+        )
+        for url in urls:
+            with self.subTest(url=url), self.assertRaises(MediaSourceError):
+                validate_tiktok_url(url)
+
+    def test_tiktok_url_cli_option_maps_to_source_video(self):
+        args = parse_media_source_args([
+            "--tiktok-url", "https://www.tiktok.com/@creator/video/1234567890123456789",
+        ])
+        self.assertEqual(
+            args.video_url,
+            "https://www.tiktok.com/@creator/video/1234567890123456789",
+        )
+
+    def test_tiktok_cli_option_rejects_non_tiktok_url(self):
+        with self.assertRaises(SystemExit):
+            parse_media_source_args(["--tiktok-url", "https://example.com/video.mp4"])
+
+    def test_routes_tiktok_pages_to_tiktok_downloader(self):
+        url = "https://www.tiktok.com/@creator/video/1234567890123456789"
+        with patch("src.heyaa.media_sources.download_tiktok", return_value=Path("tiktok.mp4")) as tiktok, \
+             patch("src.heyaa.media_sources.download_youtube") as youtube, \
+             patch("src.heyaa.media_sources.download_direct_https") as direct:
+            result = download_media_source(url, "input/test_video.mp4", "video")
+        self.assertEqual(result, Path("tiktok.mp4"))
+        tiktok.assert_called_once_with(url, "input/test_video.mp4", "video")
+        youtube.assert_not_called()
+        direct.assert_not_called()
+
+    def test_tiktok_ytdlp_download_is_bounded_and_does_not_use_browser_cookies(self):
+        with tempfile.TemporaryDirectory() as directory:
+            input_dir = Path(directory) / "input"
+            input_dir.mkdir()
+            target = input_dir / "test_video.mp4"
+            target.write_bytes(b"valid fixture bytes")
+
+            def fake_run(command, **kwargs):
+                report_path = Path(command[command.index("--print-to-file") + 2])
+                report_path.write_text(str(target), encoding="utf-8")
+                return SimpleNamespace(returncode=0)
+
+            with patch("src.heyaa.media_sources.shutil.which", return_value="/usr/bin/yt-dlp"), \
+                 patch("src.heyaa.media_sources.subprocess.run", side_effect=fake_run) as runner:
+                result = download_tiktok(
+                    "https://www.tiktok.com/@creator/video/1234567890123456789",
+                    target,
+                    "video",
+                )
+
+            self.assertEqual(result, target.resolve())
+            command = runner.call_args.args[0]
+            self.assertIn("--no-playlist", command)
+            self.assertIn("--ignore-config", command)
+            self.assertEqual(command[-1], "https://www.tiktok.com/@creator/video/1234567890123456789")
+            self.assertEqual(runner.call_args.kwargs["timeout"], VIDEO_DOWNLOAD_TIMEOUT_SECONDS)
+            self.assertNotIn("--cookies", command)
+            self.assertNotIn("--cookies-from-browser", command)
+            report_path = input_dir / ".test_video.video.yt-dlp-path.txt"
+            self.assertFalse(report_path.exists())
 
 
 class YouTubeUrlTests(unittest.TestCase):

@@ -7,3 +7,7 @@ __pycache__/
 tools/realesrgan/
 .venv/
 params.local.json
+.env.*
+!.env.example
+*.pem
+*.key
