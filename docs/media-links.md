@@ -46,9 +46,14 @@ to 2 GiB per file, and use network timeouts. A web page that merely displays a
 video is not a direct media URL. If the host requires a login, cookies, or
 specialized access, use a local file instead.
 
-The reference is optional; omit --reference-url if you do not have one. You may
-mix URLs with local files: if --video-url is omitted, input/test_video.mp4 must
-already exist; if --music-url is omitted, input/phonk.mp3 must already exist.
+The reference is optional; omit --reference-url if you do not have one. It is a
+**visual pacing reference only**: its audio is never extracted for the final edit.
+Always supply your desired Phonk separately with `--music-url`, or keep your own
+track at `input/phonk.mp3`. Supplying a reference must never replace that track.
+
+You may mix URLs with local files: if `--video-url` is omitted,
+`input/test_video.mp4` must already exist; if `--music-url` is omitted,
+`input/phonk.mp3` must already exist.
 
 ## Long source footage and 20-second edits
 
@@ -86,9 +91,9 @@ required file exists, has a positive duration, and contains the expected stream.
 Rendering does not start if required media validation fails.
 
 Expected filenames are input/test_video.mp4, input/phonk.mp3, and
-input/reference.mp4. The final render and agent report remain:
-- output/final_phonk_20s.mp4
-- output/agent_report.json
+input/reference.mp4. Each run writes its final render and agent report under `output/runs/<run-id>/`;
+`output/latest` points to the most recent completed run. A compatibility copy is
+also written to `output/final_phonk_20s.mp4` after successful full renders.
 
 For local-file-only use, run:
 
