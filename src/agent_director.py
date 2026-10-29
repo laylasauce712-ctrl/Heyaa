@@ -1710,7 +1710,7 @@ def make_clip(index, item, source_duration):
             f"{'hflip,' if MIRROR_ENABLED else ''}"
             "eq=contrast=1.16:saturation=1.30:gamma=1.02,"
             "unsharp=5:5:0.72:3:3:0.0,setsar=1,"
-            f"fps={FPS},setpts=PTS/{SPEED},fps={FPS},trim=end_frame={output_frames},setpts=PTS-STARTPTS[v]"
+            f"fps={FPS},setpts=PTS/{SPEED},fps={FPS},tpad=stop_mode=clone:stop={output_frames},trim=end_frame={output_frames},setpts=PTS-STARTPTS[v]"
         )
     else:
         vf = (
@@ -1722,7 +1722,7 @@ def make_clip(index, item, source_duration):
             "eq=contrast=1.16:saturation=1.30:gamma=1.02,"
             "unsharp=5:5:0.72:3:3:0.0[front];"
             "[back][front]overlay=(W-w)/2:(H-h)/2,setsar=1,"
-            f"fps={FPS},setpts=PTS/{SPEED},fps={FPS},trim=end_frame={output_frames},setpts=PTS-STARTPTS[v]"
+            f"fps={FPS},setpts=PTS/{SPEED},fps={FPS},tpad=stop_mode=clone:stop={output_frames},trim=end_frame={output_frames},setpts=PTS-STARTPTS[v]"
         )
 
     # AI mode upscales the selected source frames losslessly before the normal

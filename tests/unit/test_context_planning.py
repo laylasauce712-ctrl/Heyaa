@@ -214,6 +214,31 @@ class ContextPlanningTests(unittest.TestCase):
         self.assertIn("[skull]", graph)
         self.assertEqual(output_label, "[impact]")
 
+    def test_motion_clip_filter_pads_to_exact_edl_frame_count(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+             patch.object(renderer, "FPS", 24), \
+             patch.object(renderer, "WIDTH", 1080), \
+             patch.object(renderer, "HEIGHT", 1920), \
+             patch.object(renderer, "SPEED", 1.1), \
+             patch.object(renderer, "MIRROR_ENABLED", False), \
+             patch.object(renderer, "LAYOUT_MODE", "fill"), \
+             patch.object(renderer, "SUBJECT_OBSERVATIONS", []), \
+             patch.object(renderer, "AI_UPSCALE_ENABLED", False), \
+             patch.object(renderer, "CODEC", "libx264"), \
+             patch.object(renderer, "INTERMEDIATE_CRF", 10), \
+             patch.object(renderer, "WORK", temporary), \
+             patch.object(renderer, "VIDEO", "input/test_video.mp4"), \
+             patch.object(renderer, "run") as run_mock:
+            item = {
+                "source_start_f": 0, "source_dur_f": 26, "dur_f": 24,
+                "crop": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0},
+            }
+            renderer.make_clip(1, item, source_duration=20.0)
+            command = run_mock.call_args.args[0]
+        graph = command[command.index("-filter_complex") + 1]
+        self.assertEqual(graph.count("tpad=stop_mode=clone:stop=24"), 1)
+        self.assertEqual(graph.count("trim=end_frame=24"), 1)
+
     def test_synthetic_130_bpm_pulses_produce_confident_phase_locked_grid(self):
         hop_seconds = 0.02
         expected_period_frames = round(60.0 / 130.0 / hop_seconds)
