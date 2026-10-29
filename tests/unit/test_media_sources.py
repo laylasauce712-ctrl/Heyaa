@@ -16,10 +16,66 @@ from src.heyaa.media_sources import (
     validate_media_file,
     validate_media_url,
     validate_youtube_url,
+    prepare_media_sources,
 )
 
 
 class YouTubeUrlTests(unittest.TestCase):
+    def test_reference_video_does_not_replace_or_supply_the_music_track(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            video_path = root / "source.mp4"
+            music_path = root / "phonk.mp3"
+            reference_path = root / "reference.mp4"
+
+            def fake_download(url, target_path, kind):
+                return Path(target_path)
+
+            with patch("src.heyaa.media_sources.download_media_source", side_effect=fake_download) as downloader, \\
+                 patch("src.heyaa.media_sources.validate_media_file") as validator, \\
+                 patch("src.heyaa.media_sources.extract_reference_audio") as extract_audio:
+                result = prepare_media_sources(
+                    video_url="https://media.example/source.mp4",
+                    music_url=None,
+                    reference_url="https://media.example/reference.mp4",
+                    video_path=video_path,
+                    music_path=music_path,
+                    reference_path=reference_path,
+                )
+
+            self.assertEqual(result, (str(video_path), str(music_path), str(reference_path)))
+            downloaded_kinds = [call.args[2] for call in downloader.call_args_list]
+            self.assertEqual(downloaded_kinds, ["video", "reference"])
+            extract_audio.assert_not_called()
+            self.assertTrue(any(call.args == (music_path, "music") for call in validator.call_args_list))
+
+    def test_explicit_music_url_stays_separate_when_reference_is_supplied(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            video_path = root / "source.mp4"
+            music_path = root / "phonk.mp3"
+            reference_path = root / "reference.mp4"
+
+            def fake_download(url, target_path, kind):
+                return Path(target_path)
+
+            with patch("src.heyaa.media_sources.download_media_source", side_effect=fake_download) as downloader, \\
+                 patch("src.heyaa.media_sources.validate_media_file"), \\
+                 patch("src.heyaa.media_sources.extract_reference_audio") as extract_audio:
+                prepare_media_sources(
+                    video_url="https://media.example/source.mp4",
+                    music_url="https://music.example/phonk.mp3",
+                    reference_url="https://media.example/reference.mp4",
+                    video_path=video_path,
+                    music_path=music_path,
+                    reference_path=reference_path,
+                )
+
+            downloaded = [(call.args[0], call.args[2]) for call in downloader.call_args_list]
+            self.assertIn(("https://music.example/phonk.mp3", "music"), downloaded)
+            self.assertEqual([kind for _, kind in downloaded], ["video", "reference", "music"])
+            extract_audio.assert_not_called()
+
     def test_accepts_watch_shorts_and_short_links(self):
         self.assertEqual(validate_youtube_url("https://www.youtube.com/watch?v=abc123"),
                          "https://www.youtube.com/watch?v=abc123")
