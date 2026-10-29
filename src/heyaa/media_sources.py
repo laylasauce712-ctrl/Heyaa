@@ -335,7 +335,11 @@ def extract_reference_audio(reference_path: str | Path, music_path: str | Path) 
 
 
 def prepare_media_sources(video_url, music_url, reference_url, video_path, music_path, reference_path):
-    """Download supplied URLs, then validate all required media before rendering."""
+    """Resolve separate source, soundtrack and visual reference files before rendering.
+
+    Reference audio is never promoted to the edit soundtrack implicitly.
+    """
+
     if video_url:
         video_url = validate_media_url(video_url, "video")
     if music_url:
@@ -349,10 +353,8 @@ def prepare_media_sources(video_url, music_url, reference_url, video_path, music
         resolved_reference = download_media_source(reference_url, resolved_reference, "reference")
     if music_url:
         resolved_music = download_media_source(music_url, resolved_music, "music")
-    elif reference_url:
-        # When a URL reference is supplied without a separate music URL, use its soundtrack.
-        # Explicit --music-url always takes precedence.
-        resolved_music = extract_reference_audio(resolved_reference, resolved_music)
+    # The reference video is only a visual pacing source. Never extract its audio
+    # implicitly or overwrite the user's separate local Phonk soundtrack.
     validate_media_file(resolved_video, "video")
     validate_media_file(resolved_music, "music")
     if resolved_reference.is_file():
