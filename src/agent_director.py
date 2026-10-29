@@ -68,6 +68,7 @@ MIN_CLIPS = None
 MAX_CLIPS = None
 MIN_SHOT_SECONDS = 0.75
 MIN_SOURCE_GAP_SECONDS = 0.05
+ENDING_SKULL_ENABLED = False
 ENDING_SKULL_SIZE_PX = 420
 ENDING_SKULL_POSITION_X = 0.5
 ENDING_SKULL_POSITION_Y = 0.5
@@ -147,7 +148,7 @@ def load_settings():
     global DURATION, FPS, WIDTH, HEIGHT, CRF, PRESET, SPEED, FREEZE, EDIT_DURATION
     global BEAT_SYNC, BEAT_FLASH, BASS_BOOST, REFERENCE_PACING, MIRROR_ENABLED, LAYOUT_MODE
     global MIN_CLIPS, MAX_CLIPS, MIN_SHOT_SECONDS, MUSIC_LOOP, CODEC, CONFIG, DROP_FREEZE_DURATION, MIN_SOURCE_GAP_SECONDS
-    global ENDING_SKULL_SIZE_PX, ENDING_SKULL_POSITION_X, ENDING_SKULL_POSITION_Y
+    global ENDING_SKULL_ENABLED, ENDING_SKULL_SIZE_PX, ENDING_SKULL_POSITION_X, ENDING_SKULL_POSITION_Y
     global ENDING_SKULL_POP_SECONDS, ENDING_IMPACT_SFX_ENABLED, PREVIEW_MODE
     global AI_UPSCALE_ENABLED, AI_UPSCALE_MODEL, AI_UPSCALE_SCALE
     global AI_UPSCALE_BINARY, AI_UPSCALE_MODEL_DIR, AI_UPSCALE_BATCH_TIMEOUT_SECONDS, INTERMEDIATE_CRF
@@ -218,8 +219,8 @@ def load_settings():
             not math.isfinite(float(freeze_value))):
         raise ValueError("edit_settings.freeze_duration must be a finite number.")
     FREEZE = float(freeze_value)
-    if not 1.7 <= FREEZE <= 3.0 or FREEZE >= DURATION:
-        raise ValueError("freeze_duration must be 1.7–3.0 seconds and shorter than duration.")
+    if abs(FREEZE - 2.0) > 1e-9 or FREEZE >= DURATION:
+        raise ValueError("edit_settings.freeze_duration must be exactly 2.0 seconds and shorter than the edit.")
     drop_freeze_value = edit.get("drop_freeze_duration", 0.25)
     if (isinstance(drop_freeze_value, bool) or not isinstance(drop_freeze_value, (int, float)) or
             not math.isfinite(float(drop_freeze_value)) or not 0.1 <= float(drop_freeze_value) <= 0.6):
@@ -251,6 +252,10 @@ def load_settings():
             not math.isfinite(float(source_gap_value)) or not 0.0 <= float(source_gap_value) <= 1.0):
         raise ValueError("edit_settings.source_min_gap_seconds must be between 0 and 1 second.")
     MIN_SOURCE_GAP_SECONDS = float(source_gap_value)
+    skull_enabled = edit.get("ending_skull_enabled", False)
+    if not isinstance(skull_enabled, bool):
+        raise ValueError("edit_settings.ending_skull_enabled must be an explicit boolean.")
+    ENDING_SKULL_ENABLED = skull_enabled
     skull_size = edit.get("skull_size_px", 420)
     if isinstance(skull_size, bool) or not isinstance(skull_size, int) or not 160 <= skull_size <= 960:
         raise ValueError("edit_settings.skull_size_px must be an integer from 160 to 960.")
@@ -2343,6 +2348,19 @@ def run_doctor():
     return 1 if failed else 0
 
 
+def build_skull_overlay_graph(final_freeze_start):
+    """Build the optional skull overlay without changing the final-freeze timeline."""
+    if not ENDING_SKULL_ENABLED:
+        return "", "[impact_raw]"
+    skull_size_px = max(80, round(ENDING_SKULL_SIZE_PX * WIDTH / 1080))
+    skull_pop_frames = max(1, round(ENDING_SKULL_POP_SECONDS * FPS))
+    graph = (
+        f"[2:v]scale=w='if(lt(n,{skull_pop_frames}),{skull_size_px}*(0.62+0.38*n/{skull_pop_frames}),{skull_size_px})':h=-1:eval=frame,setpts=PTS+{final_freeze_start:.6f}/TB[skull];"
+        f"[impact_raw][skull]overlay=x='(W-w)*{ENDING_SKULL_POSITION_X:.5f}':y='(H-h)*{ENDING_SKULL_POSITION_Y:.5f}':enable='gte(t,{final_freeze_start:.5f})'[impact];"
+    )
+    return graph, "[impact]"
+
+
 def main(argv=None):
     global VIDEO, MUSIC, REFERENCE, EDIT_DURATION, DURATION, FREEZE, SUBJECT_OBSERVATIONS, SOURCE_FPS
     global OUTDIR, WORK, FINAL, VARIANT_INDEX, PREVIEW_MODE, RUN_DIR
@@ -2858,12 +2876,10 @@ def main(argv=None):
     ])
     progress_event("timeline_assembly", "completed", "Rendered clips joined without re-encoding.")
 
-    print("[render 3/4] Adding bass-hit flashes, cinematic skull freeze, and Phonk audio...")
-    progress_event("final_render", "running", "Applying configured flashes, skull freeze, audio processing and final encoding.")
+    print("[render 3/4] Adding bass-hit flashes, final freeze, and Phonk audio...")
+    progress_event("final_render", "running", "Applying configured flashes, final freeze, optional skull overlay, audio processing and final encoding.")
     final_video = f"{WORK}/final_render.mp4"
     final_freeze_start = edit_frames / FPS
-    skull_size_px = max(80, round(ENDING_SKULL_SIZE_PX * WIDTH / 1080))
-    skull_pop_frames = max(1, round(ENDING_SKULL_POP_SECONDS * FPS))
     flash_filter = make_flash_filter(beats)
     # Pad first, then split: the impact branch reads the cloned tail frames.
     # Only the freeze branch is enlarged/shaken, so normal footage stays stable.
@@ -2890,13 +2906,13 @@ def main(argv=None):
         "enable='lt(t,0.055)',"
         f"setpts=PTS+{final_freeze_start:.6f}/TB"
     )
+    skull_graph, impact_video_label = build_skull_overlay_graph(final_freeze_start)
     filter_graph = (
         f"[0:v]{base_chain},split[base][impact_src];"
         "[base]setsar=1[baseout];"
         f"[impact_src]{impact_chain}[impact_raw];"
-        f"[2:v]scale=w='if(lt(n,{skull_pop_frames}),{skull_size_px}*(0.62+0.38*n/{skull_pop_frames}),{skull_size_px})':h=-1:eval=frame,setpts=PTS+{final_freeze_start:.6f}/TB[skull];"
-        f"[impact_raw][skull]overlay=x='(W-w)*{ENDING_SKULL_POSITION_X:.5f}':y='(H-h)*{ENDING_SKULL_POSITION_Y:.5f}':enable='gte(t,{final_freeze_start:.5f})'[impact];"
-        f"[baseout][impact]overlay=0:0:enable='gte(t,{final_freeze_start:.5f})',"
+        f"{skull_graph}"
+        f"[baseout]{impact_video_label}overlay=0:0:enable='gte(t,{final_freeze_start:.5f})',"
         f"trim=end_frame={total_frames},setsar=1[outv]"
     )
     edl_audio = edl["audio"][0]
@@ -2930,7 +2946,7 @@ def main(argv=None):
     if ENDING_IMPACT_SFX_ENABLED:
         impact_delay_ms = round(final_freeze_start * 1000)
         audio_parts.append(
-            f"[3:a]adelay={impact_delay_ms}:all=1,apad=whole_dur={DURATION:.6f},"
+            f"[{2 + int(ENDING_SKULL_ENABLED)}:a]adelay={impact_delay_ms}:all=1,apad=whole_dur={DURATION:.6f},"
             f"atrim=duration={DURATION:.6f},volume=0.55[impact_sfx]"
         )
         audio_parts.append(
@@ -2943,9 +2959,12 @@ def main(argv=None):
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", joined]
     if audio_start_seconds > 0:
         cmd += ["-ss", f"{audio_start_seconds:.6f}"]
-    cmd += ["-i", audio_source, "-loop", "1", "-framerate", str(FPS), "-i", SKULL_ASSET,
-            "-f", "lavfi", "-i", "aevalsrc=0.32*sin(2*PI*(90*t-55*t*t))*exp(-12*t):s=48000:d=0.45",
-            "-filter_complex", filter_graph, "-map", "[outv]", "-map", "[aout]",
+    cmd += ["-i", audio_source]
+    if ENDING_SKULL_ENABLED:
+        cmd += ["-loop", "1", "-framerate", str(FPS), "-i", SKULL_ASSET]
+    if ENDING_IMPACT_SFX_ENABLED:
+        cmd += ["-f", "lavfi", "-i", "aevalsrc=0.32*sin(2*PI*(90*t-55*t*t))*exp(-12*t):s=48000:d=0.45"]
+    cmd += ["-filter_complex", filter_graph, "-map", "[outv]", "-map", "[aout]",
             "-t", f"{DURATION:.6f}", "-frames:v", str(total_frames),
             "-c:v", CODEC, "-preset", PRESET, "-crf", str(CRF),
             "-pix_fmt", "yuv420p", "-r", str(FPS),

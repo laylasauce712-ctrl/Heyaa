@@ -27,6 +27,7 @@
     "drop_freeze_duration": 0.25,
     "source_min_gap_seconds": 0.05,
     "edl_mode": "on",
+    "ending_skull_enabled": false,
     "skull_size_px": 520,
     "skull_position_x": 0.5,
     "skull_position_y": 0.5,

@@ -13,7 +13,7 @@ def config():
     return {
         "style": "phonk_montagem",
         "video_settings": {"resolution": "1080x1920", "fps": 24, "codec": "libx264", "crf": 26, "preset": "ultrafast"},
-        "edit_settings": {"duration_seconds": 8, "speed": 1.1, "freeze_duration": 1.7, "drop_freeze_duration": 0.25, "edl_mode": "on",
+        "edit_settings": {"duration_seconds": 8, "speed": 1.1, "freeze_duration": 2.0, "drop_freeze_duration": 0.25, "edl_mode": "on",
                           "min_clips": 6, "max_clips": 6, "reference_pacing": False,
                           "mirror_enabled": False, "layout_mode": "fill"},
         "audio_settings": {"beat_sync": False, "beat_flash": False, "bass_boost": False, "music_loop": True},
@@ -23,7 +23,7 @@ def config():
 def sample_edl(include_drop_freeze=False):
     clips = []
     cursor = 0
-    durations = [25, 24, 24, 24, 24, 24] if include_drop_freeze else [26, 25, 25, 25, 25, 25]
+    durations = [23, 23, 23, 23, 23, 23] if include_drop_freeze else [24, 24, 24, 24, 24, 24]
     for i, duration in enumerate(durations):
         source_duration = round(duration * 1.1)
         clips.append({
@@ -65,12 +65,12 @@ class AgentTests(unittest.TestCase):
         cfg["edit_settings"]["smart_crop"] = False
         self.assertEqual(settings_agent(cfg).status, "ok")
 
-    def test_settings_agent_requires_final_freeze_of_at_least_1_7_seconds(self):
+    def test_settings_agent_requires_exact_two_second_final_freeze(self):
         cfg = config()
-        cfg["edit_settings"]["freeze_duration"] = 1.2
+        cfg["edit_settings"]["freeze_duration"] = 1.7
         result = settings_agent(cfg)
         self.assertEqual(result.status, "blocked")
-        self.assertTrue(any("1.7–3.0" in finding for finding in result.findings))
+        self.assertTrue(any("exactly 2.0 seconds" in finding for finding in result.findings))
 
     def test_framing_agent_reports_optional_person_track_evidence(self):
         media = {"context_window": {"subject_tracking": {
@@ -106,6 +106,22 @@ class AgentTests(unittest.TestCase):
         result = settings_agent(cfg)
         self.assertEqual(result.status, "blocked")
         self.assertTrue(any("skull_size_px" in finding for finding in result.findings))
+
+    def test_settings_agent_validates_skull_visibility_flag(self):
+        cfg = config()
+        cfg["edit_settings"]["ending_skull_enabled"] = False
+        self.assertEqual(settings_agent(cfg).status, "ok")
+        cfg["edit_settings"]["ending_skull_enabled"] = True
+        self.assertEqual(settings_agent(cfg).status, "ok")
+        cfg["edit_settings"]["ending_skull_enabled"] = "false"
+        result = settings_agent(cfg)
+        self.assertEqual(result.status, "blocked")
+        self.assertTrue(any("ending_skull_enabled" in finding for finding in result.findings))
+
+    def test_sample_edl_keeps_exact_two_second_final_freeze(self):
+        edl = sample_edl()
+        freeze = next(item for item in edl["video"] if item.get("effect") == "phonk-freeze")
+        self.assertEqual(freeze["dur_f"], 48)
 
     def test_settings_agent_blocks_unsupported_settings(self):
         cfg = config()

@@ -88,8 +88,11 @@ def settings_agent(config: dict[str, Any]) -> AgentResult:
         findings.append("edit_settings.speed must be between 1.0x and 1.35x.")
     freeze = edit.get("freeze_duration")
     if (not _finite_number(freeze) or not _finite_number(duration) or
-            not 1.7 <= float(freeze) <= 3.0 or float(freeze) >= float(duration)):
-        findings.append("freeze_duration must be 1.7–3.0 seconds and shorter than the edit.")
+            abs(float(freeze) - 2.0) > 1e-9 or float(freeze) >= float(duration)):
+        findings.append("edit_settings.freeze_duration must be exactly 2.0 seconds and shorter than the edit.")
+    ending_skull_enabled = edit.get("ending_skull_enabled", False)
+    if not isinstance(ending_skull_enabled, bool):
+        findings.append("edit_settings.ending_skull_enabled must be an explicit boolean.")
     drop_freeze = edit.get("drop_freeze_duration", 0.25)
     if not _finite_number(drop_freeze) or not 0.1 <= float(drop_freeze) <= 0.6:
         findings.append("drop_freeze_duration must be between 0.1 and 0.6 seconds.")
@@ -146,6 +149,7 @@ def settings_agent(config: dict[str, Any]) -> AgentResult:
                        ("All required settings are present and within renderer-supported bounds.",), (),
                        {"resolution": video["resolution"], "fps": fps, "duration_seconds": duration,
                         "speed": speed, "freeze_duration": freeze,
+                        "ending_skull_enabled": ending_skull_enabled,
                         "min_shot_seconds": float(min_shot_seconds),
                         "mirror_enabled": edit["mirror_enabled"], "layout_mode": layout_mode,
                         "ai_upscale_enabled": ai_upscale_enabled,

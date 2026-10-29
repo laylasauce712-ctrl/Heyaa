@@ -200,6 +200,20 @@ class ContextPlanningTests(unittest.TestCase):
         self.assertIn("if(lt(t,", path["x_expression"])
         self.assertIn("if(lt(t,", path["y_expression"])
 
+    def test_disabling_skull_leaves_final_freeze_overlay_branch_intact(self):
+        with patch.object(renderer, "ENDING_SKULL_ENABLED", False):
+            graph, output_label = renderer.build_skull_overlay_graph(18.0)
+        self.assertEqual(graph, "")
+        self.assertEqual(output_label, "[impact_raw]")
+
+        with (patch.object(renderer, "ENDING_SKULL_ENABLED", True),
+              patch.object(renderer, "WIDTH", 1080),
+              patch.object(renderer, "FPS", 30)):
+            graph, output_label = renderer.build_skull_overlay_graph(18.0)
+        self.assertIn("[2:v]", graph)
+        self.assertIn("[skull]", graph)
+        self.assertEqual(output_label, "[impact]")
+
     def test_synthetic_130_bpm_pulses_produce_confident_phase_locked_grid(self):
         hop_seconds = 0.02
         expected_period_frames = round(60.0 / 130.0 / hop_seconds)
