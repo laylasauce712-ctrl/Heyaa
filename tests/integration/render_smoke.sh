@@ -1,14 +1,33 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# This smoke test temporarily replaces the project settings with a tiny fixture.
-# Preserve and restore the user's real params.json even if the render/test fails.
-PARAMS_BACKUP="$(mktemp)"
-cp params.json "$PARAMS_BACKUP"
+# This smoke test uses the renderer's fixed input/output paths. Preserve any
+# existing user media and render artifacts before creating disposable fixtures.
+BACKUP_DIR="$(mktemp -d)"
+cp params.json "$BACKUP_DIR/params.json"
+HAD_INPUT=0
+HAD_OUTPUT=0
+if [[ -e input || -L input ]]; then
+  mv input "$BACKUP_DIR/input"
+  HAD_INPUT=1
+fi
+if [[ -e output || -L output ]]; then
+  mv output "$BACKUP_DIR/output"
+  HAD_OUTPUT=1
+fi
 mkdir -p input output
 cleanup() {
+  local exit_code=$?
+  trap - EXIT
   rm -rf input output
-  cp "$PARAMS_BACKUP" params.json
-  rm -f "$PARAMS_BACKUP"
+  cp "$BACKUP_DIR/params.json" params.json
+  if [[ "$HAD_INPUT" == "1" ]]; then
+    mv "$BACKUP_DIR/input" input
+  fi
+  if [[ "$HAD_OUTPUT" == "1" ]]; then
+    mv "$BACKUP_DIR/output" output
+  fi
+  rm -rf "$BACKUP_DIR"
+  exit "$exit_code"
 }
 trap cleanup EXIT
 cat > params.json <<'JSON'
