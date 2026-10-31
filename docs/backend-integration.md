@@ -92,9 +92,11 @@ not run a detector or introduce model weights.
 The association distance uses Kalman-predicted center movement, normalized
 HOG color histograms, and box height. It is bounded to a 2.2-second gap and
 records track IDs, spans, and agreement with the current greedy HOG association.
+Norfair runs only after the same HOG detector has produced its sampled boxes.
 The current greedy tracker remains authoritative; Norfair cannot change the
 selected source, subject, crop, or EDL. Track IDs are temporary tracking IDs,
-not verified identity.
+not verified identity. The coarse scan of multiple chapter candidates skips
+Norfair so it does not multiply tracking work before a chapter is selected.
 
 The worker is separate from Heyaa's core interpreter. When OpenCV is absent,
 there are no HOG observations and Norfair is not invoked. Removing only
@@ -137,9 +139,10 @@ with the core, while Heyaa validates the response against these contracts.
 
 ## Non-goals of this foundation
 
-This change does not install MediaPipe, Qwen3-VL, or Textual. It does
-not switch either production analysis path: FFmpeg remains authoritative for
-scene-cut timestamps and the current bass-onset/periodic-grid heuristic remains
-authoritative for beat timing. PySceneDetect and Beat This! only record shadow
-observations. The Agent Room remains a later UI task; current
+This change does not install MediaPipe, Qwen3-VL, or Textual. It does not
+switch any production analysis decision: FFmpeg remains authoritative for
+scene-cut timestamps, the current bass-onset/periodic-grid heuristic remains
+authoritative for beat timing, and the existing HOG/greedy tracker remains
+authoritative for subject observations. PySceneDetect, Beat This!, and Norfair
+only record shadow evidence. The Agent Room remains a later UI task; current
 scripts/watch_agents.py stays a terminal trace viewer.
