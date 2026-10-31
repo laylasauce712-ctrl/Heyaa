@@ -113,6 +113,18 @@ from pathlib import Path
 
 path = Path("output/latest/final_phonk_20s.mp4")
 report = json.loads(Path("output/latest/agent_report.json").read_text(encoding="utf-8"))
+# CI sets this only to assert that the ordinary render observed the optional backend.
+# The renderer itself has no test-mode switch and always behaves the same.
+if __import__("os").environ.get("HEYAA_CI_EXPECT_SCENE_SHADOW") == "1":
+    shadow_entries = report.get("analysis_backend_shadow", {}).get("scene_detection", [])
+    successful_shadow = [
+        entry for entry in shadow_entries
+        if entry.get("backend_id") == "pyscenedetect.content.0.7.2"
+        and entry.get("status") == "ok"
+        and entry.get("metadata", {}).get("sample_windows")
+    ]
+    assert successful_shadow, shadow_entries
+    print(f"Ordinary render recorded {len(successful_shadow)} PySceneDetect shadow observation(s).")
 assert report["status"] == "ready_for_human_review", report
 assert report["results"]["settings_agent"]["status"] == "ok", report
 assert report["results"]["planner"]["status"] == "ok", report
