@@ -258,7 +258,8 @@ def _run_norfair_shadow(
 
 def detect_person_track(video_path: str, start_seconds: float, end_seconds: float,
                         sample_interval_seconds: float = 0.75,
-                        max_frame_side: int = 480) -> dict[str, Any]:
+                        max_frame_side: int = 480,
+                        norfair_shadow_enabled: bool = True) -> dict[str, Any]:
     """Run optional OpenCV's built-in HOG people detector on one bounded source window."""
     try:
         import cv2
@@ -358,7 +359,10 @@ def detect_person_track(video_path: str, start_seconds: float, end_seconds: floa
         } for observation in chosen["observations"]]
         if chosen is not None else []
     )
-    norfair_shadow = _run_norfair_shadow(frames, custom_observations)
+    norfair_shadow = (
+        _run_norfair_shadow(frames, custom_observations)
+        if norfair_shadow_enabled else None
+    )
     if chosen is None:
         return {
             "available": True, "detected": False, "method": "opencv-hog-no-stable-track",
