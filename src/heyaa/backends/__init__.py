@@ -15,6 +15,8 @@ from .contracts import (
     SubjectObservation,
     SubjectTracker,
 )
+from .pyscenedetect import PySceneDetectBackend
+from .shadow_compare import compare_cut_timestamps
 from .registry import (
     BACKEND_ROLES,
     BackendAttempt,
@@ -33,6 +35,8 @@ __all__ = [
     "BackendRegistry",
     "BackendResult",
     "BackendUnavailableError",
+    "PySceneDetectBackend",
+    "compare_cut_timestamps",
     "BeatAnalyzer",
     "BeatEvent",
     "NormalizedBox",
