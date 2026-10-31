@@ -116,20 +116,18 @@ report = json.loads(Path("output/latest/agent_report.json").read_text(encoding="
 # CI sets this only to assert that the ordinary render observed the optional backend.
 # The renderer itself has no test-mode switch and always behaves the same.
 if __import__("os").environ.get("HEYAA_CI_EXPECT_SCENE_SHADOW") == "1":
-    shadow_report = report.get("analysis_backend_shadow", {})
-    assert isinstance(shadow_report, dict), shadow_report
-    scene_entries = shadow_report.get("scene_detection", [])
+    shadow_entries = report.get("analysis_backend_shadow", [])
+    assert isinstance(shadow_entries, list), shadow_entries
     successful_scene = [
-        entry for entry in scene_entries
+        entry for entry in shadow_entries
         if isinstance(entry, dict)
         and entry.get("backend_id") == "pyscenedetect.content.0.7.2"
         and entry.get("status") == "ok"
         and entry.get("metadata", {}).get("sample_windows")
     ]
-    assert successful_scene, scene_entries
-    beat_entries = shadow_report.get("beat_analysis", [])
+    assert successful_scene, shadow_entries
     successful_beat = [
-        entry for entry in beat_entries
+        entry for entry in shadow_entries
         if isinstance(entry, dict)
         and entry.get("backend_id") == "beat-this.small0.1.1.0"
         and entry.get("status") == "ok"
@@ -138,7 +136,7 @@ if __import__("os").environ.get("HEYAA_CI_EXPECT_SCENE_SHADOW") == "1":
         and entry.get("metadata", {}).get("selected_python")
         and entry.get("metadata", {}).get("worker_runtime", {}).get("is_venv") is True
     ]
-    assert successful_beat, beat_entries
+    assert successful_beat, shadow_entries
     print(
         f"Ordinary render recorded {len(successful_scene)} PySceneDetect and "
         f"{len(successful_beat)} Beat This! shadow observation(s)."
