@@ -763,7 +763,11 @@ def _record_scene_shadow(path, ffmpeg_times, duration, scan_duration=None):
         )
         event_status = "completed"
     else:
-        summary = "PySceneDetect shadow observation did not complete; primary FFmpeg analysis is unchanged."
+        detail = "; ".join(entry["warnings"][:2]) if entry["warnings"] else "no backend detail supplied"
+        summary = (
+            "PySceneDetect shadow observation did not complete; primary FFmpeg analysis is unchanged. "
+            + detail[:600]
+        )
         event_status = "failed" if entry["status"] == "failed" else "skipped"
     SCENE_SHADOW_REPORT.append(entry)
     progress_event("scene_backend_shadow", event_status, summary, entry, echo=False)
