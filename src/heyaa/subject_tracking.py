@@ -198,6 +198,22 @@ def _run_norfair_shadow(
             "warnings": [f"Could not decode Norfair worker output: {detail}"],
             "metadata": {"input_frames": len(payload_frames), "detection_count": total_detections},
         }
+    if not isinstance(report, dict):
+        return {
+            "backend_id": "norfair.hog-association.2.3.0",
+            "status": "failed",
+            "items": [],
+            "warnings": ["Norfair worker returned JSON that was not an object."],
+            "metadata": {"input_frames": len(payload_frames), "detection_count": total_detections},
+        }
+    if report.get("status") not in {"ok", "insufficient_evidence", "unavailable", "failed"}:
+        return {
+            "backend_id": "norfair.hog-association.2.3.0",
+            "status": "failed",
+            "items": [],
+            "warnings": ["Norfair worker returned an unsupported status."],
+            "metadata": {"input_frames": len(payload_frames), "detection_count": total_detections},
+        }
     if completed.returncode != 0 and report.get("status") == "ok":
         report["status"] = "failed"
         report.setdefault("warnings", []).append(
@@ -359,10 +375,19 @@ def detect_person_track(video_path: str, start_seconds: float, end_seconds: floa
         } for observation in chosen["observations"]]
         if chosen is not None else []
     )
-    norfair_shadow = (
-        _run_norfair_shadow(frames, custom_observations)
-        if norfair_shadow_enabled else None
-    )
+    norfair_shadow = None
+    if norfair_shadow_enabled:
+        try:
+            norfair_shadow = _run_norfair_shadow(frames, custom_observations)
+        except Exception as exc:
+            # The optional association observer must never break the established HOG path.
+            norfair_shadow = {
+                "backend_id": "norfair.hog-association.2.3.0",
+                "status": "failed",
+                "items": [],
+                "warnings": [f"Unexpected Norfair shadow error: {type(exc).__name__}: {exc}"],
+                "metadata": {"sampled_frame_count": len(frames)},
+            }
     if chosen is None:
         return {
             "available": True, "detected": False, "method": "opencv-hog-no-stable-track",
