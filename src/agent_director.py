@@ -614,7 +614,8 @@ def _scene_shadow_worker_python():
     for candidate in candidates:
         try:
             if candidate.is_file() and (os.name == "nt" or os.access(candidate, os.X_OK)):
-                return candidate.resolve()
+                # Preserve the venv's python symlink path; resolving it bypasses pyvenv.cfg.
+                return candidate.absolute()
         except OSError:
             continue
     return None
