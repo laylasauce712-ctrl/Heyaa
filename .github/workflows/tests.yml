@@ -26,6 +26,8 @@ jobs:
           bash -n scripts/install_scene_backend_linux.sh
       - name: Run dependency-free unit tests
         run: python -m unittest discover -s tests/unit -v
+      - name: Install isolated PySceneDetect shadow observer
+        run: bash scripts/install_scene_backend_linux.sh
       - name: Run normal-profile render and local-data preservation regression
         run: |
           set -euo pipefail
@@ -33,7 +35,7 @@ jobs:
           printf 'hey aa-source-canary\n' > input/.heyaa-source-canary
           printf 'heyaa-render-canary\n' > output/.heyaa-render-canary
           cp params.json "$RUNNER_TEMP/params-before-render-test.json"
-          bash tests/integration/render_smoke.sh
+          HEYAA_CI_EXPECT_SCENE_SHADOW=1 bash tests/integration/render_smoke.sh
           test "$(cat input/.heyaa-source-canary)" = "hey aa-source-canary"
           test "$(cat output/.heyaa-render-canary)" = "heyaa-render-canary"
           cmp params.json "$RUNNER_TEMP/params-before-render-test.json"
@@ -45,7 +47,6 @@ jobs:
       - name: Verify isolated PySceneDetect worker
         run: |
           set -euo pipefail
-          bash scripts/install_scene_backend_linux.sh
           ffmpeg -hide_banner -loglevel error -y \
             -f lavfi -i "color=c=red:s=320x180:r=30:d=2" \
             -f lavfi -i "color=c=blue:s=320x180:r=30:d=2" \
