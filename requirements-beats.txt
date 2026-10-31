@@ -1,0 +1,3 @@
+# Installed only in tools/beat-analysis/.venv after CPU-only PyTorch.
+# Upstream code and published model weights are MIT licensed.
+beat-this==1.1.0
