@@ -13,3 +13,4 @@ params.local.json
 *.key
 tools/scene-analysis/.venv/
 tools/beat-analysis/.venv/
+tools/norfair-analysis/.venv/
