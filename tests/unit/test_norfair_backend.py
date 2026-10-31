@@ -104,9 +104,13 @@ class NorfairAssociatorTests(unittest.TestCase):
         fake_norfair = types.ModuleType("norfair")
         fake_norfair.Detection = FakeDetection
         fake_norfair.Tracker = FakeTracker
+        fake_numpy = types.ModuleType("numpy")
+        fake_numpy.float32 = float
+        fake_numpy.asarray = lambda values, dtype=None: values
+        fake_numpy.linalg = types.SimpleNamespace(norm=lambda values: 0.0)
         with (
             patch.object(norfair_module.metadata, "version", return_value="2.3.0"),
-            patch.dict(sys.modules, {"norfair": fake_norfair}),
+            patch.dict(sys.modules, {"norfair": fake_norfair, "numpy": fake_numpy}),
         ):
             result = self.backend.associate(self.frames)
         self.assertEqual(result.status, "ok")
