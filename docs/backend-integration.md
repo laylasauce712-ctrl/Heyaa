@@ -81,6 +81,29 @@ ground-truth accuracy. The backend is not a semantic drop classifier.
 Remove only tools/beat-analysis/.venv to disable this observer. It does not
 touch the PySceneDetect or Real-ESRGAN environments.
 
+## Third optional adapter: Norfair association
+
+Norfair 2.3.0 (BSD-3-Clause) is pinned in `requirements-tracking.txt` and
+installed only in `tools/norfair-analysis/.venv`. It is used as an
+association-only backend over the normalized person-shaped boxes and
+appearance histograms already produced by Heyaa's OpenCV HOG detector. It does
+not run a detector or introduce model weights.
+
+The association distance uses Kalman-predicted center movement, normalized
+HOG color histograms, and box height. It is bounded to a 2.2-second gap and
+records track IDs, spans, and agreement with the current greedy HOG association.
+The current greedy tracker remains authoritative; Norfair cannot change the
+selected source, subject, crop, or EDL. Track IDs are temporary tracking IDs,
+not verified identity.
+
+The worker is separate from Heyaa's core interpreter. When OpenCV is absent,
+there are no HOG observations and Norfair is not invoked. Removing only
+`tools/norfair-analysis/.venv` disables the observer. MediaPipe Pose is not
+included in this phase: its current Tasks privacy notice says that aggregate
+performance/usage metrics are sent to Google, with no direct opt-out described
+in the current documentation. The source video itself remains local, but this
+telemetry is not aligned with the strictest local-only preference.
+
 ## Dependency isolation
 
 Do not add optional model dependencies to the base Python environment or
@@ -89,8 +112,7 @@ should use separate, pinned requirement files or isolated environments:
 
 - PySceneDetect: isolated `requirements-scenes.txt` environment and shadow adapter.
 - Beat This!: isolated CPU-only `requirements-beats.txt` environment and shadow worker.
-- MediaPipe / Norfair: separate tracking dependency group, evaluated against
-  the existing OpenCV HOG path.
+- MediaPipe Pose: not enabled due to Tasks usage/performance telemetry; Norfair is an isolated HOG-association observer.
 - Qwen3-VL: separate semantic-review worker/environment, selected keyframes
   or short windows only; hardware suitability must be checked first.
 
@@ -115,7 +137,7 @@ with the core, while Heyaa validates the response against these contracts.
 
 ## Non-goals of this foundation
 
-This change does not install MediaPipe, Norfair, Qwen3-VL, or Textual. It does
+This change does not install MediaPipe, Qwen3-VL, or Textual. It does
 not switch either production analysis path: FFmpeg remains authoritative for
 scene-cut timestamps and the current bass-onset/periodic-grid heuristic remains
 authoritative for beat timing. PySceneDetect and Beat This! only record shadow
