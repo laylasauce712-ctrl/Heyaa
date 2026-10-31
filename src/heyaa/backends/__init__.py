@@ -1,7 +1,7 @@
 """Optional analysis backend interfaces for Heyaa.
 
 Importing this package loads only the standard library. Third-party engines
-must be installed and registered explicitly by a future integration.
+are loaded lazily by their adapters or dedicated worker processes.
 """
 from .contracts import (
     BackendResult,
