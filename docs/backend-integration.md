@@ -6,9 +6,10 @@ Heyaa keeps its existing renderer, EDL v1 contract, and analysis heuristics as
 the stable core. Optional libraries and models are integrated behind explicit
 backend interfaces instead of being imported into the render path directly.
 
-This first layer is intentionally dormant: it adds contracts, registration,
-and fallback policy, but does not change the current analysis or render
-behavior. No third-party package is installed or required by the base runtime.
+The shared contracts and registry are dependency-free. The first optional
+engine, PySceneDetect, is integrated as a separately installed shadow observer;
+it does not change current planning or render decisions. No third-party package
+is required by the base runtime.
 
 ## Supported backend roles
 
@@ -96,7 +97,8 @@ with the core, while Heyaa validates the response against these contracts.
 
 ## Non-goals of this foundation
 
-This change does not yet install PySceneDetect, Beat This!, MediaPipe, Norfair,
-Qwen3-VL, or Textual. It does not switch any production backend, modify
-agent_director.py, or change params.json. The Agent Room remains a later UI
-task; current scripts/watch_agents.py stays a terminal trace viewer.
+This change does not install Beat This!, MediaPipe, Norfair, Qwen3-VL, or
+Textual. It does not switch the production scene detector: FFmpeg remains the
+only source of scene-cut timestamps used by the current planner. The optional
+PySceneDetect worker only records shadow observations. The Agent Room remains
+a later UI task; current scripts/watch_agents.py stays a terminal trace viewer.
