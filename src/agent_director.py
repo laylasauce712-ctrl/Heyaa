@@ -603,11 +603,12 @@ def scene_detection_filter(threshold=0.22, width=320):
 
 def _scene_shadow_worker_python():
     """Return the explicitly isolated PySceneDetect interpreter, if provisioned."""
+    repository_root = Path(__file__).resolve().parents[1]
     configured = os.environ.get("HEYAA_SCENE_SHADOW_PYTHON")
     candidates = (
-        [Path(configured)] if configured else [
-            Path("tools/scene-analysis/.venv/bin/python"),
-            Path("tools/scene-analysis/.venv/Scripts/python.exe"),
+        [Path(configured).expanduser()] if configured else [
+            repository_root / "tools" / "scene-analysis" / ".venv" / "bin" / "python",
+            repository_root / "tools" / "scene-analysis" / ".venv" / "Scripts" / "python.exe",
         ]
     )
     for candidate in candidates:
