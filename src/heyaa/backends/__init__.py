@@ -12,11 +12,15 @@ from .contracts import (
     SceneDetector,
     SemanticFinding,
     SemanticReviewer,
+    SubjectAssociator,
+    SubjectDetection,
+    SubjectFrame,
     SubjectObservation,
     SubjectTracker,
 )
 from .pyscenedetect import PySceneDetectBackend
 from .beat_this import BeatThisBackend
+from .norfair import NorfairAssociator
 from .shadow_compare import compare_cut_timestamps
 from .registry import (
     BACKEND_ROLES,
@@ -38,6 +42,7 @@ __all__ = [
     "BackendUnavailableError",
     "PySceneDetectBackend",
     "BeatThisBackend",
+    "NorfairAssociator",
     "compare_cut_timestamps",
     "BeatAnalyzer",
     "BeatEvent",
@@ -46,6 +51,9 @@ __all__ = [
     "SceneDetector",
     "SemanticFinding",
     "SemanticReviewer",
+    "SubjectAssociator",
+    "SubjectDetection",
+    "SubjectFrame",
     "SubjectObservation",
     "SubjectTracker",
     "execute_with_fallback",
