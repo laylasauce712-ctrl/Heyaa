@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from src.heyaa.backends import beat_this as beat_module
 from src.heyaa.backends.beat_this import BeatThisBackend
 
 
@@ -30,10 +31,9 @@ class BeatThisBackendTests(unittest.TestCase):
             source = self.make_audio(temp)
             runtime = self.set_up_runtime()
             with (
-                patch("src.heyaa.backends.beat_this.metadata.version", return_value="1.1.0"),
-                patch("src.heyaa.backends.beat_this.importlib.import_module",
-                      side_effect=runtime),
-                patch("src.heyaa.backends.beat_this.subprocess.run", side_effect=self.fake_ffmpeg),
+                patch.object(beat_module.metadata, "version", return_value="1.1.0"),
+                patch.object(beat_module.importlib, "import_module", side_effect=runtime),
+                patch.object(beat_module.subprocess, "run", side_effect=self.fake_ffmpeg),
             ):
                 result = BeatThisBackend().analyze(source, duration_seconds=20.0)
         self.assertEqual(result.status, "ok")
@@ -48,8 +48,9 @@ class BeatThisBackendTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             source = self.make_audio(temp)
             from importlib.metadata import PackageNotFoundError
-            with patch(
-                "src.heyaa.backends.beat_this.metadata.version",
+            with patch.object(
+                beat_module.metadata,
+                "version",
                 side_effect=PackageNotFoundError("beat-this"),
             ):
                 result = BeatThisBackend().analyze(source)
@@ -59,15 +60,15 @@ class BeatThisBackendTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             source = self.make_audio(temp)
             with (
-                patch("src.heyaa.backends.beat_this.metadata.version", return_value="9.9.9"),
-                patch("src.heyaa.backends.beat_this.importlib.import_module") as importer,
+                patch.object(beat_module.metadata, "version", return_value="9.9.9"),
+                patch.object(beat_module.importlib, "import_module") as importer,
             ):
                 result = BeatThisBackend().analyze(source)
         self.assertEqual(result.status, "unavailable")
         importer.assert_not_called()
 
     def test_missing_source_fails_without_loading_runtime(self):
-        with patch("src.heyaa.backends.beat_this.importlib.import_module") as importer:
+        with patch.object(beat_module.importlib, "import_module") as importer:
             result = BeatThisBackend().analyze("/missing/music.mp3")
         self.assertEqual(result.status, "failed")
         importer.assert_not_called()
@@ -83,10 +84,9 @@ class BeatThisBackendTests(unittest.TestCase):
             source = self.make_audio(temp)
             runtime = self.set_up_runtime(beats=(float("nan"),), downbeats=())
             with (
-                patch("src.heyaa.backends.beat_this.metadata.version", return_value="1.1.0"),
-                patch("src.heyaa.backends.beat_this.importlib.import_module",
-                      side_effect=runtime),
-                patch("src.heyaa.backends.beat_this.subprocess.run", side_effect=self.fake_ffmpeg),
+                patch.object(beat_module.metadata, "version", return_value="1.1.0"),
+                patch.object(beat_module.importlib, "import_module", side_effect=runtime),
+                patch.object(beat_module.subprocess, "run", side_effect=self.fake_ffmpeg),
             ):
                 with self.assertRaises(ValueError):
                     BeatThisBackend().analyze(source, duration_seconds=20.0)
