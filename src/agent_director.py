@@ -1061,7 +1061,7 @@ def _record_beat_shadow(path, heuristic_beats, duration):
             "device": entry["metadata"].get("device", "cpu"),
             "torch_version": entry["metadata"].get("runtime", {}).get("torch_version"),
             "worker_python": entry["metadata"].get("selected_python"),
-            "worker_is_venv": entry["metadata"].get("runtime", {}).get("is_venv"),
+            "worker_is_venv": entry["metadata"].get("worker_runtime", {}).get("is_venv"),
         }
         summary = (
             f"Beat This! observed {len(model_beats)} beats and {len(model_downbeats)} downbeats "
