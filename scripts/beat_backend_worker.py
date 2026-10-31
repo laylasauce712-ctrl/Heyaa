@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from contextlib import redirect_stdout
 import json
 from pathlib import Path
 import sys
@@ -34,10 +35,13 @@ def main() -> int:
         "base_prefix": sys.base_prefix,
         "is_venv": sys.prefix != sys.base_prefix,
     }
-    result = backend.analyze(
-        media_path,
-        duration_seconds=payload.get("duration_seconds"),
-    )
+    # Model/checkpoint download libraries may print progress bars to stdout.
+    # Keep the worker protocol strict: stdout contains exactly one JSON object.
+    with redirect_stdout(sys.stderr):
+        result = backend.analyze(
+            media_path,
+            duration_seconds=payload.get("duration_seconds"),
+        )
     print(json.dumps({
         "backend_id": result.backend_id,
         "status": result.status,
