@@ -102,6 +102,7 @@ INTERMEDIATE_CRF = 10
 ANALYSIS_CACHE_REPORT = []
 SCENE_SHADOW_REPORT = []
 BEAT_SHADOW_REPORT = []
+SUBJECT_ASSOCIATION_SHADOW_REPORT = []
 AI_UPSCALER_EXECUTABLE = None
 AI_UPSCALER_MODEL_DIR = None
 AI_UPSCALE_MODELS = {
@@ -1902,6 +1903,54 @@ def choose_source_chapter(scene_segments, scope_start, scope_end, chapter_second
     }, selected_segments
 
 
+def analyze_subject_track(video_path, start_seconds, end_seconds, *, sample_interval_seconds=0.75, max_frame_side=480):
+    """Run the established HOG tracker and record optional Norfair association evidence."""
+    track = detect_person_track(
+        video_path,
+        start_seconds,
+        end_seconds,
+        sample_interval_seconds=sample_interval_seconds,
+        max_frame_side=max_frame_side,
+    )
+    shadow = track.pop("norfair_shadow", None)
+    if not isinstance(shadow, dict):
+        return track
+
+    entry = {
+        "source": Path(video_path).name,
+        "backend_id": shadow.get("backend_id", "norfair.hog-association.2.3.0"),
+        "status": shadow.get("status", "failed"),
+        "warnings": list(shadow.get("warnings", [])),
+        "metadata": shadow.get("metadata", {}),
+    }
+    if shadow.get("comparison") is not None:
+        entry["comparison"] = shadow["comparison"]
+
+    if entry["status"] == "ok":
+        metadata = entry["metadata"]
+        comparison = entry.get("comparison", {})
+        summary = (
+            f"Norfair associated {metadata.get('detection_count', 0)} HOG detections "
+            f"into {metadata.get('track_count', 0)} tracks. "
+            f"It matched {comparison.get('matched_observation_count', 0)} positions "
+            "against the existing greedy appearance track. This is association agreement only; "
+            "HOG remains the detector and production tracker."
+        )
+        event_status = "completed"
+    else:
+        detail = "; ".join(entry["warnings"][:2]) if entry["warnings"] else "no backend detail supplied"
+        summary = (
+            "Norfair shadow association did not complete; the existing HOG tracker is unchanged. "
+            + detail[:600]
+        )
+        event_status = "failed" if entry["status"] == "failed" else "skipped"
+
+    SUBJECT_ASSOCIATION_SHADOW_REPORT.append(entry)
+    progress_event("subject_association_shadow", event_status, summary, entry, echo=False)
+    print(f"[subject-shadow] {summary}", flush=True)
+    return track
+
+
 def measure_candidate_chapter_tracks(video_path, chapter_candidates, max_candidates=3):
     """Coarsely check top activity chapters for persistent person-shaped appearances."""
     if isinstance(max_candidates, bool) or not isinstance(max_candidates, int) or not 1 <= max_candidates <= 4:
@@ -1919,7 +1968,7 @@ def measure_candidate_chapter_tracks(video_path, chapter_candidates, max_candida
         try:
             track = detect_person_track(
                 video_path, float(candidate["start_seconds"]), float(candidate["end_seconds"]),
-                sample_interval_seconds=2.0, max_frame_side=360,
+                sample_interval_seconds=2.0, max_frame_side=360, norfair_shadow_enabled=False,
             )
         except (OSError, RuntimeError, ValueError, TypeError) as exc:
             track = {
@@ -3090,6 +3139,7 @@ def main(argv=None):
     ANALYSIS_CACHE_REPORT.clear()
     SCENE_SHADOW_REPORT.clear()
     BEAT_SHADOW_REPORT.clear()
+    SUBJECT_ASSOCIATION_SHADOW_REPORT.clear()
     if args.command == "doctor":
         return run_doctor()
     PREVIEW_MODE = bool(args.preview)
@@ -3329,7 +3379,7 @@ def main(argv=None):
             "identity_semantics": False,
         }
     elif SUBJECT_LOCK_ENABLED:
-        subject_analysis = detect_person_track(VIDEO, context_start, context_end)
+        subject_analysis = analyze_subject_track(VIDEO, context_start, context_end)
     else:
         subject_analysis = {
             "available": False, "detected": False, "method": "subject-lock-disabled",
@@ -3452,7 +3502,7 @@ def main(argv=None):
                 )
                 if SUBJECT_LOCK_ENABLED:
                     progress_event("character_lock", "running", "Tracking the dominant appearance proxy inside the selected chapter.")
-                    subject_analysis = detect_person_track(VIDEO, chapter_start, chapter_end)
+                    subject_analysis = analyze_subject_track(VIDEO, chapter_start, chapter_end)
                 else:
                     subject_analysis = {
                         "available": False, "detected": False, "method": "subject-lock-disabled",
@@ -3614,7 +3664,7 @@ def main(argv=None):
         context_duration = max(0.1, chapter_end - chapter_start)
         context_scenes = source_scope_scenes
         if SUBJECT_LOCK_ENABLED:
-            subject_analysis = detect_person_track(VIDEO, chapter_start, chapter_end)
+            subject_analysis = analyze_subject_track(VIDEO, chapter_start, chapter_end)
         else:
             subject_analysis = {
                 "available": False, "detected": False, "method": "subject-lock-disabled",
@@ -4076,7 +4126,7 @@ def main(argv=None):
     }, emit=print_agent_event, emit_progress=print_agent_event)
     agent_report["pre_render_review"] = pre_render_review
     agent_report["analysis_cache"] = list(ANALYSIS_CACHE_REPORT)
-    agent_report["analysis_backend_shadow"] = list(SCENE_SHADOW_REPORT) + list(BEAT_SHADOW_REPORT)
+    agent_report["analysis_backend_shadow"] = list(SCENE_SHADOW_REPORT) + list(BEAT_SHADOW_REPORT) + list(SUBJECT_ASSOCIATION_SHADOW_REPORT)
     agent_report["clip_selection"] = {
         "selected_clip_count": actual_motion_clip_count,
         "requested_clip_count": args.clip_count,
