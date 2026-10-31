@@ -4008,7 +4008,7 @@ def main(argv=None):
         "music_loop_enabled": MUSIC_LOOP,
         "music_loop_crossfade_seconds": loop_graph["crossfade_seconds"],
         "music_loop_count": loop_graph["loop_count"],
-        "analysis_backend_shadow": {"scene_detection": list(SCENE_SHADOW_REPORT), "beat_analysis": list(BEAT_SHADOW_REPORT)},
+        "analysis_backend_shadow": {"scene_detection": list(SCENE_SHADOW_REPORT), "beat_analysis": list(BEAT_SHADOW_REPORT), "subject_association": list(SUBJECT_ASSOCIATION_SHADOW_REPORT)},
         "context_window": context,
         "source_selection": source_selection_report,
         "context_caveat": "Temporal scene-cut-density proxy only; no semantic person identification in this build.",
