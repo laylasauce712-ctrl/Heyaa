@@ -79,8 +79,10 @@ class PySceneDetectBackendTests(unittest.TestCase):
         self.assertIn("Expected PySceneDetect 0.7.2", result.warnings[0])
 
     def test_expected_decode_failure_is_reported(self):
-        _fake, _stream, VideoOpenFailure, _SeekError = self.fake_modules()
-        fake, stream, _, _ = self.fake_modules(error=VideoOpenFailure("bad video"))
+        fake, stream, VideoOpenFailure, _SeekError = self.fake_modules()
+        def fail_detection(*_args, **_kwargs):
+            raise VideoOpenFailure("bad video")
+        fake.detect = fail_detection
         with patch("src.heyaa.backends.pyscenedetect.importlib.import_module",
                    side_effect=[fake, stream]):
             result = self.backend.detect("clip.mp4")
