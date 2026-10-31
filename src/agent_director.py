@@ -735,7 +735,10 @@ def _record_scene_shadow(path, ffmpeg_times, duration, scan_duration=None):
         "metadata": shadow.get("metadata", {}),
     }
     if entry["status"] == "ok":
-        from src.heyaa.backends.shadow_compare import compare_cut_timestamps
+        try:
+            from src.heyaa.backends.shadow_compare import compare_cut_timestamps
+        except ModuleNotFoundError:
+            from heyaa.backends.shadow_compare import compare_cut_timestamps
         shadow_times = [
             float(item["timestamp_seconds"])
             for item in shadow.get("items", [])
