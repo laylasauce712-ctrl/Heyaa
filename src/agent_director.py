@@ -101,6 +101,7 @@ SOURCE_FPS = None
 INTERMEDIATE_CRF = 10
 ANALYSIS_CACHE_REPORT = []
 SCENE_SHADOW_REPORT = []
+BEAT_SHADOW_REPORT = []
 AI_UPSCALER_EXECUTABLE = None
 AI_UPSCALER_MODEL_DIR = None
 AI_UPSCALE_MODELS = {
@@ -918,6 +919,168 @@ def extend_looped_beats(beats, music_duration, limit, loop_enabled):
     return sorted(set(expanded))
 
 
+def _beat_shadow_worker_python():
+    """Return the optional Beat This! venv interpreter without resolving its symlink."""
+    repository_root = Path(__file__).resolve().parents[1]
+    configured = os.environ.get("HEYAA_BEAT_SHADOW_PYTHON")
+    candidates = (
+        [Path(configured).expanduser()] if configured else [
+            repository_root / "tools" / "beat-analysis" / ".venv" / "bin" / "python",
+            repository_root / "tools" / "beat-analysis" / ".venv" / "Scripts" / "python.exe",
+        ]
+    )
+    for candidate in candidates:
+        try:
+            if candidate.is_file() and (os.name == "nt" or os.access(candidate, os.X_OK)):
+                return candidate.absolute()
+        except OSError:
+            continue
+    return None
+
+
+def _run_beat_shadow_backend(path, duration):
+    """Run Beat This! in isolation; never alter the production beat/onset timeline."""
+    worker_python = _beat_shadow_worker_python()
+    if worker_python is None:
+        return None
+    analysis_seconds = min(45.0, max(0.0, float(duration)))
+    if analysis_seconds <= 0.25:
+        return {
+            "backend_id": "beat-this.small0.1.1.0",
+            "status": "insufficient_evidence",
+            "items": [],
+            "warnings": ["Music duration is too short for useful beat analysis."],
+            "metadata": {"analysis_duration_seconds": analysis_seconds},
+        }
+    repository_root = Path(__file__).resolve().parents[1]
+    worker_script = repository_root / "scripts" / "beat_backend_worker.py"
+    if not worker_script.is_file():
+        return {
+            "backend_id": "beat-this.small0.1.1.0",
+            "status": "failed",
+            "items": [],
+            "warnings": [f"Beat worker script is missing: {worker_script}"],
+            "metadata": {"analysis_duration_seconds": analysis_seconds},
+        }
+    payload = {
+        "media_path": str(Path(path).resolve()),
+        "duration_seconds": analysis_seconds,
+        "max_analysis_seconds": 45.0,
+        "checkpoint": "small0",
+        "ffmpeg_timeout_seconds": 90,
+    }
+    try:
+        completed = subprocess.run(
+            [str(worker_python), str(worker_script)],
+            input=json.dumps(payload),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            cwd=str(repository_root),
+            timeout=240,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "backend_id": "beat-this.small0.1.1.0",
+            "status": "failed",
+            "items": [],
+            "warnings": ["Beat This! shadow worker exceeded its 240-second timeout."],
+            "metadata": {"analysis_duration_seconds": analysis_seconds},
+        }
+    except OSError as exc:
+        return {
+            "backend_id": "beat-this.small0.1.1.0",
+            "status": "failed",
+            "items": [],
+            "warnings": [f"Could not start isolated Beat This! worker: {exc}"],
+            "metadata": {"analysis_duration_seconds": analysis_seconds},
+        }
+    try:
+        report = json.loads(completed.stdout)
+    except (TypeError, ValueError):
+        detail = (completed.stderr or completed.stdout or "worker returned no JSON").strip()[-1200:]
+        return {
+            "backend_id": "beat-this.small0.1.1.0",
+            "status": "failed",
+            "items": [],
+            "warnings": [f"Could not decode Beat This! worker output: {detail}"],
+            "metadata": {"analysis_duration_seconds": analysis_seconds, "exit_code": completed.returncode},
+        }
+    if completed.returncode != 0 and report.get("status") == "ok":
+        report["status"] = "failed"
+        report.setdefault("warnings", []).append(
+            f"Worker exited with code {completed.returncode}: {(completed.stderr or '').strip()[-800:]}"
+        )
+    report.setdefault("metadata", {})["selected_python"] = str(worker_python)
+    report["metadata"]["configured_python_override"] = bool(
+        os.environ.get("HEYAA_BEAT_SHADOW_PYTHON")
+    )
+    return report
+
+
+def _record_beat_shadow(path, heuristic_beats, duration):
+    shadow = _run_beat_shadow_backend(path, duration)
+    if shadow is None:
+        return
+    entry = {
+        "source": Path(path).name,
+        "backend_id": shadow.get("backend_id", "unknown"),
+        "status": shadow.get("status", "failed"),
+        "warnings": list(shadow.get("warnings", [])),
+        "metadata": shadow.get("metadata", {}),
+    }
+    if entry["status"] == "ok":
+        try:
+            from src.heyaa.backends.shadow_compare import compare_cut_timestamps
+        except ModuleNotFoundError:
+            from heyaa.backends.shadow_compare import compare_cut_timestamps
+        events = [
+            item for item in shadow.get("items", [])
+            if isinstance(item, dict) and isinstance(item.get("timestamp_seconds"), (int, float))
+        ]
+        model_beats = sorted(
+            float(item["timestamp_seconds"]) for item in events if item.get("kind") == "beat"
+        )
+        model_downbeats = sorted(
+            float(item["timestamp_seconds"]) for item in events if item.get("kind") == "downbeat"
+        )
+        sampled_duration = float(entry["metadata"].get("analysis_duration_seconds", min(45.0, duration)))
+        primary_sample = [
+            float(timestamp) for timestamp in heuristic_beats
+            if 0.0 <= float(timestamp) <= sampled_duration
+        ]
+        entry["agreement"] = compare_cut_timestamps(
+            primary_sample, model_beats, tolerance_seconds=0.10
+        )
+        entry["model_timing"] = {
+            "beat_count": len(model_beats),
+            "downbeat_count": len(model_downbeats),
+            "analysis_duration_seconds": sampled_duration,
+            "checkpoint": entry["metadata"].get("checkpoint", "small0"),
+            "device": entry["metadata"].get("device", "cpu"),
+            "torch_version": entry["metadata"].get("runtime", {}).get("torch_version"),
+            "worker_python": entry["metadata"].get("selected_python"),
+            "worker_is_venv": entry["metadata"].get("runtime", {}).get("is_venv"),
+        }
+        summary = (
+            f"Beat This! observed {len(model_beats)} beats and {len(model_downbeats)} downbeats "
+            f"over {sampled_duration:.1f}s; {entry['agreement']['shared_cut_count']} beat "
+            "timestamps matched the FFmpeg heuristic within 100ms. Production timing is unchanged."
+        )
+        event_status = "completed"
+    else:
+        detail = "; ".join(entry["warnings"][:2]) if entry["warnings"] else "no backend detail supplied"
+        summary = (
+            "Beat This! shadow observation did not complete; production beat timing is unchanged. "
+            + detail[:600]
+        )
+        event_status = "failed" if entry["status"] == "failed" else "skipped"
+    BEAT_SHADOW_REPORT.append(entry)
+    progress_event("beat_backend_shadow", event_status, summary, entry, echo=False)
+    print(f"[beat-shadow] {summary}", flush=True)
+
+
 def detect_music_beats(path, limit):
     """Estimate beat candidates and retain the strongest onset as a drop proxy.
 
@@ -937,6 +1100,13 @@ def detect_music_beats(path, limit):
     raw = result.stdout
     if result.returncode != 0 or len(raw) < 8000:
         print("[warn] Beat analysis unavailable; using an even edit rhythm.")
+        try:
+            _record_beat_shadow(path, [], limit)
+        except Exception as exc:
+            BEAT_SHADOW_REPORT.append({
+                "source": Path(path).name, "backend_id": "beat-this.small0.1.1.0",
+                "status": "failed", "warnings": [f"{type(exc).__name__}: {exc}"],
+            })
         return []
 
     samples_per_window = 160  # 20 ms at 8 kHz
@@ -950,6 +1120,13 @@ def detect_music_beats(path, limit):
     if bucket:
         energies.append(math.sqrt(sum(bucket) / len(bucket)))
     if len(energies) < 8:
+        try:
+            _record_beat_shadow(path, [], limit)
+        except Exception as exc:
+            BEAT_SHADOW_REPORT.append({
+                "source": Path(path).name, "backend_id": "beat-this.small0.1.1.0",
+                "status": "failed", "warnings": [f"{type(exc).__name__}: {exc}"],
+            })
         return []
 
     # Positive local energy changes approximate onset strength without NumPy.
@@ -1028,7 +1205,26 @@ def detect_music_beats(path, limit):
     if len(beats) < 3:
         BEAT_GRID_ANALYSIS["method"] = "even_pacing_fallback"
         print("[warn] Few clear bass onsets / grid points found; edit timing will use even pacing.")
+        try:
+            _record_beat_shadow(path, beats, limit)
+        except Exception as exc:
+            BEAT_SHADOW_REPORT.append({
+                "source": Path(path).name, "backend_id": "beat-this.small0.1.1.0",
+                "status": "failed", "warnings": [f"{type(exc).__name__}: {exc}"],
+            })
         return []
+    try:
+        _record_beat_shadow(path, beats, limit)
+    except Exception as exc:
+        BEAT_SHADOW_REPORT.append({
+            "source": Path(path).name, "backend_id": "beat-this.small0.1.1.0",
+            "status": "failed", "warnings": [f"{type(exc).__name__}: {exc}"],
+        })
+        progress_event(
+            "beat_backend_shadow", "failed",
+            "Beat This! shadow observer failed; production beat timing is unchanged.",
+            BEAT_SHADOW_REPORT[-1], echo=False,
+        )
     print(f"[analyze] Prepared {len(beats)} beat-grid/onset timing candidates in the edit window.")
     return beats
 
@@ -2919,6 +3115,7 @@ def main(argv=None):
     args = parse_media_source_args(argv)
     ANALYSIS_CACHE_REPORT.clear()
     SCENE_SHADOW_REPORT.clear()
+    BEAT_SHADOW_REPORT.clear()
     if args.command == "doctor":
         return run_doctor()
     PREVIEW_MODE = bool(args.preview)
@@ -3769,7 +3966,7 @@ def main(argv=None):
         "music_loop_enabled": MUSIC_LOOP,
         "music_loop_crossfade_seconds": loop_graph["crossfade_seconds"],
         "music_loop_count": loop_graph["loop_count"],
-        "analysis_backend_shadow": {"scene_detection": list(SCENE_SHADOW_REPORT)},
+        "analysis_backend_shadow": {"scene_detection": list(SCENE_SHADOW_REPORT), "beat_analysis": list(BEAT_SHADOW_REPORT)},
         "context_window": context,
         "source_selection": source_selection_report,
         "context_caveat": "Temporal scene-cut-density proxy only; no semantic person identification in this build.",
@@ -3887,7 +4084,7 @@ def main(argv=None):
     }, emit=print_agent_event, emit_progress=print_agent_event)
     agent_report["pre_render_review"] = pre_render_review
     agent_report["analysis_cache"] = list(ANALYSIS_CACHE_REPORT)
-    agent_report["analysis_backend_shadow"] = list(SCENE_SHADOW_REPORT)
+    agent_report["analysis_backend_shadow"] = {"scene_detection": list(SCENE_SHADOW_REPORT), "beat_analysis": list(BEAT_SHADOW_REPORT)}
     agent_report["clip_selection"] = {
         "selected_clip_count": actual_motion_clip_count,
         "requested_clip_count": args.clip_count,
