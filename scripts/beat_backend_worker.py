@@ -28,6 +28,12 @@ def main() -> int:
         max_analysis_seconds=payload.get("max_analysis_seconds", 45.0),
         ffmpeg_timeout_seconds=payload.get("ffmpeg_timeout_seconds", 90),
     )
+    runtime = {
+        "executable": sys.executable,
+        "prefix": sys.prefix,
+        "base_prefix": sys.base_prefix,
+        "is_venv": sys.prefix != sys.base_prefix,
+    }
     result = backend.analyze(
         media_path,
         duration_seconds=payload.get("duration_seconds"),
@@ -37,7 +43,7 @@ def main() -> int:
         "status": result.status,
         "items": [asdict(item) for item in result.items],
         "warnings": list(result.warnings),
-        "metadata": dict(result.metadata),
+        "metadata": {**dict(result.metadata), "worker_runtime": runtime},
     }, separators=(",", ":")))
     return 0
 
