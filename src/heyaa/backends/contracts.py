@@ -170,6 +170,52 @@ class SubjectTracker(Protocol):
     ) -> BackendResult[SubjectObservation]: ...
 
 
+@dataclass(frozen=True, slots=True)
+class SubjectDetection:
+    """One detector observation passed to an association/tracking backend."""
+
+    timestamp_seconds: float
+    box: NormalizedBox
+    confidence: float | None = None
+    appearance: tuple[float, ...] = ()
+
+    def __post_init__(self) -> None:
+        _validate_timestamp(self.timestamp_seconds, "timestamp_seconds")
+        _validate_confidence(self.confidence)
+        if not isinstance(self.appearance, tuple) or any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            for value in self.appearance
+        ):
+            raise ValueError("appearance must be a tuple of finite numbers")
+
+
+@dataclass(frozen=True, slots=True)
+class SubjectFrame:
+    """Timestamped detector output for one sampled source frame."""
+
+    timestamp_seconds: float
+    detections: tuple[SubjectDetection, ...] = ()
+
+    def __post_init__(self) -> None:
+        _validate_timestamp(self.timestamp_seconds, "timestamp_seconds")
+        if not isinstance(self.detections, tuple) or not all(
+            isinstance(item, SubjectDetection) for item in self.detections
+        ):
+            raise ValueError("detections must be a tuple of SubjectDetection")
+
+
+class SubjectAssociator(Protocol):
+    """Association-only backend; does not run a detector or choose a subject."""
+
+    backend_id: str
+
+    def associate(
+        self, frames: Sequence[SubjectFrame],
+    ) -> BackendResult[SubjectObservation]: ...
+
+
 class SemanticReviewer(Protocol):
     backend_id: str
 
