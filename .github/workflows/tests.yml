@@ -19,15 +19,18 @@ jobs:
           sudo apt-get install -y ffmpeg
       - name: Validate renderer syntax and settings JSON
         run: |
-          python -m py_compile src/agent_director.py src/heyaa/agents.py src/heyaa/backends/contracts.py src/heyaa/backends/registry.py src/heyaa/backends/pyscenedetect.py src/heyaa/backends/shadow_compare.py scripts/scene_backend_worker.py tests/unit/test_pyscenedetect_backend.py
+          python -m py_compile src/agent_director.py src/heyaa/agents.py src/heyaa/backends/contracts.py src/heyaa/backends/registry.py src/heyaa/backends/pyscenedetect.py src/heyaa/backends/shadow_compare.py scripts/scene_backend_worker.py tests/unit/test_pyscenedetect_backend.py src/heyaa/backends/beat_this.py scripts/beat_backend_worker.py tests/unit/test_beat_this_backend.py
           python -m json.tool params.json > /dev/null
           bash -n scripts/install_realesrgan_linux.sh
           bash -n scripts/prepare_local_worktree.sh
           bash -n scripts/install_scene_backend_linux.sh
+          bash -n scripts/install_beat_backend_linux.sh
       - name: Run dependency-free unit tests
         run: python -m unittest discover -s tests/unit -v
       - name: Install isolated PySceneDetect shadow observer
         run: bash scripts/install_scene_backend_linux.sh
+      - name: Install isolated Beat This! CPU shadow observer
+        run: bash scripts/install_beat_backend_linux.sh
       - name: Run normal-profile render and local-data preservation regression
         run: |
           set -euo pipefail
@@ -35,7 +38,7 @@ jobs:
           printf 'hey aa-source-canary\n' > input/.heyaa-source-canary
           printf 'heyaa-render-canary\n' > output/.heyaa-render-canary
           cp params.json "$RUNNER_TEMP/params-before-render-test.json"
-          HEYAA_CI_EXPECT_SCENE_SHADOW=1 bash tests/integration/render_smoke.sh
+          HEYAA_CI_EXPECT_SCENE_SHADOW=1 HEYAA_CI_EXPECT_BEAT_SHADOW=1 bash tests/integration/render_smoke.sh
           test "$(cat input/.heyaa-source-canary)" = "hey aa-source-canary"
           test "$(cat output/.heyaa-render-canary)" = "heyaa-render-canary"
           cmp params.json "$RUNNER_TEMP/params-before-render-test.json"
@@ -62,4 +65,27 @@ jobs:
           assert report["metadata"]["version"] == "0.7.2", report
           assert report["metadata"]["cut_count"] >= 1, report
           print("Isolated PySceneDetect worker passed its scene-boundary check.")
+          PY
+      - name: Verify isolated Beat This! inference worker
+        run: |
+          set -euo pipefail
+          ffmpeg -hide_banner -loglevel error -y \
+            -f lavfi -i "sine=frequency=440:sample_rate=22050:duration=12" \
+            -c:a pcm_s16le "$RUNNER_TEMP/beat-fixture.wav"
+          printf '%s\n' '{"media_path":"'"$RUNNER_TEMP"'/beat-fixture.wav","duration_seconds":12.0,"max_analysis_seconds":12.0,"checkpoint":"small0"}' \
+            | tools/beat-analysis/.venv/bin/python scripts/beat_backend_worker.py > "$RUNNER_TEMP/beat-shadow.json"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          report = json.loads(Path(os.environ["RUNNER_TEMP"], "beat-shadow.json").read_text())
+          assert report["status"] == "ok", report
+          assert report["backend_id"] == "beat-this.small0.1.1.0", report
+          assert report["metadata"]["checkpoint"] == "small0", report
+          assert report["metadata"]["device"] == "cpu", report
+          print(
+              "Isolated Beat This! inference completed:",
+              report["metadata"]["beat_count"], "beats and",
+              report["metadata"]["downbeat_count"], "downbeats."
+          )
           PY
