@@ -685,13 +685,13 @@ def _run_scene_shadow_backend(path, duration, scan_duration=None):
             text=True,
             check=False,
             cwd=str(repository_root),
-            timeout=300,
+            timeout=120,
         )
     except subprocess.TimeoutExpired:
         return {
             "backend_id": "pyscenedetect.content.0.7.2",
             "status": "failed",
-            "warnings": ["PySceneDetect shadow worker exceeded its 300-second timeout."],
+            "warnings": ["PySceneDetect shadow worker exceeded its 120-second timeout."],
             "items": [],
             "metadata": {"windows": windows},
         }
