@@ -19,18 +19,21 @@ jobs:
           sudo apt-get install -y ffmpeg
       - name: Validate renderer syntax and settings JSON
         run: |
-          python -m py_compile src/agent_director.py src/heyaa/agents.py src/heyaa/backends/contracts.py src/heyaa/backends/registry.py src/heyaa/backends/pyscenedetect.py src/heyaa/backends/shadow_compare.py scripts/scene_backend_worker.py tests/unit/test_pyscenedetect_backend.py src/heyaa/backends/beat_this.py scripts/beat_backend_worker.py tests/unit/test_beat_this_backend.py
+          python -m py_compile src/agent_director.py src/heyaa/agents.py src/heyaa/backends/contracts.py src/heyaa/backends/registry.py src/heyaa/backends/pyscenedetect.py src/heyaa/backends/shadow_compare.py scripts/scene_backend_worker.py tests/unit/test_pyscenedetect_backend.py src/heyaa/backends/beat_this.py scripts/beat_backend_worker.py tests/unit/test_beat_this_backend.py src/heyaa/backends/norfair.py scripts/norfair_backend_worker.py tests/unit/test_norfair_backend.py
           python -m json.tool params.json > /dev/null
           bash -n scripts/install_realesrgan_linux.sh
           bash -n scripts/prepare_local_worktree.sh
           bash -n scripts/install_scene_backend_linux.sh
           bash -n scripts/install_beat_backend_linux.sh
+          bash -n scripts/install_norfair_backend_linux.sh
       - name: Run dependency-free unit tests
         run: python -m unittest discover -s tests/unit -v
       - name: Install isolated PySceneDetect shadow observer
         run: bash scripts/install_scene_backend_linux.sh
       - name: Install isolated Beat This! CPU shadow observer
         run: bash scripts/install_beat_backend_linux.sh
+      - name: Install isolated Norfair association observer
+        run: bash scripts/install_norfair_backend_linux.sh
       - name: Run normal-profile render and local-data preservation regression
         run: |
           set -euo pipefail
@@ -88,4 +91,42 @@ jobs:
               report["metadata"]["beat_count"], "beats and",
               report["metadata"]["downbeat_count"], "downbeats."
           )
+          PY
+      - name: Verify isolated Norfair HOG association worker
+        run: |
+          set -euo pipefail
+          python - <<'PY' > "$RUNNER_TEMP/norfair-frames.json"
+          import json
+          frames = []
+          for index in range(18):
+              a_x = 0.15 + (0.68 * index / 17)
+              b_x = 0.85 - (0.68 * index / 17)
+              frames.append({
+                  "timestamp_seconds": round(index * 0.75, 6),
+                  "detections": [
+                      {"x": a_x - 0.04, "y": 0.30, "width": 0.08, "height": 0.30,
+                       "confidence": 0.95, "appearance": [1.0, 0.0, 0.0, 0.0]},
+                      {"x": b_x - 0.04, "y": 0.30, "width": 0.08, "height": 0.30,
+                       "confidence": 0.95, "appearance": [0.0, 1.0, 0.0, 0.0]},
+                  ],
+              })
+          print(json.dumps({"frames": frames}, separators=(",", ":")))
+          PY
+          cat "$RUNNER_TEMP/norfair-frames.json" \
+            | tools/norfair-analysis/.venv/bin/python scripts/norfair_backend_worker.py \
+            > "$RUNNER_TEMP/norfair-tracks.json"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          report = json.loads(Path(os.environ["RUNNER_TEMP"], "norfair-tracks.json").read_text())
+          assert report["status"] == "ok", report
+          assert report["backend_id"] == "norfair.hog-association.2.3.0", report
+          assert report["metadata"]["version"] == "2.3.0", report
+          assert report["metadata"]["worker_runtime"]["is_venv"] is True, report
+          tracks = report["metadata"]["tracks"]
+          assert report["metadata"]["track_count"] == 2, tracks
+          assert all(track["observation_count"] >= 15 for track in tracks), tracks
+          assert len({item["track_id"] for item in report["items"]}) == 2, report
+          print("Isolated Norfair worker preserved two appearance-distinct crossing tracks.")
           PY
