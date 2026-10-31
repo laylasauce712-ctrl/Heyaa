@@ -100,6 +100,7 @@ AI_UPSCALE_BATCH_TIMEOUT_SECONDS = 600
 SOURCE_FPS = None
 INTERMEDIATE_CRF = 10
 ANALYSIS_CACHE_REPORT = []
+SCENE_SHADOW_REPORT = []
 AI_UPSCALER_EXECUTABLE = None
 AI_UPSCALER_MODEL_DIR = None
 AI_UPSCALE_MODELS = {
@@ -600,8 +601,173 @@ def scene_detection_filter(threshold=0.22, width=320):
     return f"scale={int(width)}:-2:flags=fast_bilinear,select='gt(scene,{float(threshold):.2f})',showinfo"
 
 
+def _scene_shadow_worker_python():
+    """Return the explicitly isolated PySceneDetect interpreter, if provisioned."""
+    configured = os.environ.get("HEYAA_SCENE_SHADOW_PYTHON")
+    candidates = (
+        [Path(configured)] if configured else [
+            Path("tools/scene-analysis/.venv/bin/python"),
+            Path("tools/scene-analysis/.venv/Scripts/python.exe"),
+        ]
+    )
+    for candidate in candidates:
+        try:
+            if candidate.is_file() and (os.name == "nt" or os.access(candidate, os.X_OK)):
+                return candidate.resolve()
+        except OSError:
+            continue
+    return None
+
+
+def _scene_shadow_windows(duration, scan_duration=None):
+    """Choose up to three bounded, distributed windows for normal-workflow observation."""
+    end = float(duration)
+    if scan_duration is not None:
+        end = min(end, max(0.0, float(scan_duration)))
+    if not math.isfinite(end) or end <= 0.25:
+        return []
+    if end <= 60.0:
+        return [{"start_seconds": 0.0, "end_seconds": round(end, 6)}]
+    window = 20.0
+    starts = (0.0, (end - window) / 2.0, end - window)
+    selected = []
+    seen = set()
+    for start in starts:
+        bounded_start = max(0.0, min(end - window, float(start)))
+        key = round(bounded_start, 3)
+        if key in seen:
+            continue
+        seen.add(key)
+        selected.append({
+            "start_seconds": key,
+            "end_seconds": round(min(end, bounded_start + window), 6),
+        })
+    return selected
+
+
+def _run_scene_shadow_backend(path, duration, scan_duration=None):
+    """Run PySceneDetect in its isolated worker; never alter primary FFmpeg results."""
+    worker_python = _scene_shadow_worker_python()
+    if worker_python is None:
+        return None
+    windows = _scene_shadow_windows(duration, scan_duration)
+    if not windows:
+        return {
+            "backend_id": "pyscenedetect.content.0.7.2",
+            "status": "insufficient_evidence",
+            "warnings": ["No useful source window was available for shadow analysis."],
+            "items": [],
+            "metadata": {"windows": []},
+        }
+    repository_root = Path(__file__).resolve().parents[1]
+    worker_script = repository_root / "scripts" / "scene_backend_worker.py"
+    if not worker_script.is_file():
+        return {
+            "backend_id": "pyscenedetect.content.0.7.2",
+            "status": "failed",
+            "warnings": [f"Scene worker script is missing: {worker_script}"],
+            "items": [],
+            "metadata": {"windows": windows},
+        }
+    payload = {
+        "media_path": str(Path(path).resolve()),
+        "windows": windows,
+        "threshold": 27.0,
+        "min_scene_len_seconds": 0.15,
+    }
+    try:
+        completed = subprocess.run(
+            [str(worker_python), str(worker_script)],
+            input=json.dumps(payload),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            cwd=str(repository_root),
+            timeout=300,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "backend_id": "pyscenedetect.content.0.7.2",
+            "status": "failed",
+            "warnings": ["PySceneDetect shadow worker exceeded its 300-second timeout."],
+            "items": [],
+            "metadata": {"windows": windows},
+        }
+    except OSError as exc:
+        return {
+            "backend_id": "pyscenedetect.content.0.7.2",
+            "status": "failed",
+            "warnings": [f"Could not start isolated PySceneDetect worker: {exc}"],
+            "items": [],
+            "metadata": {"windows": windows},
+        }
+    try:
+        report = json.loads(completed.stdout)
+    except (TypeError, ValueError):
+        detail = (completed.stderr or completed.stdout or "worker returned no JSON").strip()[-1200:]
+        return {
+            "backend_id": "pyscenedetect.content.0.7.2",
+            "status": "failed",
+            "warnings": [f"Could not decode PySceneDetect worker output: {detail}"],
+            "items": [],
+            "metadata": {"windows": windows, "exit_code": completed.returncode},
+        }
+    if completed.returncode != 0 and report.get("status") == "ok":
+        report["status"] = "failed"
+        report.setdefault("warnings", []).append(
+            f"Worker exited with code {completed.returncode}: {(completed.stderr or '').strip()[-800:]}"
+        )
+    report.setdefault("metadata", {})["sample_windows"] = windows
+    return report
+
+
+def _record_scene_shadow(path, ffmpeg_times, duration, scan_duration=None):
+    shadow = _run_scene_shadow_backend(path, duration, scan_duration)
+    if shadow is None:
+        return
+    entry = {
+        "source": Path(path).name,
+        "backend_id": shadow.get("backend_id", "unknown"),
+        "status": shadow.get("status", "failed"),
+        "warnings": list(shadow.get("warnings", [])),
+        "metadata": shadow.get("metadata", {}),
+    }
+    if entry["status"] == "ok":
+        from src.heyaa.backends.shadow_compare import compare_cut_timestamps
+        shadow_times = [
+            float(item["timestamp_seconds"])
+            for item in shadow.get("items", [])
+            if isinstance(item, dict) and isinstance(item.get("timestamp_seconds"), (int, float))
+        ]
+        windows = entry["metadata"].get("sample_windows", [])
+        primary_sample = [
+            float(timestamp) for timestamp in ffmpeg_times
+            if any(
+                float(window.get("start_seconds", 0.0)) <= float(timestamp)
+                <= float(window.get("end_seconds", -1.0))
+                for window in windows if isinstance(window, dict)
+            )
+        ]
+        entry["agreement"] = compare_cut_timestamps(
+            primary_sample, shadow_times, tolerance_seconds=0.15
+        )
+        summary = (
+            f"PySceneDetect observed {len(shadow_times)} cuts across {len(windows)} "
+            f"sample windows; {entry['agreement']['shared_cut_count']} matched FFmpeg "
+            "within 150ms. FFmpeg remains authoritative."
+        )
+        event_status = "completed"
+    else:
+        summary = "PySceneDetect shadow observation did not complete; primary FFmpeg analysis is unchanged."
+        event_status = "failed" if entry["status"] == "failed" else "skipped"
+    SCENE_SHADOW_REPORT.append(entry)
+    progress_event("scene_backend_shadow", event_status, summary, entry, echo=False)
+    print(f"[scene-shadow] {summary}", flush=True)
+
+
 def detect_scenes(path, duration, scan_duration=None):
-    """Use FFmpeg scene-change scores as an inexpensive cut detector."""
+    """Use FFmpeg as the primary cut detector and optionally observe PySceneDetect in shadow."""
     print(f"[analyze] Scene changes: {Path(path).name}")
     cmd = ["ffmpeg", "-hide_banner"]
     if scan_duration is not None:
@@ -621,7 +787,24 @@ def detect_scenes(path, duration, scan_duration=None):
             value = float(match.group(1))
             if 0.15 < value < duration - 0.15:
                 times.append(value)
-    return sorted(set(times))
+    primary_times = sorted(set(times))
+    try:
+        _record_scene_shadow(path, primary_times, duration, scan_duration)
+    except Exception as exc:
+        # An observer must never stop the established scene-analysis/render path.
+        shadow_error = {
+            "source": Path(path).name,
+            "backend_id": "pyscenedetect.content.0.7.2",
+            "status": "failed",
+            "warnings": [f"Unexpected shadow observer error: {type(exc).__name__}: {exc}"],
+        }
+        SCENE_SHADOW_REPORT.append(shadow_error)
+        progress_event(
+            "scene_backend_shadow", "failed",
+            "Shadow observer failed; primary FFmpeg analysis is unchanged.",
+            shadow_error, echo=False,
+        )
+    return primary_times
 
 
 def _estimate_period_frames(envelope, min_lag=15, max_lag=60):
@@ -2722,6 +2905,7 @@ def main(argv=None):
     global OUTDIR, WORK, FINAL, VARIANT_INDEX, PREVIEW_MODE, RUN_DIR
     args = parse_media_source_args(argv)
     ANALYSIS_CACHE_REPORT.clear()
+    SCENE_SHADOW_REPORT.clear()
     if args.command == "doctor":
         return run_doctor()
     PREVIEW_MODE = bool(args.preview)
@@ -3572,6 +3756,7 @@ def main(argv=None):
         "music_loop_enabled": MUSIC_LOOP,
         "music_loop_crossfade_seconds": loop_graph["crossfade_seconds"],
         "music_loop_count": loop_graph["loop_count"],
+        "analysis_backend_shadow": {"scene_detection": list(SCENE_SHADOW_REPORT)},
         "context_window": context,
         "source_selection": source_selection_report,
         "context_caveat": "Temporal scene-cut-density proxy only; no semantic person identification in this build.",
@@ -3689,6 +3874,7 @@ def main(argv=None):
     }, emit=print_agent_event, emit_progress=print_agent_event)
     agent_report["pre_render_review"] = pre_render_review
     agent_report["analysis_cache"] = list(ANALYSIS_CACHE_REPORT)
+    agent_report["analysis_backend_shadow"] = list(SCENE_SHADOW_REPORT)
     agent_report["clip_selection"] = {
         "selected_clip_count": actual_motion_clip_count,
         "requested_clip_count": args.clip_count,
