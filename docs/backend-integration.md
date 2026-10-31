@@ -40,13 +40,34 @@ or renders video.
 - EDL validation, Inspector, Director hard gates, and atomic export remain
   authoritative. An optional backend cannot bypass them.
 
+## First optional adapter: PySceneDetect
+
+The PySceneDetect adapter is pinned to upstream version 0.7.2 (BSD-3-Clause).
+It uses the official ContentDetector API and maps cut timestamps into the
+shared SceneCut evidence contract. Its dependency is installed only into
+tools/scene-analysis/.venv via scripts/install_scene_backend_linux.sh and
+requirements-scenes.txt; the Heyaa core Python environment is not modified.
+
+When that isolated environment exists, the ordinary render workflow invokes
+the scene worker on up to three 20-second windows distributed across the
+analyzed source. FFmpeg remains the primary detector and its timestamps remain
+the only ones used for existing planning. PySceneDetect results are recorded
+as a shadow observation, with one-to-one agreement counts within 150ms. These
+counts compare two detectors; they are not accuracy, precision, or recall
+because neither detector is ground truth. Worker absence, timeouts, decode
+errors, and other shadow failures do not stop rendering or change EDL decisions.
+
+Remove only tools/scene-analysis/.venv to disable this optional observer; the
+installer refuses to replace an unexpected existing path. Existing local
+tools/realesrgan files and the base runtime are left untouched.
+
 ## Dependency isolation
 
 Do not add optional model dependencies to the base Python environment or
 requirements-vision.txt just to register an adapter. The next integrations
 should use separate, pinned requirement files or isolated environments:
 
-- PySceneDetect: separate scene-analysis dependency group.
+- PySceneDetect: isolated `requirements-scenes.txt` environment and shadow adapter.
 - Beat This!: separate beat-analysis environment; PyTorch should not become a
   base dependency.
 - MediaPipe / Norfair: separate tracking dependency group, evaluated against
