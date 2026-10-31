@@ -720,6 +720,10 @@ def _run_scene_shadow_backend(path, duration, scan_duration=None):
             f"Worker exited with code {completed.returncode}: {(completed.stderr or '').strip()[-800:]}"
         )
     report.setdefault("metadata", {})["sample_windows"] = windows
+    report["metadata"]["selected_python"] = str(worker_python)
+    report["metadata"]["configured_python_override"] = bool(
+        os.environ.get("HEYAA_SCENE_SHADOW_PYTHON")
+    )
     return report
 
 
