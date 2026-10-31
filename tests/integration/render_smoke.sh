@@ -136,6 +136,7 @@ if __import__("os").environ.get("HEYAA_CI_EXPECT_SCENE_SHADOW") == "1":
         and entry.get("metadata", {}).get("checkpoint") == "small0"
         and entry.get("metadata", {}).get("device") == "cpu"
         and entry.get("metadata", {}).get("selected_python")
+        and entry.get("metadata", {}).get("worker_runtime", {}).get("is_venv") is True
     ]
     assert successful_beat, beat_entries
     print(
