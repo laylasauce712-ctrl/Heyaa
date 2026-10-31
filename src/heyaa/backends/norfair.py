@@ -47,6 +47,17 @@ class NorfairAssociator:
                 if len(detection.appearance) > MAX_APPEARANCE_VALUES:
                     raise ValueError("appearance signature exceeds the supported size")
 
+        if not frames or detection_count == 0:
+            return BackendResult(
+                backend_id=self.backend_id,
+                status="insufficient_evidence",
+                warnings=("No HOG subject detections were available for association.",),
+                metadata={
+                    "frame_count": len(frames),
+                    "detection_count": detection_count,
+                },
+            )
+
         try:
             installed_version = metadata.version("norfair")
         except metadata.PackageNotFoundError as exc:
@@ -65,18 +76,6 @@ class NorfairAssociator:
                 metadata={
                     "expected_version": SUPPORTED_VERSION,
                     "found_version": installed_version,
-                },
-            )
-
-        if not frames or detection_count == 0:
-            return BackendResult(
-                backend_id=self.backend_id,
-                status="insufficient_evidence",
-                warnings=("No HOG subject detections were available for association.",),
-                metadata={
-                    "version": installed_version,
-                    "frame_count": len(frames),
-                    "detection_count": detection_count,
                 },
             )
 
