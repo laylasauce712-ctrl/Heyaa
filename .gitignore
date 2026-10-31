@@ -12,3 +12,4 @@ params.local.json
 *.pem
 *.key
 tools/scene-analysis/.venv/
+tools/beat-analysis/.venv/
