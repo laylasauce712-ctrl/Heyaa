@@ -1100,13 +1100,6 @@ def detect_music_beats(path, limit):
     raw = result.stdout
     if result.returncode != 0 or len(raw) < 8000:
         print("[warn] Beat analysis unavailable; using an even edit rhythm.")
-        try:
-            _record_beat_shadow(path, [], limit)
-        except Exception as exc:
-            BEAT_SHADOW_REPORT.append({
-                "source": Path(path).name, "backend_id": "beat-this.small0.1.1.0",
-                "status": "failed", "warnings": [f"{type(exc).__name__}: {exc}"],
-            })
         return []
 
     samples_per_window = 160  # 20 ms at 8 kHz
@@ -1205,26 +1198,7 @@ def detect_music_beats(path, limit):
     if len(beats) < 3:
         BEAT_GRID_ANALYSIS["method"] = "even_pacing_fallback"
         print("[warn] Few clear bass onsets / grid points found; edit timing will use even pacing.")
-        try:
-            _record_beat_shadow(path, beats, limit)
-        except Exception as exc:
-            BEAT_SHADOW_REPORT.append({
-                "source": Path(path).name, "backend_id": "beat-this.small0.1.1.0",
-                "status": "failed", "warnings": [f"{type(exc).__name__}: {exc}"],
-            })
         return []
-    try:
-        _record_beat_shadow(path, beats, limit)
-    except Exception as exc:
-        BEAT_SHADOW_REPORT.append({
-            "source": Path(path).name, "backend_id": "beat-this.small0.1.1.0",
-            "status": "failed", "warnings": [f"{type(exc).__name__}: {exc}"],
-        })
-        progress_event(
-            "beat_backend_shadow", "failed",
-            "Beat This! shadow observer failed; production beat timing is unchanged.",
-            BEAT_SHADOW_REPORT[-1], echo=False,
-        )
     print(f"[analyze] Prepared {len(beats)} beat-grid/onset timing candidates in the edit window.")
     return beats
 
@@ -3253,6 +3227,24 @@ def main(argv=None):
             "method": "disabled", "confidence": None, "period_seconds": None,
             "phase_seconds": None, "candidate_count": 0, "onset_candidate_count": 0,
         })
+    # Run the optional observer after cache lookup, so cache hits never suppress
+    # ordinary workflow exposure. The returned timestamps remain observational.
+    if BEAT_SYNC:
+        try:
+            _record_beat_shadow(MUSIC, raw_beats, available_edit_duration)
+        except Exception as exc:
+            shadow_error = {
+                "source": Path(MUSIC).name,
+                "backend_id": "beat-this.small0.1.1.0",
+                "status": "failed",
+                "warnings": [f"{type(exc).__name__}: {exc}"],
+            }
+            BEAT_SHADOW_REPORT.append(shadow_error)
+            progress_event(
+                "beat_backend_shadow", "failed",
+                "Beat This! shadow observer failed; production beat timing is unchanged.",
+                shadow_error, echo=False,
+            )
     beats = extend_looped_beats(raw_beats, music_duration, available_edit_duration, MUSIC_LOOP)
     progress_event("beat_analysis", "completed" if BEAT_SYNC else "skipped",
                    f"Prepared {len(beats)} timing candidate(s).",
