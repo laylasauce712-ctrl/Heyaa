@@ -10,7 +10,7 @@ from importlib import metadata
 import math
 from typing import Sequence
 
-from .contracts import BackendResult, SubjectAssociator, SubjectFrame, SubjectObservation
+from .contracts import BackendResult, NormalizedBox, SubjectAssociator, SubjectFrame, SubjectObservation
 
 SUPPORTED_VERSION = "2.3.0"
 MAX_FRAMES = 1200
@@ -172,7 +172,6 @@ class NorfairAssociator:
                 y1 = max(y0, min(1.0, float(y) + float(height)))
                 if x1 <= x0 or y1 <= y0:
                     continue
-                from .contracts import NormalizedBox
                 observations.append(SubjectObservation(
                     timestamp_seconds=float(data["timestamp_seconds"]),
                     box=NormalizedBox(x0, y0, x1 - x0, y1 - y0),
