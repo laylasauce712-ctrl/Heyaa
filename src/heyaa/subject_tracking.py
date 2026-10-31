@@ -6,7 +6,11 @@ otherwise the renderer falls back to its scene-cut-density context heuristic.
 """
 from __future__ import annotations
 
+import json
 import math
+import os
+from pathlib import Path
+import subprocess
 from typing import Any
 
 
@@ -89,6 +93,169 @@ def _pick_dominant_track(tracks: list[dict[str, Any]]) -> dict[str, Any] | None:
     ))
 
 
+def _norfair_worker_python() -> Path | None:
+    """Find the optional Norfair venv without resolving its Python symlink."""
+    root = Path(__file__).resolve().parents[2]
+    configured = os.environ.get("HEYAA_NORFAIR_SHADOW_PYTHON")
+    candidates = (
+        [Path(configured).expanduser()] if configured else [
+            root / "tools" / "norfair-analysis" / ".venv" / "bin" / "python",
+            root / "tools" / "norfair-analysis" / ".venv" / "Scripts" / "python.exe",
+        ]
+    )
+    for candidate in candidates:
+        try:
+            if candidate.is_file() and (os.name == "nt" or os.access(candidate, os.X_OK)):
+                return candidate.absolute()
+        except OSError:
+            continue
+    return None
+
+
+def _run_norfair_shadow(
+    frames: list[dict[str, Any]],
+    custom_observations: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    """Associate existing HOG boxes in an isolated Norfair process."""
+    worker_python = _norfair_worker_python()
+    if worker_python is None or not frames:
+        return None
+    root = Path(__file__).resolve().parents[2]
+    worker_script = root / "scripts" / "norfair_backend_worker.py"
+    if not worker_script.is_file():
+        return {
+            "backend_id": "norfair.hog-association.2.3.0",
+            "status": "failed",
+            "items": [],
+            "warnings": [f"Norfair worker script is missing: {worker_script}"],
+            "metadata": {},
+        }
+
+    payload_frames = []
+    total_detections = 0
+    for frame in frames:
+        converted = []
+        for detection in frame.get("detections", []):
+            cx = max(0.0, min(1.0, float(detection.get("center_x", 0.5))))
+            cy = max(0.0, min(1.0, float(detection.get("center_y", 0.5))))
+            width = max(1e-4, min(1.0, float(detection.get("width_ratio", 0.08))))
+            height = max(1e-4, min(1.0, float(detection.get("height_ratio", 0.2))))
+            x0 = max(0.0, min(1.0, cx - width / 2.0))
+            y0 = max(0.0, min(1.0, cy - height / 2.0))
+            x1 = max(x0, min(1.0, cx + width / 2.0))
+            y1 = max(y0, min(1.0, cy + height / 2.0))
+            if x1 <= x0 or y1 <= y0:
+                continue
+            converted.append({
+                "x": x0, "y": y0, "width": x1 - x0, "height": y1 - y0,
+                "confidence": max(0.0, min(1.0, float(detection.get("detector_score", 0.0)))),
+                "appearance": list(detection.get("color_histogram", [])),
+            })
+        payload_frames.append({
+            "timestamp_seconds": float(frame["time_seconds"]),
+            "detections": converted,
+        })
+        total_detections += len(converted)
+    if total_detections == 0:
+        return None
+
+    try:
+        completed = subprocess.run(
+            [str(worker_python), str(worker_script)],
+            input=json.dumps({"frames": payload_frames}, separators=(",", ":")),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            cwd=str(root),
+            timeout=90,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "backend_id": "norfair.hog-association.2.3.0",
+            "status": "failed",
+            "items": [],
+            "warnings": ["Norfair shadow worker exceeded its 90-second timeout."],
+            "metadata": {"input_frames": len(payload_frames), "detection_count": total_detections},
+        }
+    except OSError as exc:
+        return {
+            "backend_id": "norfair.hog-association.2.3.0",
+            "status": "failed",
+            "items": [],
+            "warnings": [f"Could not start isolated Norfair worker: {exc}"],
+            "metadata": {"input_frames": len(payload_frames), "detection_count": total_detections},
+        }
+
+    try:
+        report = json.loads(completed.stdout)
+    except (TypeError, ValueError):
+        detail = (completed.stderr or completed.stdout or "worker returned no JSON").strip()[-1200:]
+        return {
+            "backend_id": "norfair.hog-association.2.3.0",
+            "status": "failed",
+            "items": [],
+            "warnings": [f"Could not decode Norfair worker output: {detail}"],
+            "metadata": {"input_frames": len(payload_frames), "detection_count": total_detections},
+        }
+    if completed.returncode != 0 and report.get("status") == "ok":
+        report["status"] = "failed"
+        report.setdefault("warnings", []).append(
+            f"Worker exited with code {completed.returncode}: {(completed.stderr or '').strip()[-800:]}"
+        )
+    report.setdefault("metadata", {})["selected_python"] = str(worker_python)
+    report["metadata"]["configured_python_override"] = bool(
+        os.environ.get("HEYAA_NORFAIR_SHADOW_PYTHON")
+    )
+    if custom_observations and report.get("status") == "ok":
+        norfair_items = report.get("items", [])
+        matched_track_ids: dict[str, int] = {}
+        matched_count = 0
+        for observation in custom_observations:
+            target_time = float(observation["time_seconds"])
+            cx = float(observation["center_x"])
+            cy = float(observation["center_y"])
+            candidates = [
+                item for item in norfair_items
+                if isinstance(item, dict)
+                and isinstance(item.get("timestamp_seconds"), (int, float))
+                and abs(float(item["timestamp_seconds"]) - target_time) <= 0.03
+                and isinstance(item.get("box"), dict)
+            ]
+            nearest = None
+            nearest_distance = float("inf")
+            for item in candidates:
+                box = item["box"]
+                shadow_cx = float(box["x"]) + float(box["width"]) / 2.0
+                shadow_cy = float(box["y"]) + float(box["height"]) / 2.0
+                distance = math.hypot(cx - shadow_cx, cy - shadow_cy)
+                if distance < nearest_distance:
+                    nearest_distance, nearest = distance, item
+            if nearest is not None and nearest_distance <= 0.18:
+                matched_count += 1
+                track_id = str(nearest.get("track_id", ""))
+                if track_id:
+                    matched_track_ids[track_id] = matched_track_ids.get(track_id, 0) + 1
+        dominant = (
+            max(matched_track_ids.items(), key=lambda item: item[1])
+            if matched_track_ids else None
+        )
+        report["comparison"] = {
+            "custom_observation_count": len(custom_observations),
+            "matched_observation_count": matched_count,
+            "matched_track_ids": matched_track_ids,
+            "dominant_norfair_track_id": dominant[0] if dominant else None,
+            "dominant_track_share": (
+                round(dominant[1] / matched_count, 4)
+                if dominant and matched_count else None
+            ),
+            "tolerance_seconds": 0.03,
+            "center_distance_threshold": 0.18,
+            "interpretation": "association agreement only; neither tracker is ground truth",
+        }
+    return report
+
+
 def detect_person_track(video_path: str, start_seconds: float, end_seconds: float,
                         sample_interval_seconds: float = 0.75,
                         max_frame_side: int = 480) -> dict[str, Any]:
@@ -168,6 +335,7 @@ def detect_person_track(video_path: str, start_seconds: float, end_seconds: floa
                     "center_x": (x + box_width / 2.0) / max(1, small_width),
                     "center_y": (y + box_height / 2.0) / max(1, small_height),
                     "height_ratio": box_height / max(1, small_height),
+                    "width_ratio": box_width / max(1, small_width),
                     "detector_score": weight,
                     "color_histogram": histogram.reshape(-1).tolist(),
                 })
@@ -183,13 +351,21 @@ def detect_person_track(video_path: str, start_seconds: float, end_seconds: floa
 
     tracks = _associate_detections(frames)
     chosen = _pick_dominant_track(tracks)
+    custom_observations = (
+        [{
+            key: observation[key]
+            for key in ("time_seconds", "center_x", "center_y", "height_ratio", "detector_score")
+        } for observation in chosen["observations"]]
+        if chosen is not None else []
+    )
+    norfair_shadow = _run_norfair_shadow(frames, custom_observations)
     if chosen is None:
         return {
             "available": True, "detected": False, "method": "opencv-hog-no-stable-track",
             "reason": "No person track had at least three detections across 1.5 seconds.",
             "sample_count": len(frames), "detection_count": sum(len(frame["detections"]) for frame in frames),
             "observations": [], "track_id": None, "track_quality_proxy": None,
-            "identity_semantics": False,
+            "identity_semantics": False, "norfair_shadow": norfair_shadow,
         }
 
     observations = [{
@@ -203,6 +379,7 @@ def detect_person_track(video_path: str, start_seconds: float, end_seconds: floa
         "track_end_seconds": observations[-1]["time_seconds"], "track_span_seconds": chosen["span_seconds"],
         "track_quality_proxy": chosen["track_quality_proxy"], "average_detector_score": chosen["average_detector_score"],
         "observations": observations, "identity_semantics": False,
+        "norfair_shadow": norfair_shadow,
     }
 
 
