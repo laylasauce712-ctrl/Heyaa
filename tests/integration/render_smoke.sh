@@ -116,10 +116,12 @@ report = json.loads(Path("output/latest/agent_report.json").read_text(encoding="
 # CI sets this only to assert that the ordinary render observed the optional backend.
 # The renderer itself has no test-mode switch and always behaves the same.
 if __import__("os").environ.get("HEYAA_CI_EXPECT_SCENE_SHADOW") == "1":
-    shadow_entries = report.get("analysis_backend_shadow", {}).get("scene_detection", [])
+    shadow_entries = report.get("analysis_backend_shadow", [])
+    assert isinstance(shadow_entries, list), shadow_entries
     successful_shadow = [
         entry for entry in shadow_entries
-        if entry.get("backend_id") == "pyscenedetect.content.0.7.2"
+        if isinstance(entry, dict)
+        and entry.get("backend_id") == "pyscenedetect.content.0.7.2"
         and entry.get("status") == "ok"
         and entry.get("metadata", {}).get("sample_windows")
     ]
