@@ -19,7 +19,9 @@ moment by itself.
 The optional runtime is installed only in tools/beat-analysis/.venv:
 - PyTorch and torchaudio are installed from the official CPU wheel index.
 - beat-this is pinned to 1.1.0 in requirements-beats.txt.
-- The core Heyaa Python runtime does not import torch or torchaudio.
+- The core Heyaa Python runtime does not import torch, torchaudio, or soundfile.
+- `soundfile` is installed for the upstream audio-loading fallback; this avoids
+  requiring TorchCodec just to open the worker's generated WAV audio.
 - The worker extracts at most 45 seconds of mono 22.05 kHz audio with FFmpeg.
 - The model checkpoint is small0; first use may download its published weights
   into the isolated user's PyTorch cache.
