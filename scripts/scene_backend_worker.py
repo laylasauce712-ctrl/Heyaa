@@ -17,6 +17,12 @@ if str(REPOSITORY_ROOT) not in sys.path:
 def main() -> int:
     from src.heyaa.backends.pyscenedetect import PySceneDetectBackend
 
+    runtime = {
+        "executable": sys.executable,
+        "prefix": sys.prefix,
+        "base_prefix": sys.base_prefix,
+        "is_venv": sys.prefix != sys.base_prefix,
+    }
     payload: dict[str, Any] = json.load(sys.stdin)
     if not isinstance(payload, dict):
         raise ValueError("worker payload must be a JSON object")
@@ -59,6 +65,7 @@ def main() -> int:
                 "metadata": {
                     "windows": window_reports,
                     "failed_window": window,
+                    "worker_runtime": runtime,
                 },
             }, separators=(",", ":")))
             return 0
@@ -82,6 +89,7 @@ def main() -> int:
             "version": "0.7.2",
             "detector": "ContentDetector",
             "cut_count": len(unique),
+            "worker_runtime": runtime,
         },
     }, separators=(",", ":")))
     return 0
