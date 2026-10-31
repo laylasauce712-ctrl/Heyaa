@@ -1,0 +1,3 @@
+# Installed only in tools/norfair-analysis/.venv; never in Heyaa's core runtime.
+# Upstream Norfair 2.3.0 is BSD-3-Clause.
+norfair==2.3.0
