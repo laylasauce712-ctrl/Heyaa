@@ -4076,7 +4076,7 @@ def main(argv=None):
     }, emit=print_agent_event, emit_progress=print_agent_event)
     agent_report["pre_render_review"] = pre_render_review
     agent_report["analysis_cache"] = list(ANALYSIS_CACHE_REPORT)
-    agent_report["analysis_backend_shadow"] = {"scene_detection": list(SCENE_SHADOW_REPORT), "beat_analysis": list(BEAT_SHADOW_REPORT)}
+    agent_report["analysis_backend_shadow"] = list(SCENE_SHADOW_REPORT) + list(BEAT_SHADOW_REPORT)
     agent_report["clip_selection"] = {
         "selected_clip_count": actual_motion_clip_count,
         "requested_clip_count": args.clip_count,
