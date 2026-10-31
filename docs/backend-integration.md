@@ -62,6 +62,25 @@ Remove only tools/scene-analysis/.venv to disable this optional observer; the
 installer refuses to replace an unexpected existing path. Existing local
 tools/realesrgan files and the base runtime are left untouched.
 
+The first model backend is PySceneDetect, which is already described above.
+
+## Second optional adapter: Beat This!
+
+Beat This! 1.1.0 (MIT code and published weights) is pinned to the small0
+checkpoint and runs CPU-only in tools/beat-analysis/.venv. The installer uses
+the official PyTorch CPU wheel index; torch and torchaudio do not enter Heyaa's
+base interpreter. The first inference may download the upstream small0 weights
+(about 8.1 MB per the upstream README).
+
+The worker analyzes at most 45 seconds from the start of the selected music
+track and reports separate beat and downbeat timestamps. The current
+bass-onset/periodic-grid heuristic remains authoritative for all production
+timing. Agreement is recorded within 100ms; it is a detector comparison, not
+ground-truth accuracy. The backend is not a semantic drop classifier.
+
+Remove only tools/beat-analysis/.venv to disable this observer. It does not
+touch the PySceneDetect or Real-ESRGAN environments.
+
 ## Dependency isolation
 
 Do not add optional model dependencies to the base Python environment or
@@ -69,8 +88,7 @@ requirements-vision.txt just to register an adapter. The next integrations
 should use separate, pinned requirement files or isolated environments:
 
 - PySceneDetect: isolated `requirements-scenes.txt` environment and shadow adapter.
-- Beat This!: separate beat-analysis environment; PyTorch should not become a
-  base dependency.
+- Beat This!: isolated CPU-only `requirements-beats.txt` environment and shadow worker.
 - MediaPipe / Norfair: separate tracking dependency group, evaluated against
   the existing OpenCV HOG path.
 - Qwen3-VL: separate semantic-review worker/environment, selected keyframes
@@ -97,8 +115,9 @@ with the core, while Heyaa validates the response against these contracts.
 
 ## Non-goals of this foundation
 
-This change does not install Beat This!, MediaPipe, Norfair, Qwen3-VL, or
-Textual. It does not switch the production scene detector: FFmpeg remains the
-only source of scene-cut timestamps used by the current planner. The optional
-PySceneDetect worker only records shadow observations. The Agent Room remains
-a later UI task; current scripts/watch_agents.py stays a terminal trace viewer.
+This change does not install MediaPipe, Norfair, Qwen3-VL, or Textual. It does
+not switch either production analysis path: FFmpeg remains authoritative for
+scene-cut timestamps and the current bass-onset/periodic-grid heuristic remains
+authoritative for beat timing. PySceneDetect and Beat This! only record shadow
+observations. The Agent Room remains a later UI task; current
+scripts/watch_agents.py stays a terminal trace viewer.
