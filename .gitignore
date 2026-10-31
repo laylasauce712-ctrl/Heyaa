@@ -11,3 +11,4 @@ params.local.json
 !.env.example
 *.pem
 *.key
+tools/scene-analysis/.venv/
