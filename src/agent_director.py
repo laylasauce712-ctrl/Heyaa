@@ -3040,6 +3040,215 @@ def _run_variant_batch(args):
         raise SystemExit(1)
 
 
+def _write_json_atomic(path, payload):
+    """Atomically persist a JSON manifest without exposing a partial file."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(target.name + ".tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(temporary, target)
+
+
+def _append_edl_source_ranges_to_ledger(edl_path, ledger_path, edit_index, source_path):
+    """Append only validated motion-clip source intervals to the shared batch ledger."""
+    try:
+        edl = json.loads(Path(edl_path).read_text(encoding="utf-8"))
+        ledger = json.loads(Path(ledger_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Could not read edit EDL or source-usage ledger: {exc}") from exc
+    if not isinstance(edl, dict) or not isinstance(ledger, dict) or ledger.get("version") != 1:
+        raise RuntimeError("Edit EDL or source-usage ledger has an unsupported structure.")
+    numerator, denominator = edl.get("fps_num"), edl.get("fps_den")
+    if (isinstance(numerator, bool) or not isinstance(numerator, int) or numerator <= 0 or
+            isinstance(denominator, bool) or not isinstance(denominator, int) or denominator <= 0):
+        raise RuntimeError("Cannot convert EDL source frame positions without a valid rational frame rate.")
+    fps = numerator / denominator
+    existing = ledger.get("used_ranges")
+    if not isinstance(existing, list):
+        raise RuntimeError("Source-usage ledger used_ranges must be a list.")
+    expected_source = Path(source_path).resolve()
+    recorded_source = ledger.get("source_path")
+    if recorded_source and Path(recorded_source).resolve() != expected_source:
+        raise RuntimeError("Batch source changed between edits; refusing to mix source-usage ledgers.")
+    new_ranges = []
+    for item in edl.get("video", []):
+        if not isinstance(item, dict) or item.get("type") != "clip":
+            continue
+        if item.get("source") and Path(item["source"]).resolve() != expected_source:
+            raise RuntimeError("An EDL clip points to an unexpected source file; refusing to update the ledger.")
+        start_f, duration_f = item.get("source_start_f"), item.get("source_dur_f")
+        if (isinstance(start_f, bool) or not isinstance(start_f, int) or start_f < 0 or
+                isinstance(duration_f, bool) or not isinstance(duration_f, int) or duration_f <= 0):
+            raise RuntimeError("EDL contains an invalid source interval.")
+        start = start_f / fps
+        end = (start_f + duration_f) / fps
+        new_ranges.append({
+            "start_seconds": round(start, 6),
+            "end_seconds": round(end, 6),
+            "edit_index": int(edit_index),
+        })
+    if not new_ranges:
+        raise RuntimeError("The validated EDL has no motion-clip source intervals to reserve.")
+    gap = float(ledger.get("minimum_gap_seconds", MIN_SOURCE_GAP_SECONDS))
+    for candidate in new_ranges:
+        for used in existing:
+            if (candidate["start_seconds"] < float(used["end_seconds"]) + gap - 1e-6 and
+                    float(used["start_seconds"]) < candidate["end_seconds"] + gap - 1e-6):
+                raise RuntimeError(
+                    f"Edit {edit_index} reused source time {candidate['start_seconds']:.3f}–"
+                    f"{candidate['end_seconds']:.3f}s within the protected gap of edit "
+                    f"{used.get('edit_index', '?')}."
+                )
+    ledger["source_path"] = str(expected_source)
+    ledger["used_ranges"] = existing + new_ranges
+    ledger["completed_edits"] = sorted({
+        int(item.get("edit_index", 0)) for item in ledger["used_ranges"]
+        if isinstance(item, dict) and int(item.get("edit_index", 0)) > 0
+    })
+    _write_json_atomic(ledger_path, ledger)
+    return new_ranges
+
+
+def _run_edit_batch(args):
+    """Create distinct edits by subtracting every earlier edit's source intervals."""
+    run_root = Path(os.environ.get("HEYAA_RUN_DIR", "output"))
+    edit_root = run_root / "edits"
+    edit_root.mkdir(parents=True, exist_ok=True)
+    source_path = Path("input/test_video.mp4").resolve()
+    ledger_path = run_root / "source_usage_ledger.json"
+    manifest_path = run_root / "edits_manifest.json"
+    ledger = {
+        "version": 1,
+        "source_path": str(source_path),
+        "timebase": "seconds",
+        "minimum_gap_seconds": float(MIN_SOURCE_GAP_SECONDS),
+        "used_ranges": [],
+        "completed_edits": [],
+    }
+    _write_json_atomic(ledger_path, ledger)
+    results = []
+    progress_event(
+        "edit_batch", "running",
+        f"Preparing {args.edits} distinct edit(s) from one source.",
+        {"requested_edits": args.edits, "source_usage_ledger": str(ledger_path),
+         "minimum_source_gap_seconds": MIN_SOURCE_GAP_SECONDS},
+    )
+    for index in range(1, args.edits + 1):
+        edit_dir = edit_root / f"edit_{index:02d}"
+        final_path = edit_dir / "final_phonk_20s.mp4"
+        report_path = edit_dir / "agent_report.json"
+        edl_path = edit_dir / "edit_decision_list.json"
+        command = [
+            sys.executable, str(Path(__file__).resolve()),
+            "--edits", "1", "--edit-index", str(index),
+            "--source-usage-ledger", str(ledger_path),
+        ]
+        if args.require_reference:
+            command.append("--require-reference")
+        if args.clip_count is not None:
+            command.extend(["--clip-count", str(args.clip_count)])
+        if index == 1:
+            for flag, value in (
+                ("--video-url", args.video_url),
+                ("--tiktok-url", args.tiktok_url),
+                ("--music-url", args.music_url),
+                ("--reference-url", args.reference_url),
+            ):
+                if value:
+                    command.extend([flag, value])
+        progress_event(
+            "edit_start", "running", f"Rendering distinct edit {index}/{args.edits}.",
+            {"edit_index": index, "source_usage_intervals_before": len(ledger["used_ranges"]),
+             "output_path": str(final_path)},
+        )
+        print(f"\n[edits] Rendering distinct edit {index}/{args.edits}.", flush=True)
+        completed = _run_variant_process(command, index)
+        report = {}
+        if report_path.is_file():
+            try:
+                report = json.loads(report_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                report = {}
+        export_status = report.get("results", {}).get("export_storage", {}).get("status")
+        success = (
+            completed.returncode == 0 and final_path.is_file() and final_path.stat().st_size > 0
+            and report.get("status") == "ready_for_human_review" and export_status == "ok"
+            and edl_path.is_file()
+        )
+        if success:
+            try:
+                new_ranges = _append_edl_source_ranges_to_ledger(
+                    edl_path, ledger_path, index, source_path
+                )
+            except (RuntimeError, OSError, ValueError) as exc:
+                success = False
+                failure_reason = str(exc)
+            else:
+                failure_reason = None
+        else:
+            new_ranges = []
+            failure_reason = (
+                report.get("fatal_error")
+                or report.get("summary")
+                or f"Edit process exit={completed.returncode}; technical QA/export did not pass."
+            )
+        item = {
+            "index": index,
+            "status": "ok" if success else "failed",
+            "video": str(final_path) if success else None,
+            "agent_report": str(report_path) if report_path.is_file() else None,
+            "edl": str(edl_path) if success else None,
+            "director_status": report.get("status"),
+            "export_status": export_status,
+            "new_source_intervals": len(new_ranges),
+            "reason": failure_reason,
+        }
+        results.append(item)
+        progress_event(
+            "edit_complete", "success" if success else "error",
+            f"Distinct edit {index}/{args.edits}: {'rendered and source intervals reserved' if success else 'not exported; batch stopped to prevent reuse'}.",
+            item,
+        )
+        if not success:
+            for remaining in range(index + 1, args.edits + 1):
+                results.append({
+                    "index": remaining, "status": "not_run", "video": None,
+                    "reason": "Earlier edit failed or no enough unused footage remained; no duplicate was generated.",
+                })
+            break
+    completed_count = sum(1 for item in results if item["status"] == "ok")
+    manifest = {
+        "version": 1,
+        "requested_edits": args.edits,
+        "completed_edits": completed_count,
+        "status": "complete" if completed_count == args.edits else ("partial" if completed_count else "failed"),
+        "distinctness_policy": "Source intervals from each completed EDL are reserved before the next edit; previously used intervals plus the configured gap are excluded.",
+        "motion_clip_count": args.clip_count,
+        "source_usage_ledger": str(ledger_path),
+        "edits": results,
+    }
+    _write_json_atomic(manifest_path, manifest)
+    print(
+        f"[edits] Finished {completed_count}/{args.edits} distinct edit(s). Manifest: {manifest_path}",
+        flush=True,
+    )
+    progress_event(
+        "edit_batch",
+        "completed" if completed_count == args.edits else ("needs_review" if completed_count else "error"),
+        f"Distinct edit batch finished: {completed_count}/{args.edits} exported.",
+        {"manifest_path": str(manifest_path), "requested_edits": args.edits,
+         "completed_edits": completed_count, "source_usage_ledger": str(ledger_path)},
+    )
+    first_video = next((Path(item["video"]) for item in results if item.get("video")), None)
+    if first_video and first_video.is_file():
+        try:
+            create_contact_sheet(first_video, run_root / "contact_sheet.png", DURATION or 20)
+        except Exception as exc:
+            print(f"[warn] Batch contact sheet skipped: {exc}", flush=True)
+    publish_latest_run(run_root)
+    return 0 if completed_count else 1
+
+
 def _new_run_id():
     return time.strftime("%Y%m%d-%H%M%S") + f"-{time.time_ns() % 1000000:06d}"
 
