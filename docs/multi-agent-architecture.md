@@ -1,5 +1,7 @@
 # Heyaa Multi-Agent Architecture (Phonk/Montagem)
 
+The canonical input/output, evidence and non-claim requirements for each stage are recorded in [Agent Contracts](agent-contracts.md). Product-wide invariants live in [Product Contract](product-contract.md).
+
 ## Implemented stages
 
 The current repository runs deterministic Python modules—not an independent LLM swarm. Each stage returns a structured result with status, findings, recommendations and evidence; events in `output/agent_report.json` are emitted from real execution, not fabricated agent chat. Use `scripts/watch_agents.py` to read a human-friendly live trace and inspect the final structured report.
@@ -30,9 +32,15 @@ The current repository runs deterministic Python modules—not an independent LL
 - EDL v1 supports one audio segment spanning the full timeline and the full-source crop rectangle; unsupported schedules/rectangles fail fast.
 - Termux render performance has not been benchmarked on the user's Android device.
 
-## Live progress and clip-count comparisons
+## Live progress and edit-count controls
 
-Each render writes `output/progress.jsonl` (or `output/variants/variant_NN/progress.jsonl` for comparison renders). Each JSONL row has a UTC timestamp, stage, status, summary and structured details. It records source/settings preflight, analysis, selected clip count, per-clip render completion, EDL validation, Inspector, the structured agent results, Director decision and Export Storage result. The terminal remains the live stream; `progress.jsonl` is the durable machine-readable trace. The existing `agent_report.json`, `pre_render_review.json` and `edit_decision_list.json` remain in place.
+Each ordinary render writes its progress trace and report under `output/runs/<run-id>/`. Legacy comparison renders use `output/runs/<run-id>/variants/variant_NN/`.
+
+The product's distinct-edit control is `--edits 1..5` (default: `1`). Each successful edit is stored under `output/runs/<run-id>/edits/edit_NN/`. The parent run contains `edits_manifest.json` plus `source_usage_ledger.json`. The ledger reserves the motion-clip source intervals from each successful EDL, and subsequent edits exclude those intervals plus the configured source gap before analysis/planning. If another complete edit cannot be planned from the remaining footage, the batch stops and records a partial result; it must not reuse earlier intervals or fall back to source progression.
+
+The older `--variants` option is only a comparison/debug path that changes source-time emphasis or clip-count comparison. It is not the distinct-edit count and must not be presented as multiple independent edits.
+
+Each JSONL row has a UTC timestamp, stage, status, summary and structured details. It records source/settings preflight, analysis, selected clip count, per-clip render completion, EDL validation, Inspector, structured agent results, Director decision and Export Storage result. The terminal remains the live stream; `progress.jsonl` is the durable machine-readable trace. The existing `agent_report.json`, `pre_render_review.json` and `edit_decision_list.json` remain in place.
 
 ### Watch agents live
 
