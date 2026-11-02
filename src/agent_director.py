@@ -1658,6 +1658,90 @@ def build_source_scene_segments(start_seconds, end_seconds, scene_cuts, max_segm
     return segments
 
 
+def exclude_used_source_ranges(scene_segments, used_ranges, minimum_gap_seconds=0.05):
+    """Subtract previously exported source intervals before scoring another distinct edit."""
+    if (isinstance(minimum_gap_seconds, bool) or
+            not isinstance(minimum_gap_seconds, (int, float)) or
+            not math.isfinite(float(minimum_gap_seconds)) or minimum_gap_seconds < 0):
+        raise ValueError("minimum_gap_seconds must be a finite non-negative number.")
+    normalized = []
+    for item in used_ranges or []:
+        if not isinstance(item, dict):
+            raise ValueError("Source usage ledger entries must be objects.")
+        start, end = item.get("start_seconds"), item.get("end_seconds")
+        if (not isinstance(start, (int, float)) or isinstance(start, bool) or
+                not isinstance(end, (int, float)) or isinstance(end, bool) or
+                not math.isfinite(float(start)) or not math.isfinite(float(end)) or
+                float(start) < 0 or float(end) <= float(start)):
+            raise ValueError("Source usage ledger contains an invalid time range.")
+        normalized.append((max(0.0, float(start) - float(minimum_gap_seconds)),
+                           float(end) + float(minimum_gap_seconds)))
+    normalized.sort()
+    merged = []
+    for start, end in normalized:
+        if merged and start <= merged[-1][1] + 1e-9:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+
+    available = []
+    for segment in scene_segments or []:
+        if not isinstance(segment, dict):
+            raise ValueError("Source scene candidates must be objects.")
+        start, end = segment.get("start_seconds"), segment.get("end_seconds")
+        if (not isinstance(start, (int, float)) or isinstance(start, bool) or
+                not isinstance(end, (int, float)) or isinstance(end, bool) or
+                not math.isfinite(float(start)) or not math.isfinite(float(end)) or
+                float(start) < 0 or float(end) <= float(start)):
+            raise ValueError("Source scene candidate contains invalid time boundaries.")
+        cursor, finish = float(start), float(end)
+        for blocked_start, blocked_end in merged:
+            if blocked_end <= cursor:
+                continue
+            if blocked_start >= finish:
+                break
+            if blocked_start > cursor:
+                fragment_end = min(finish, blocked_start)
+                if fragment_end - cursor >= 0.25 - 1e-9:
+                    fragment = dict(segment)
+                    fragment["start_seconds"] = cursor
+                    fragment["end_seconds"] = fragment_end
+                    available.append(fragment)
+            cursor = max(cursor, blocked_end)
+            if cursor >= finish:
+                break
+        if finish - cursor >= 0.25 - 1e-9:
+            fragment = dict(segment)
+            fragment["start_seconds"] = cursor
+            fragment["end_seconds"] = finish
+            available.append(fragment)
+    return available
+
+
+def load_source_usage_ledger(path, source_path):
+    """Load a batch ledger and reject cross-source or malformed reuse records."""
+    if path is None:
+        return []
+    ledger_path = Path(path)
+    if not ledger_path.is_file():
+        raise RuntimeError(f"Source-usage ledger does not exist: {ledger_path}")
+    try:
+        payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Could not read source-usage ledger {ledger_path}: {exc}") from exc
+    if not isinstance(payload, dict) or payload.get("version") != 1:
+        raise RuntimeError("Unsupported or malformed source-usage ledger version.")
+    expected_source = Path(source_path).resolve()
+    recorded_source = payload.get("source_path")
+    if recorded_source and Path(recorded_source).resolve() != expected_source:
+        raise RuntimeError("Source-usage ledger belongs to a different source file; refusing cross-source reuse.")
+    ranges = payload.get("used_ranges", [])
+    if not isinstance(ranges, list):
+        raise RuntimeError("Source-usage ledger used_ranges must be a list.")
+    exclude_used_source_ranges([], ranges, 0.0)
+    return ranges
+
+
 def measure_source_scene_features(path, scene_segments):
     """Measure per-scene RMS loudness (astats) and low-resolution frame-difference motion."""
     measured = []
