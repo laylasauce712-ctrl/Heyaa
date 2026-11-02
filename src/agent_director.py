@@ -3466,7 +3466,7 @@ def main(argv=None):
         if len(args.clip_count_options) != 1:
             raise SystemExit("--variants 1 requires exactly one --clip-count-options value.")
         args.clip_count = args.clip_count_options[0]
-    if args.variant_index is None:
+    if args.variant_index is None and args.edit_index is None:
         removed_parts = cleanup_part_files()
         RUN_DIR = Path("output") / "runs" / _new_run_id()
         os.environ["HEYAA_RUN_DIR"] = str(RUN_DIR)
@@ -3476,7 +3476,16 @@ def main(argv=None):
         RUN_DIR = Path(os.environ.get("HEYAA_RUN_DIR", str(Path("output") / "runs" / _new_run_id())))
         os.environ["HEYAA_RUN_DIR"] = str(RUN_DIR)
     VARIANT_INDEX = args.variant_index
-    if VARIANT_INDEX is None and args.variants > 1:
+    if VARIANT_INDEX is None and args.edit_index is None and args.edits > 1:
+        OUTDIR = str(RUN_DIR)
+        WORK = str(RUN_DIR / "work")
+        FINAL = str(RUN_DIR / "final_phonk_20s.mp4")
+        Path(OUTDIR).mkdir(parents=True, exist_ok=True)
+        reset_progress_log()
+        progress_event("run", "started", f"Starting a batch of {args.edits} distinct edits.")
+        result = _run_edit_batch(args)
+        return result
+    if VARIANT_INDEX is None and args.edit_index is None and args.variants > 1:
         OUTDIR = str(RUN_DIR)
         WORK = str(RUN_DIR / "work")
         FINAL = str(RUN_DIR / "final_phonk_20s.mp4")
@@ -3496,6 +3505,10 @@ def main(argv=None):
         OUTDIR = str(RUN_DIR / "variants" / f"variant_{VARIANT_INDEX:02d}")
         WORK = str(Path(OUTDIR) / "work")
         FINAL = str(Path(OUTDIR) / "final_phonk.mp4")
+    elif args.edit_index is not None:
+        OUTDIR = str(RUN_DIR / "edits" / f"edit_{args.edit_index:02d}")
+        WORK = str(Path(OUTDIR) / "work")
+        FINAL = str(Path(OUTDIR) / "final_phonk_20s.mp4")
     else:
         OUTDIR = str(RUN_DIR)
         WORK = str(RUN_DIR / "work")
@@ -3503,6 +3516,7 @@ def main(argv=None):
     reset_progress_log()
     progress_event("run", "started", "Heyaa render pipeline started.",
                    {"variant_index": VARIANT_INDEX, "variants_requested": args.variants,
+                    "edits_requested": args.edits, "edit_index": args.edit_index,
                     "clip_count_override": args.clip_count})
     progress_event("settings", "running", "Validating params.json.")
     load_settings()
