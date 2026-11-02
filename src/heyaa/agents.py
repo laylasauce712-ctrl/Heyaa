@@ -348,9 +348,13 @@ def reference_analyst(data: dict[str, Any]) -> AgentResult:
                            (finding,), (recommendation,),
                            {"enabled": True, "required": required, "available": data.get("available") is True,
                             "used_for_planning": False, "source": data.get("source")})
-    if required and (
-        data.get("used_for_planning") is not True or data.get("applied", data.get("used_for_planning")) is not True
-    ):
+    if required and not all((
+        data.get("selected") is True,
+        data.get("analyzed") is True,
+        data.get("available") is True,
+        data.get("applied") is True,
+        data.get("used_for_planning") is True,
+    )):
         method = data.get("boundary_method") or "not_reported"
         return AgentResult(
             "reference_analyst", "blocked", None, 0.0,
@@ -387,8 +391,8 @@ def reference_analyst(data: dict[str, Any]) -> AgentResult:
                         "Use the reference's measured cut timing as guidance; no reference footage frames are copied."),
                        {"enabled": True, "selected": data.get("selected") is True or required,
                         "required": required, "available": True,
-                        "analyzed": data.get("analyzed") is True if "analyzed" in data else True,
-                        "applied": data.get("applied") is True if "applied" in data else True,
+                        "analyzed": data.get("analyzed") is True,
+                        "applied": data.get("applied") is True,
                         "source": data.get("source"),
                         "median_cut_interval_seconds": round(float(interval), 4),
                         "scene_cut_count": data.get("scene_cut_count"),
@@ -397,7 +401,7 @@ def reference_analyst(data: dict[str, Any]) -> AgentResult:
                         "used_absolute_cut_timestamps": absolute_timestamps_used,
                         "boundary_method": data.get("boundary_method"),
                         "pattern_passed_to_planner": bool(validated_intervals),
-                        "used_for_planning": data.get("used_for_planning") is True if "used_for_planning" in data else bool(validated_intervals),
+                        "used_for_planning": data.get("used_for_planning") is True,
                         "semantic_reference_understanding": False,
                         "does_not_copy_reference_frames": True})
 
