@@ -38,6 +38,8 @@ WORK = "output/work"
 FINAL = "output/final_phonk_20s.mp4"
 VARIANT_INDEX = None
 REFERENCE_CUT_TIMESTAMPS_USED = False
+REFERENCE_BOUNDARY_METHOD = "not_run"
+REFERENCE_PACING_USED = False
 VARIANT_SOURCE_POWERS = {1: 1.0, 2: 1.16, 3: 0.84, 4: 1.08, 5: 0.92}
 VARIANT_LABELS = {
     1: "Reference-timed / balanced source progression",
@@ -1393,8 +1395,9 @@ def choose_source_selection_scope(source_duration, target_duration, context_star
 
 def _reference_boundaries(clip_count, total_duration, profile):
     """Prefer measured reference cut timestamps, with a bounded interval-resampling fallback."""
-    global REFERENCE_CUT_TIMESTAMPS_USED
+    global REFERENCE_CUT_TIMESTAMPS_USED, REFERENCE_BOUNDARY_METHOD
     REFERENCE_CUT_TIMESTAMPS_USED = False
+    REFERENCE_BOUNDARY_METHOD = "even_pacing_no_usable_reference"
     intervals = profile.get("shot_intervals_seconds") if isinstance(profile, dict) else None
     if not isinstance(intervals, list) or len(intervals) < 2 or clip_count < 1:
         return [total_duration * index / clip_count for index in range(clip_count + 1)]
@@ -1426,16 +1429,19 @@ def _reference_boundaries(clip_count, total_duration, profile):
                     all(MIN_SHOT_SECONDS <= length <= 3.3 for length in shot_lengths) and
                     all(b > a for a, b in zip(exactish, exactish[1:]))):
                 REFERENCE_CUT_TIMESTAMPS_USED = True
+                REFERENCE_BOUNDARY_METHOD = "absolute_cut_timestamps"
                 print("[edit] Using the reference's measured cut timestamps, scaled to the requested edit duration.")
                 return exactish
     valid = [float(value) for value in intervals
              if isinstance(value, (int, float)) and not isinstance(value, bool)
              and math.isfinite(float(value)) and float(value) > 0]
     if len(valid) < 2:
+        REFERENCE_BOUNDARY_METHOD = "even_pacing_invalid_intervals"
         return [total_duration * index / clip_count for index in range(clip_count + 1)]
     minimum, maximum = MIN_SHOT_SECONDS, 3.3
     if (clip_count * minimum > total_duration + 1e-8 or
             clip_count * maximum < total_duration - 1e-8):
+        REFERENCE_BOUNDARY_METHOD = "even_pacing_shot_constraints"
         print("[warn] Reference pacing cannot fit the requested duration inside the supported shot-length range; using even pacing.")
         return [total_duration * index / clip_count for index in range(clip_count + 1)]
 
@@ -1472,8 +1478,10 @@ def _reference_boundaries(clip_count, total_duration, profile):
         lengths[index] += change
         remainder -= change
     if abs(total_duration - sum(lengths)) > 1e-5:
+        REFERENCE_BOUNDARY_METHOD = "even_pacing_interval_fit_failed"
         print("[warn] Could not satisfy the reference pacing constraints; using even pacing.")
         return [total_duration * index / clip_count for index in range(clip_count + 1)]
+    REFERENCE_BOUNDARY_METHOD = "resampled_reference_intervals"
     boundaries = [0.0]
     for value in lengths:
         boundaries.append(boundaries[-1] + value)
@@ -1503,6 +1511,8 @@ def _reference_pacing_diagnostics(reference_profile, planned_lengths):
 
 def make_boundaries(clip_count, beats, reference_profile=None):
     """Keep reference-derived shot lengths and accept only beat snaps that stay render-safe."""
+    global REFERENCE_BOUNDARY_METHOD, REFERENCE_PACING_USED
+    REFERENCE_PACING_USED = False
     reference_boundaries = _reference_boundaries(clip_count, EDIT_DURATION, reference_profile)
     boundaries = list(reference_boundaries)
     if beats:
@@ -1527,9 +1537,13 @@ def make_boundaries(clip_count, beats, reference_profile=None):
         boundaries = list(reference_boundaries)
         lengths = [b - a for a, b in zip(boundaries, boundaries[1:])]
     if min(lengths) < MIN_SHOT_SECONDS - 1e-8 or max(lengths) > 3.3 + 1e-8:
+        REFERENCE_BOUNDARY_METHOD = "even_pacing_safety_fallback"
         print("[warn] Reference-derived boundaries are outside the safe range; using even pacing.")
         boundaries = [EDIT_DURATION * index / clip_count for index in range(clip_count + 1)]
         lengths = [b - a for a, b in zip(boundaries, boundaries[1:])]
+    REFERENCE_PACING_USED = REFERENCE_BOUNDARY_METHOD in {
+        "absolute_cut_timestamps", "resampled_reference_intervals"
+    }
     if reference_profile:
         variation = max(lengths) - min(lengths)
         print("[edit] Reference-derived shot lengths: " + ", ".join(f"{x:.2f}" for x in lengths) + " seconds")
@@ -3377,6 +3391,27 @@ def main(argv=None):
                     "requested_clip_count": args.clip_count, "min_clips": MIN_CLIPS,
                     "max_clips": MAX_CLIPS, "min_shot_seconds": MIN_SHOT_SECONDS, "reference_median_cut_interval_seconds": ref_interval})
     boundaries_seconds = make_boundaries(clip_count, adjusted_beats, ref_profile)
+    progress_event(
+        "reference_application",
+        "completed" if REFERENCE_PACING_USED else ("blocked" if args.require_reference else "needs_review"),
+        (
+            f"Reference timing applied to the EDL ({REFERENCE_BOUNDARY_METHOD})."
+            if REFERENCE_PACING_USED else
+            f"Selected reference was not applied to EDL boundaries ({REFERENCE_BOUNDARY_METHOD})."
+        ),
+        {
+            "reference_required": args.require_reference,
+            "reference_available": reference_profile_available,
+            "reference_used_for_planning": REFERENCE_PACING_USED,
+            "boundary_method": REFERENCE_BOUNDARY_METHOD,
+            "used_absolute_cut_timestamps": REFERENCE_CUT_TIMESTAMPS_USED,
+        },
+    )
+    if args.require_reference and not REFERENCE_PACING_USED:
+        raise RuntimeError(
+            "The selected reference was analyzed but its pacing pattern could not be applied safely. "
+            "No default-paced edit was rendered. Adjust the requested clip count/duration or select another reference."
+        )
     planned_drop_position = None
     if drop_beat_time is not None:
         boundaries_seconds, planned_drop_position = insert_drop_boundary(boundaries_seconds, drop_beat_time, min_gap=MIN_SHOT_SECONDS)
@@ -4076,7 +4111,8 @@ def main(argv=None):
         "cut_timestamps_seconds": ref_profile.get("cut_timestamps_seconds", []) if ref_profile else [],
         "used_absolute_cut_timestamps": REFERENCE_CUT_TIMESTAMPS_USED,
         "scene_cut_count": ref_profile.get("scene_cut_count") if ref_profile else None,
-        "used_for_planning": bool(ref_profile),
+        "used_for_planning": REFERENCE_PACING_USED,
+        "boundary_method": REFERENCE_BOUNDARY_METHOD,
         "method": ref_profile.get("method") if ref_profile else None,
         "semantic_reference_understanding": False,
     }
