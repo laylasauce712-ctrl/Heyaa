@@ -348,6 +348,16 @@ def reference_analyst(data: dict[str, Any]) -> AgentResult:
                            (finding,), (recommendation,),
                            {"enabled": True, "required": required, "available": data.get("available") is True,
                             "used_for_planning": False, "source": data.get("source")})
+    if required and data.get("used_for_planning") is not True:
+        method = data.get("boundary_method") or "not_reported"
+        return AgentResult(
+            "reference_analyst", "blocked", None, 0.0,
+            (f"The selected reference was analyzed but its pacing was not applied to the EDL ({method}).",),
+            ("Adjust the edit duration/clip count or choose a reference whose pacing can be applied safely.",),
+            {"enabled": True, "required": True, "available": True,
+             "used_for_planning": False, "boundary_method": method,
+             "source": data.get("source")},
+        )
     shot_intervals = data.get("shot_intervals_seconds", [])
     if not isinstance(shot_intervals, list):
         shot_intervals = []
@@ -380,7 +390,9 @@ def reference_analyst(data: dict[str, Any]) -> AgentResult:
                         "shot_intervals_seconds": validated_intervals,
                         "cut_timestamps_seconds": validated_cut_times,
                         "used_absolute_cut_timestamps": absolute_timestamps_used,
+                        "boundary_method": data.get("boundary_method"),
                         "pattern_passed_to_planner": bool(validated_intervals),
+                        "used_for_planning": data.get("used_for_planning") is True if "used_for_planning" in data else bool(validated_intervals),
                         "semantic_reference_understanding": False,
                         "does_not_copy_reference_frames": True})
 
