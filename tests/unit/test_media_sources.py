@@ -108,6 +108,36 @@ class TikTokUrlTests(unittest.TestCase):
             self.assertFalse(report_path.exists())
 
 
+class ReferenceSelectionCliTests(unittest.TestCase):
+    def test_reference_url_is_an_explicit_required_selection(self):
+        args = parse_media_source_args([
+            "--reference-url", "https://example.com/reference.mp4",
+        ])
+        self.assertTrue(args.require_reference)
+
+    def test_local_reference_can_be_marked_required(self):
+        args = parse_media_source_args(["--require-reference"])
+        self.assertTrue(args.require_reference)
+
+    def test_reference_remains_optional_when_not_selected(self):
+        args = parse_media_source_args([])
+        self.assertFalse(args.require_reference)
+
+    def test_required_local_reference_missing_fails_before_media_validation(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            video = root / "video.mp4"
+            music = root / "music.mp3"
+            reference = root / "reference.mp4"
+            video.write_bytes(b"video-placeholder")
+            music.write_bytes(b"music-placeholder")
+            with self.assertRaisesRegex(MediaSourceError, "reference was selected as required"):
+                prepare_media_sources(
+                    None, None, None, video, music, reference,
+                    require_reference=True,
+                )
+
+
 class YouTubeUrlTests(unittest.TestCase):
     def test_reference_video_does_not_replace_or_supply_the_music_track(self):
         with tempfile.TemporaryDirectory() as directory:
