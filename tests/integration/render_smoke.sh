@@ -43,11 +43,15 @@ JSON
 ffmpeg -hide_banner -loglevel error -y -f lavfi -i "testsrc2=size=640x360:rate=30:duration=45" -an -c:v libx264 -pix_fmt yuv420p input/test_video.mp4
 # Deliberately hot input: the final output limiter must keep the export below clipping.
 ffmpeg -hide_banner -loglevel error -y -f lavfi -i "sine=frequency=70:sample_rate=44100:duration=25" -af "volume=20dB" -c:a libmp3lame input/phonk.mp3
-# Exercise reference-audio extraction independently from the renderer's local-music path.
+# Exercise reference-audio extraction and a usable multi-shot pacing profile.
+# Three high-contrast shots guarantee at least two reference cut boundaries.
 ffmpeg -hide_banner -loglevel error -y \
-  -f lavfi -i "testsrc2=size=640x360:rate=30:duration=4" \
-  -f lavfi -i "sine=frequency=440:sample_rate=44100:duration=4" \
-  -map 0:v:0 -map 1:a:0 -shortest -c:v libx264 -pix_fmt yuv420p -c:a aac input/reference.mp4
+  -f lavfi -i "color=c=red:size=640x360:rate=30:duration=2" \
+  -f lavfi -i "color=c=lime:size=640x360:rate=30:duration=2" \
+  -f lavfi -i "color=c=blue:size=640x360:rate=30:duration=2" \
+  -f lavfi -i "sine=frequency=440:sample_rate=44100:duration=6" \
+  -filter_complex "[0:v][1:v][2:v]concat=n=3:v=1:a=0[refv]" \
+  -map "[refv]" -map 3:a:0 -shortest -c:v libx264 -pix_fmt yuv420p -c:a aac input/reference.mp4
 python - <<'PY'
 from pathlib import Path
 from src import agent_director
@@ -148,6 +152,14 @@ assert report["results"]["director"]["status"] == "ready_for_human_review", repo
 assert report["results"]["framing_agent"]["status"] == "ok", report
 assert report["results"]["hook_analyst"]["status"] == "needs_review", report
 assert report["results"]["inspector"]["status"] == "ok", report
+assert report["reference_required"] is True, report
+reference_result = report["results"]["reference_analyst"]
+assert reference_result["status"] == "ok", reference_result
+assert reference_result["evidence"]["available"] is True, reference_result
+assert reference_result["evidence"]["used_for_planning"] is True, reference_result
+assert reference_result["evidence"]["boundary_method"] in (
+    "absolute_cut_timestamps", "resampled_reference_intervals"
+), reference_result
 assert report["results"]["render_critic"]["status"] in ("ok", "needs_review"), report
 assert report["render_critique"]["measurement_errors"] == [], report["render_critique"]
 assert isinstance(report["render_critique"]["mean_volume_db"], (int, float)), report["render_critique"]
