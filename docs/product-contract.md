@@ -52,8 +52,9 @@ These are evidence-based Python modules today. Do not describe them as separate 
 
 - Build one local UI inside the Heyaa repository; do not create a parallel app or a second backend.
 - The intended look is a dark, cinematic creative-studio/agency interface with one consistent theme and icon system.
-- The interface should expose source/music/reference selection, requested edit count, render settings, real Agent Room events, previews, QA results, approval and local release/archive browsing.
-- Select one maintained icon library from GitHub and use it consistently. Do not mix unrelated icon packs.
+- Initial theme tokens: near-black canvas (#0B0D12), charcoal surfaces (#131722 / #1A2030), restrained violet primary accent (#8B5CF6), cool cyan for technical telemetry (#38BDF8), neutral text hierarchy and clear warning/error states. Avoid neon overload, gradient-heavy cards and dashboard clutter.
+- The interface should expose source/music/reference selection, user-selected edit count, render settings, real Agent Room events, previews, QA results, explicit approval and local release/archive browsing.
+- Use Lucide from https://github.com/lucide-icons/lucide as the single icon family. It is an actively maintained SVG icon toolkit with an ISC license; use its consistent stroke style and do not mix unrelated icon packs.
 - No PowerShell. Development and launch instructions must use WSL Ubuntu and Bash. The PC performs rendering; the phone receives finished exports.
 
 ## Quality and proof
