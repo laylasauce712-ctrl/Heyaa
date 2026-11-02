@@ -251,6 +251,18 @@ class AgentTests(unittest.TestCase):
         self.assertFalse(result.evidence["used_for_planning"])
         self.assertIn("must not be used", result.findings[0])
 
+    def test_reference_agent_blocks_when_profile_exists_but_timing_was_not_applied(self):
+        result = reference_analyst({
+            "enabled": True, "required": True, "available": True,
+            "median_cut_interval_seconds": 1.2,
+            "shot_intervals_seconds": [0.8, 1.5, 0.9],
+            "used_for_planning": False,
+            "boundary_method": "even_pacing_shot_constraints",
+        })
+        self.assertEqual(result.status, "blocked")
+        self.assertFalse(result.evidence["used_for_planning"])
+        self.assertIn("not applied to the EDL", result.findings[0])
+
     def test_director_blocks_when_required_reference_is_not_usable(self):
         from src.heyaa.agents import AgentResult
         required = {
