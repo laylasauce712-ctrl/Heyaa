@@ -333,6 +333,8 @@ def parse_media_source_args(argv=None):
     parser.add_argument("--tiktok-url", help="TikTok post/share URL used as source footage; alternative to --video-url.")
     parser.add_argument("--music-url", help="HTTPS audio URL (YouTube/TikTok post or direct media URL) used as the soundtrack.")
     parser.add_argument("--reference-url", help="HTTPS video URL (YouTube/TikTok post or direct media URL) used as the visual timing reference.")
+    parser.add_argument("--require-reference", action="store_true",
+                        help="Require a usable local input/reference.mp4; never fall back to default pacing when selected.")
     parser.add_argument(
         "--variants", type=int, choices=(1, 2, 3, 4, 5), default=3,
         help="Render 3 comparison variants by default (1–5 supported)."
@@ -361,6 +363,10 @@ def parse_media_source_args(argv=None):
             args.video_url = validate_tiktok_url(args.tiktok_url, "video")
         except MediaSourceError as exc:
             parser.error(str(exc))
+    # Supplying a reference URL is an explicit selection: it must never silently
+    # degrade into a render that ignores the requested reference.
+    if args.reference_url:
+        args.require_reference = True
     return args
 
 
@@ -399,7 +405,8 @@ def extract_reference_audio(reference_path: str | Path, music_path: str | Path) 
         temporary.unlink(missing_ok=True)
 
 
-def prepare_media_sources(video_url, music_url, reference_url, video_path, music_path, reference_path):
+def prepare_media_sources(video_url, music_url, reference_url, video_path, music_path, reference_path,
+                          require_reference=False):
     """Resolve separate source, soundtrack and visual reference files before rendering.
 
     Reference audio is never promoted to the edit soundtrack implicitly.
@@ -420,6 +427,11 @@ def prepare_media_sources(video_url, music_url, reference_url, video_path, music
         resolved_music = download_media_source(music_url, resolved_music, "music")
     # The reference video is only a visual pacing source. Never extract its audio
     # implicitly or overwrite the user's separate local Phonk soundtrack.
+    if require_reference and not resolved_reference.is_file():
+        raise MediaSourceError(
+            "A reference was selected as required, but no local input/reference.mp4 was found. "
+            "Provide --reference-url or place the chosen reference at input/reference.mp4."
+        )
     validate_media_file(resolved_video, "video")
     validate_media_file(resolved_music, "music")
     if resolved_reference.is_file():
