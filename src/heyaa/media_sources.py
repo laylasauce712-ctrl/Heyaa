@@ -336,9 +336,16 @@ def parse_media_source_args(argv=None):
     parser.add_argument("--require-reference", action="store_true",
                         help="Require a usable local input/reference.mp4; never fall back to default pacing when selected.")
     parser.add_argument(
+        "--edits", type=int, choices=(1, 2, 3, 4, 5), default=1,
+        help="Create this many distinct edits from the same source (default: one)."
+    )
+    parser.add_argument(
         "--variants", type=int, choices=(1, 2, 3, 4, 5), default=1,
         help="Legacy comparison mode: render 1–5 source-progression variants (default: one render)."
     )
+    parser.add_argument("--edit-index", type=int, choices=(1, 2, 3, 4, 5),
+                        default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--source-usage-ledger", default=None, help=argparse.SUPPRESS)
     parser.add_argument(
         "--clip-count", type=int, default=None,
         help="Use this exact number of motion clips (must be within params.json min_clips/max_clips)."
@@ -356,6 +363,10 @@ def parse_media_source_args(argv=None):
         help=argparse.SUPPRESS
     )
     args = parser.parse_args(argv)
+    if args.edits > 1 and args.variants > 1:
+        parser.error("Use --edits for distinct source-disjoint edits; do not combine it with legacy --variants.")
+    if args.edit_index is not None and not args.source_usage_ledger:
+        parser.error("Internal edit-batch runs require a source-usage ledger.")
     if args.video_url and args.tiktok_url:
         parser.error("Use either --video-url or --tiktok-url, not both.")
     if args.tiktok_url:
