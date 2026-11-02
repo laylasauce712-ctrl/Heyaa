@@ -241,6 +241,51 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(result.status, "insufficient_evidence")
         self.assertFalse(result.evidence["used_for_planning"])
 
+    def test_reference_agent_blocks_silent_fallback_when_reference_is_required(self):
+        result = reference_analyst({
+            "enabled": True, "required": True, "available": False,
+            "source": "input/reference.mp4", "median_cut_interval_seconds": None,
+        })
+        self.assertEqual(result.status, "blocked")
+        self.assertTrue(result.evidence["required"])
+        self.assertFalse(result.evidence["used_for_planning"])
+        self.assertIn("must not be used", result.findings[0])
+
+    def test_director_blocks_when_required_reference_is_not_usable(self):
+        from src.heyaa.agents import AgentResult
+        required = {
+            "settings_agent": settings_agent(config()),
+            "planner": AgentResult("planner", "ok", None, 1.0, (), (), {}),
+            "inspector": AgentResult("inspector", "ok", None, 1.0, (), (), {}),
+            "framing_agent": AgentResult("framing_agent", "ok", None, 1.0, (), (), {}),
+            "render_critic": render_critic(render_critique()),
+            "reference_analyst": reference_analyst({
+                "enabled": True, "required": True, "available": False,
+                "median_cut_interval_seconds": None,
+            }),
+        }
+        result = director_agent(required, reference_required=True)
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.evidence["decision"], "block_export")
+        self.assertTrue(any(item["agent"] == "reference_analyst"
+                            for item in result.evidence["blockers"]))
+
+    def test_optional_missing_reference_remains_nonblocking(self):
+        from src.heyaa.agents import AgentResult
+        required = {
+            "settings_agent": settings_agent(config()),
+            "planner": AgentResult("planner", "ok", None, 1.0, (), (), {}),
+            "inspector": AgentResult("inspector", "ok", None, 1.0, (), (), {}),
+            "framing_agent": AgentResult("framing_agent", "ok", None, 1.0, (), (), {}),
+            "render_critic": render_critic(render_critique()),
+            "reference_analyst": reference_analyst({
+                "enabled": True, "required": False, "available": False,
+                "median_cut_interval_seconds": None,
+            }),
+        }
+        result = director_agent(required, reference_required=False)
+        self.assertEqual(result.status, "ready_for_human_review")
+
     def test_reference_agent_passes_measured_shot_pattern_to_planner(self):
         result = reference_analyst({
             "enabled": True, "available": True, "source": "input/reference.mp4",
