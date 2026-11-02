@@ -365,6 +365,10 @@ def parse_media_source_args(argv=None):
     args = parser.parse_args(argv)
     if args.edits > 1 and args.variants > 1:
         parser.error("Use --edits for distinct source-disjoint edits; do not combine it with legacy --variants.")
+    if args.edits > 1 and args.clip_count_options is not None:
+        parser.error("--clip-count-options is a legacy comparison feature; use one --clip-count for all distinct edits.")
+    if args.edits > 1 and args.preview:
+        parser.error("Preview mode renders one edit; use --edits only for full exports.")
     if args.edit_index is not None and not args.source_usage_ledger:
         parser.error("Internal edit-batch runs require a source-usage ledger.")
     if args.video_url and args.tiktok_url:
