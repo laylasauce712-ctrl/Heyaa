@@ -3149,8 +3149,9 @@ def _run_edit_batch(args):
             command.extend(["--clip-count", str(args.clip_count)])
         if index == 1:
             for flag, value in (
+                # parse_media_source_args already maps --tiktok-url onto args.video_url;
+                # forwarding both flags to a child would correctly be rejected as ambiguous.
                 ("--video-url", args.video_url),
-                ("--tiktok-url", args.tiktok_url),
                 ("--music-url", args.music_url),
                 ("--reference-url", args.reference_url),
             ):
