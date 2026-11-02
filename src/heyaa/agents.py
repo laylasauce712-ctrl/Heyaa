@@ -318,19 +318,35 @@ def planner(context: dict[str, Any]) -> AgentResult:
 
 
 def reference_analyst(data: dict[str, Any]) -> AgentResult:
-    """Report measured reference pacing only when a reference was actually analyzed."""
+    """Report measured reference pacing and block silent fallback for selected references."""
     if not isinstance(data, dict):
         data = {}
+    required = data.get("required") is True
     if data.get("enabled") is not True:
-        return AgentResult("reference_analyst", "skipped", None, 0.0,
-                           ("Reference pacing is disabled in params.json.",), (),
-                           {"enabled": False, "used_for_planning": False})
+        return AgentResult(
+            "reference_analyst", "blocked" if required else "skipped", None, 0.0,
+            (("A reference was required, but reference pacing is disabled in params.json."
+              if required else "Reference pacing is disabled in params.json."),),
+            (("Enable reference pacing or remove the required reference selection."
+              if required else "Select a reference to enable reference pacing."),),
+            {"enabled": False, "required": required, "used_for_planning": False},
+        )
     interval = data.get("median_cut_interval_seconds")
     if data.get("available") is not True or not _finite_number(interval) or float(interval) <= 0:
-        return AgentResult("reference_analyst", "insufficient_evidence", None, 0.0,
-                           ("No usable reference pacing profile was measured; the renderer uses its default rhythm.",),
-                           ("Provide a valid reference.mp4 or disable reference pacing.",),
-                           {"enabled": True, "available": data.get("available") is True,
+        status = "blocked" if required else "insufficient_evidence"
+        finding = (
+            "The selected reference did not produce a usable pacing profile; default pacing must not be used."
+            if required else
+            "No usable reference pacing profile was measured; the optional reference path is unavailable."
+        )
+        recommendation = (
+            "Provide a reference with measurable shot changes or deselect the reference."
+            if required else
+            "Provide a valid reference.mp4 or disable reference pacing."
+        )
+        return AgentResult("reference_analyst", status, None, 0.0,
+                           (finding,), (recommendation,),
+                           {"enabled": True, "required": required, "available": data.get("available") is True,
                             "used_for_planning": False, "source": data.get("source")})
     shot_intervals = data.get("shot_intervals_seconds", [])
     if not isinstance(shot_intervals, list):
@@ -357,7 +373,7 @@ def reference_analyst(data: dict[str, Any]) -> AgentResult:
                         "This analyzes visual cut timing only; it does not understand reference people, story meaning or semantic effects."),
                        ("Review the resulting rhythm against the actual soundtrack.",
                         "Use the reference's measured cut timing as guidance; no reference footage frames are copied."),
-                       {"enabled": True, "available": True, "used_for_planning": True,
+                       {"enabled": True, "required": required, "available": True, "used_for_planning": True,
                         "source": data.get("source"),
                         "median_cut_interval_seconds": round(float(interval), 4),
                         "scene_cut_count": data.get("scene_cut_count"),
@@ -733,7 +749,7 @@ def render_critic(metrics: dict[str, Any]) -> AgentResult:
                         "warnings": warnings, "semantic_visual_review": False})
 
 
-def director_agent(results: dict[str, AgentResult]) -> AgentResult:
+def director_agent(results: dict[str, AgentResult], *, reference_required: bool = False) -> AgentResult:
     """Make the explicit orchestration decision from the actual stage results."""
     blocking_agents = ("settings_agent", "planner", "inspector")
     blockers = []
@@ -756,6 +772,15 @@ def director_agent(results: dict[str, AgentResult]) -> AgentResult:
     if critic is None or critic.status in ("reject", "blocked", "insufficient_evidence"):
         blockers.append({"agent": "render_critic", "status": critic.status if critic else "missing",
                          "findings": list(critic.findings) if critic else ["Render Critic did not return a result."]})
+    if reference_required:
+        reference = results.get("reference_analyst")
+        if reference is None or reference.status != "ok":
+            blockers.append({
+                "agent": "reference_analyst",
+                "status": reference.status if reference else "missing",
+                "findings": list(reference.findings) if reference else
+                            ["A selected reference was not analyzed successfully."],
+            })
     if blockers:
         return AgentResult(
             "director", "blocked", None, 1.0,
@@ -852,8 +877,16 @@ def run_agent_team(context: dict[str, Any],
     announce("beat_sync_agent", "beat_analysis")
     beat = beat_sync_agent(context.get("beat_analysis", {}))
     record(beat, "beat_analysis")
+    reference_data = context.get("reference_analysis", {})
+    if not isinstance(reference_data, dict):
+        reference_data = {}
+    reference_data = dict(reference_data)
+    reference_required = (
+        context.get("reference_required") is True or reference_data.get("required") is True
+    )
+    reference_data["required"] = reference_required
     announce("reference_analyst", "reference_analysis")
-    reference = reference_analyst(context.get("reference_analysis", {}))
+    reference = reference_analyst(reference_data)
     record(reference, "reference_analysis")
     announce("source_chapter_agent", "source_chapter_review")
     source_chapter = source_chapter_agent(context.get("source_chapter", {}))
@@ -883,6 +916,8 @@ def run_agent_team(context: dict[str, Any],
     media_payload = context.get("media_analysis", {}) if isinstance(context.get("media_analysis"), dict) else {}
     beat_payload = context.get("beat_analysis", {}) if isinstance(context.get("beat_analysis"), dict) else {}
     reference_payload = context.get("reference_analysis", {}) if isinstance(context.get("reference_analysis"), dict) else {}
+    reference_payload = dict(reference_payload)
+    reference_payload["required"] = reference_required
     hook_payload = context.get("hook_analysis", {}) if isinstance(context.get("hook_analysis"), dict) else {}
     niche_missing = list(niche.evidence.get("missing_metrics", []))
     chapter_evidence = source_chapter.evidence.get("chapter", {})
@@ -981,13 +1016,15 @@ def run_agent_team(context: dict[str, Any],
         "reference_analyst": reference, "source_chapter_agent": source_chapter,
         "character_lock_agent": character_lock, "framing_agent": framing, "hook_analyst": hook,
         "planner": plan, "niche_analyst": niche, "inspector": qa, "render_critic": critic,
-    })
+        "reference_analyst": reference,
+    }, reference_required=reference_required)
     record(director, "orchestration_decision")
     status = "blocked" if director.status == "blocked" else "ready_for_human_review"
     return {
         "status": status,
         "viral_guarantee": False,
         "human_review_required": True,
+        "reference_required": reference_required,
         "summary": director.findings[0],
         "results": {"settings_agent": asdict(setting_result), "media_analyst": asdict(media),
                     "beat_sync_agent": asdict(beat), "reference_analyst": asdict(reference),
