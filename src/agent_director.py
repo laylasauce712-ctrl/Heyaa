@@ -4562,6 +4562,14 @@ def main(argv=None):
         "reference_median_cut_interval_seconds": ref_interval,
         "comparison_clip_count_options": list(args.clip_count_options) if args.clip_count_options else None,
     }
+    agent_report["source_usage"] = {
+        "distinct_edit_batch": args.source_usage_ledger is not None,
+        "edit_index": args.edit_index,
+        "reserved_interval_count_before_edit": len(source_usage_ranges),
+        "source_disjoint_enforced": args.source_usage_ledger is not None,
+        "ledger_path": args.source_usage_ledger,
+        "minimum_gap_seconds": MIN_SOURCE_GAP_SECONDS if args.source_usage_ledger else None,
+    }
     agent_report["progress_log"] = str(Path(OUTDIR) / "progress.jsonl")
     if VARIANT_INDEX is not None:
         agent_report["variant"] = {
