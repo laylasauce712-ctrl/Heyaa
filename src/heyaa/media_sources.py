@@ -336,8 +336,8 @@ def parse_media_source_args(argv=None):
     parser.add_argument("--require-reference", action="store_true",
                         help="Require a usable local input/reference.mp4; never fall back to default pacing when selected.")
     parser.add_argument(
-        "--variants", type=int, choices=(1, 2, 3, 4, 5), default=3,
-        help="Render 3 comparison variants by default (1–5 supported)."
+        "--variants", type=int, choices=(1, 2, 3, 4, 5), default=1,
+        help="Legacy comparison mode: render 1–5 source-progression variants (default: one render)."
     )
     parser.add_argument(
         "--clip-count", type=int, default=None,
