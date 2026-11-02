@@ -43,6 +43,9 @@ class ContextPlanningTests(unittest.TestCase):
         self.old_min_shot_seconds = renderer.MIN_SHOT_SECONDS
         self.old_min_clips = renderer.MIN_CLIPS
         self.old_max_clips = renderer.MAX_CLIPS
+        self.old_reference_cut_timestamps_used = renderer.REFERENCE_CUT_TIMESTAMPS_USED
+        self.old_reference_boundary_method = renderer.REFERENCE_BOUNDARY_METHOD
+        self.old_reference_pacing_used = renderer.REFERENCE_PACING_USED
         self.old_beat_grid_analysis = dict(renderer.BEAT_GRID_ANALYSIS)
 
     def tearDown(self):
@@ -53,6 +56,9 @@ class ContextPlanningTests(unittest.TestCase):
         renderer.MIN_SHOT_SECONDS = self.old_min_shot_seconds
         renderer.MIN_CLIPS = self.old_min_clips
         renderer.MAX_CLIPS = self.old_max_clips
+        renderer.REFERENCE_CUT_TIMESTAMPS_USED = self.old_reference_cut_timestamps_used
+        renderer.REFERENCE_BOUNDARY_METHOD = self.old_reference_boundary_method
+        renderer.REFERENCE_PACING_USED = self.old_reference_pacing_used
         renderer.BEAT_GRID_ANALYSIS.clear()
         renderer.BEAT_GRID_ANALYSIS.update(self.old_beat_grid_analysis)
 
@@ -113,6 +119,29 @@ class ContextPlanningTests(unittest.TestCase):
         self.assertAlmostEqual(boundaries[-1], renderer.EDIT_DURATION)
         self.assertGreaterEqual(min(lengths), 0.75)
         self.assertLessEqual(max(lengths), 3.3)
+
+    def test_reference_interval_resampling_records_real_planner_use(self):
+        renderer.EDIT_DURATION = 16.0
+        profile = {
+            "shot_intervals_seconds": [0.8, 2.7, 0.9, 2.4, 1.0, 2.8, 1.1, 1.9],
+        }
+        renderer.make_boundaries(8, [], profile)
+        self.assertEqual(renderer.REFERENCE_BOUNDARY_METHOD, "resampled_reference_intervals")
+        self.assertTrue(renderer.REFERENCE_PACING_USED)
+
+    def test_reference_infeasible_shot_constraints_record_even_pacing_fallback(self):
+        renderer.EDIT_DURATION = 30.0
+        profile = {
+            "shot_intervals_seconds": [0.8, 1.2, 1.7, 2.0],
+        }
+        renderer.make_boundaries(8, [], profile)
+        self.assertEqual(renderer.REFERENCE_BOUNDARY_METHOD, "even_pacing_shot_constraints")
+        self.assertFalse(renderer.REFERENCE_PACING_USED)
+
+    def test_no_reference_does_not_claim_reference_pacing_was_used(self):
+        renderer.EDIT_DURATION = 16.0
+        renderer.make_boundaries(8, [], None)
+        self.assertFalse(renderer.REFERENCE_PACING_USED)
 
     def test_analysis_cache_uses_file_hash_and_parameters(self):
         with tempfile.TemporaryDirectory() as temp:
