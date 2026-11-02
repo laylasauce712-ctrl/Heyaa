@@ -155,7 +155,10 @@ assert report["results"]["inspector"]["status"] == "ok", report
 assert report["reference_required"] is True, report
 reference_result = report["results"]["reference_analyst"]
 assert reference_result["status"] == "ok", reference_result
+assert reference_result["evidence"]["selected"] is True, reference_result
 assert reference_result["evidence"]["available"] is True, reference_result
+assert reference_result["evidence"]["analyzed"] is True, reference_result
+assert reference_result["evidence"]["applied"] is True, reference_result
 assert reference_result["evidence"]["used_for_planning"] is True, reference_result
 assert reference_result["evidence"]["boundary_method"] in (
     "absolute_cut_timestamps", "resampled_reference_intervals"
