@@ -1537,7 +1537,8 @@ def make_boundaries(clip_count, beats, reference_profile=None):
         boundaries = list(reference_boundaries)
         lengths = [b - a for a, b in zip(boundaries, boundaries[1:])]
     if min(lengths) < MIN_SHOT_SECONDS - 1e-8 or max(lengths) > 3.3 + 1e-8:
-        REFERENCE_BOUNDARY_METHOD = "even_pacing_safety_fallback"
+        if REFERENCE_BOUNDARY_METHOD in {"absolute_cut_timestamps", "resampled_reference_intervals"}:
+            REFERENCE_BOUNDARY_METHOD = "even_pacing_safety_fallback"
         print("[warn] Reference-derived boundaries are outside the safe range; using even pacing.")
         boundaries = [EDIT_DURATION * index / clip_count for index in range(clip_count + 1)]
         lengths = [b - a for a, b in zip(boundaries, boundaries[1:])]
