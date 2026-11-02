@@ -348,7 +348,9 @@ def reference_analyst(data: dict[str, Any]) -> AgentResult:
                            (finding,), (recommendation,),
                            {"enabled": True, "required": required, "available": data.get("available") is True,
                             "used_for_planning": False, "source": data.get("source")})
-    if required and data.get("used_for_planning") is not True:
+    if required and (
+        data.get("used_for_planning") is not True or data.get("applied", data.get("used_for_planning")) is not True
+    ):
         method = data.get("boundary_method") or "not_reported"
         return AgentResult(
             "reference_analyst", "blocked", None, 0.0,
@@ -383,7 +385,10 @@ def reference_analyst(data: dict[str, Any]) -> AgentResult:
                         "This analyzes visual cut timing only; it does not understand reference people, story meaning or semantic effects."),
                        ("Review the resulting rhythm against the actual soundtrack.",
                         "Use the reference's measured cut timing as guidance; no reference footage frames are copied."),
-                       {"enabled": True, "required": required, "available": True, "used_for_planning": True,
+                       {"enabled": True, "selected": data.get("selected") is True or required,
+                        "required": required, "available": True,
+                        "analyzed": data.get("analyzed") is True if "analyzed" in data else True,
+                        "applied": data.get("applied") is True if "applied" in data else True,
                         "source": data.get("source"),
                         "median_cut_interval_seconds": round(float(interval), 4),
                         "scene_cut_count": data.get("scene_cut_count"),
