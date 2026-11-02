@@ -2844,6 +2844,8 @@ def _run_variant_batch(args):
             sys.executable, str(Path(__file__).resolve()),
             "--variants", "1", "--variant-index", str(index),
         ]
+        if args.require_reference:
+            command.append("--require-reference")
         # Download inputs once. Later variants reuse the validated local copies,
         # including audio extracted from the reference when no music URL was given.
         if index == 1:
@@ -3145,6 +3147,11 @@ def main(argv=None):
     PREVIEW_MODE = bool(args.preview)
     if PREVIEW_MODE:
         args.variants = 1
+    # A remote reference URL, an explicit require flag, or a local reference file
+    # is an actual user selection. Such a selection must not silently fall back.
+    args.require_reference = bool(
+        args.require_reference or args.reference_url or Path(REFERENCE).is_file()
+    )
     if args.clip_count_options is not None and args.clip_count is not None:
         raise SystemExit("Use either --clip-count or --clip-count-options, not both.")
     if args.clip_count_options is not None and args.variant_index is None and args.variants == 1:
@@ -3195,6 +3202,16 @@ def main(argv=None):
                    {"resolution": f"{WIDTH}x{HEIGHT}", "fps": FPS,
                     "duration_seconds": DURATION, "freeze_seconds": FREEZE,
                     "min_clips": MIN_CLIPS, "max_clips": MAX_CLIPS})
+    if args.require_reference and not REFERENCE_PACING:
+        progress_event(
+            "reference_preflight", "blocked",
+            "A reference was selected, but edit_settings.reference_pacing is disabled.",
+            {"reference_required": True, "reference_pacing_enabled": False},
+        )
+        raise RuntimeError(
+            "A reference was selected, but edit_settings.reference_pacing is false. "
+            "Enable reference pacing or deselect the reference."
+        )
     if args.clip_count is not None:
         progress_event("clip_count_override", "running",
                        f"Validating requested motion clip count {args.clip_count}.")
@@ -3217,6 +3234,7 @@ def main(argv=None):
         video_path=VIDEO,
         music_path=MUSIC,
         reference_path=REFERENCE,
+        require_reference=args.require_reference,
     )
     progress_event("source_preparation", "completed", "Required source files validated.",
                    {"video": VIDEO, "music": MUSIC,
@@ -3325,11 +3343,28 @@ def main(argv=None):
     else:
         ref_profile, reference_cache_hit = None, False
     ref_interval = ref_profile.get("median_cut_interval_seconds") if ref_profile else None
-    progress_event("reference_analysis", "completed" if ref_interval is not None else ("skipped" if not REFERENCE_PACING else "needs_review"),
-                   "Reference pacing profile ready." if ref_interval is not None else "No usable measured reference interval; configured fallback will be used.",
-                   {"median_cut_interval_seconds": ref_interval,
-                    "reference_available": _has_usable_reference_profile(ref_profile),
-                    "analysis_cache_hit": reference_cache_hit})
+    reference_profile_available = _has_usable_reference_profile(ref_profile)
+    reference_analysis_status = (
+        "completed" if reference_profile_available else
+        "blocked" if args.require_reference else
+        "skipped" if not REFERENCE_PACING else "needs_review"
+    )
+    progress_event(
+        "reference_analysis", reference_analysis_status,
+        "Reference pacing profile ready." if reference_profile_available else
+        "Selected reference has no usable pacing profile; this run will not use default pacing."
+        if args.require_reference else
+        "No usable measured reference interval; optional-reference fallback will be used.",
+        {"median_cut_interval_seconds": ref_interval,
+         "reference_available": reference_profile_available,
+         "reference_required": args.require_reference,
+         "analysis_cache_hit": reference_cache_hit},
+    )
+    if args.require_reference and not reference_profile_available:
+        raise RuntimeError(
+            "The selected reference could not produce a usable shot-pacing profile. "
+            "No edit was rendered with fallback pacing. Choose another reference or deselect it."
+        )
     clip_count = choose_clip_count(ref_interval, args.clip_count)
     clip_selection_mode = (
         "explicit_user_choice" if args.clip_count is not None
@@ -4033,6 +4068,7 @@ def main(argv=None):
     }
     reference_analysis = {
         "enabled": REFERENCE_PACING,
+        "required": args.require_reference,
         "available": _has_usable_reference_profile(ref_profile),
         "median_cut_interval_seconds": ref_interval,
         "source": REFERENCE if os.path.isfile(REFERENCE) else None,
@@ -4118,6 +4154,7 @@ def main(argv=None):
         "settings": CONFIG, "edl": edl,
         "media_analysis": media_analysis, "beat_analysis": beat_analysis,
         "reference_analysis": reference_analysis, "hook_analysis": hook_analysis,
+        "reference_required": args.require_reference,
         "source_chapter": context.get("source_chapter", {}),
         "character_lock": context.get("character_lock", {}),
         "render_critique": render_critique, "niche_metrics": niche_metrics,
