@@ -48,7 +48,9 @@ These are evidence-based Python modules today. Do not describe them as separate 
 - All local artifacts live under one project-level output root.
 - Target directory contract: `output/runs/` for working runs and reports, `output/releases/` for user-approved final exports, and `output/archive/` for retained older releases.
 - Keep technical QA distinct from human approval. A technically valid render is ready for the user to review; it is not automatically approved for publishing.
-- Never promote an edit to the approved releases area without an explicit user approval action.
+- The local CLI approval action is `python3 scripts/approve_release.py <run-mp4> --confirm`. It rechecks the report, Inspector/Export Storage results, EDL final freeze, dimensions, FPS and audio via ffprobe, then atomically copies the artifact and evidence into `output/releases/<run-id>/<primary-or-edit_NN>/`.
+- Approval never overwrites an existing release and never removes the source run artifact. A future local UI must call the same approval contract; it must not bypass it.
+- `output/archive/` is reserved for a later explicit archive/retention workflow; it is not currently auto-populated.
 - Preserve the latest-known-good output when a new render fails.
 
 ## Visual product direction
