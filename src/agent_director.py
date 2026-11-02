@@ -3338,6 +3338,15 @@ def main(argv=None):
     progress_event("source_preparation", "completed", "Required source files validated.",
                    {"video": VIDEO, "music": MUSIC,
                     "reference": REFERENCE if Path(REFERENCE).is_file() else None})
+    source_usage_ranges = load_source_usage_ledger(args.source_usage_ledger, VIDEO)
+    if args.source_usage_ledger:
+        progress_event(
+            "source_usage_exclusion", "completed",
+            f"Loaded {len(source_usage_ranges)} previously used source interval(s); later edits must avoid them.",
+            {"ledger_path": args.source_usage_ledger,
+             "used_interval_count": len(source_usage_ranges),
+             "minimum_gap_seconds": MIN_SOURCE_GAP_SECONDS},
+        )
     EDIT_DURATION = DURATION - FREEZE
     os.makedirs(OUTDIR, exist_ok=True)
     os.makedirs(WORK, exist_ok=True)
@@ -3603,6 +3612,12 @@ def main(argv=None):
             flush=True,
         )
     source_audio_available = _source_has_audio(VIDEO)
+    if args.source_usage_ledger and not source_audio_available:
+        raise RuntimeError(
+            "Distinct-edit mode needs measurable source-scene features to avoid reusing footage, "
+            "but this source has no audio stream for the current source-feature analyzer. "
+            "No fallback/progression edit was generated."
+        )
     source_feature_error = None
     measured_segment_count = 0
     chapter_candidate_count = 0
@@ -3614,6 +3629,12 @@ def main(argv=None):
                 chapter_candidates = build_source_scene_segments(
                     source_scope_start, source_scope_end, [], max_segment_seconds=SOURCE_CHAPTER_SECONDS
                 )
+                if args.source_usage_ledger:
+                    chapter_candidates = exclude_used_source_ranges(
+                        chapter_candidates, source_usage_ranges, MIN_SOURCE_GAP_SECONDS
+                    )
+                    if not chapter_candidates:
+                        raise RuntimeError("All source chapters are already used by earlier edits in this batch.")
                 measured_chapters, source_chapter_cache_hit = cached_analysis(
                     "source_chapter_features", [VIDEO],
                     {"chapters": chapter_candidates, "fps": FPS, "feature_version": 1,
@@ -3679,6 +3700,12 @@ def main(argv=None):
             else:
                 scene_segments = build_source_scene_segments(source_scope_start, source_scope_end, scenes, max_segment_seconds=None)
                 source_scope_for_features = source_scope["method"]
+            if args.source_usage_ledger:
+                scene_segments = exclude_used_source_ranges(
+                    scene_segments, source_usage_ranges, MIN_SOURCE_GAP_SECONDS
+                )
+                if not scene_segments:
+                    raise RuntimeError("No unused source-scene intervals remain for another distinct edit.")
             measured_segments, source_feature_cache_hit = cached_analysis(
                 "source_scene_features", [VIDEO],
                 {"scene_segments": scene_segments, "fps": FPS, "audio_weight": 0.6,
@@ -3780,6 +3807,11 @@ def main(argv=None):
                 + f"; assigned {len(planned_source_ranges)} chronological, disjoint clip ranges."
             )
         except (RuntimeError, ValueError, OSError) as exc:
+            if args.source_usage_ledger:
+                raise RuntimeError(
+                    f"Could not prove a source-disjoint plan for edit {args.edit_index}: {exc}. "
+                    "This edit was not rendered to avoid duplicating earlier footage."
+                ) from exc
             source_feature_error = str(exc)
             planned_source_ranges = None
             source_selection_report = {
@@ -3791,7 +3823,16 @@ def main(argv=None):
             }
             print(f"[warn] Ranked scene selection unavailable ({exc}); using bounded source progression where possible.", flush=True)
     else:
+        if args.source_usage_ledger:
+            raise RuntimeError(
+                "Distinct-edit mode cannot prove source-disjoint footage without source-scene feature analysis."
+            )
         print("[source] No audio stream in source video; using bounded scene-context fallback where possible.")
+    if args.source_usage_ledger and planned_source_ranges is None:
+        raise RuntimeError(
+            f"Could not allocate enough unused source footage for distinct edit {args.edit_index}; "
+            "no repeated-source fallback will be rendered."
+        )
     if long_source_mode and planned_source_ranges is None:
         fallback_chapter = choose_context_window(source_duration, scenes, SOURCE_CHAPTER_SECONDS / 2.0)
         chapter_start, chapter_end = fallback_chapter["start_seconds"], fallback_chapter["end_seconds"]
