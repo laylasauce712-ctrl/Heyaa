@@ -253,7 +253,8 @@ class AgentTests(unittest.TestCase):
 
     def test_reference_agent_blocks_when_profile_exists_but_timing_was_not_applied(self):
         result = reference_analyst({
-            "enabled": True, "required": True, "available": True,
+            "enabled": True, "selected": True, "required": True,
+            "available": True, "analyzed": True, "applied": False,
             "median_cut_interval_seconds": 1.2,
             "shot_intervals_seconds": [0.8, 1.5, 0.9],
             "used_for_planning": False,
@@ -300,12 +301,19 @@ class AgentTests(unittest.TestCase):
 
     def test_reference_agent_passes_measured_shot_pattern_to_planner(self):
         result = reference_analyst({
-            "enabled": True, "available": True, "source": "input/reference.mp4",
+            "enabled": True, "selected": True, "available": True, "analyzed": True,
+            "applied": True, "used_for_planning": True,
+            "source": "input/reference.mp4",
             "median_cut_interval_seconds": 1.2,
             "scene_cut_count": 7,
             "shot_intervals_seconds": [0.8, 1.7, 1.1, 2.2, 0.9, 1.2],
         })
         self.assertEqual(result.status, "ok")
+        self.assertTrue(result.evidence["selected"])
+        self.assertTrue(result.evidence["available"])
+        self.assertTrue(result.evidence["analyzed"])
+        self.assertTrue(result.evidence["applied"])
+        self.assertTrue(result.evidence["used_for_planning"])
         self.assertTrue(result.evidence["pattern_passed_to_planner"])
         self.assertEqual(result.evidence["shot_intervals_seconds"], [0.8, 1.7, 1.1, 2.2, 0.9, 1.2])
         self.assertFalse(result.evidence["semantic_reference_understanding"])
