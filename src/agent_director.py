@@ -4104,8 +4104,11 @@ def main(argv=None):
     }
     reference_analysis = {
         "enabled": REFERENCE_PACING,
+        "selected": args.require_reference,
         "required": args.require_reference,
         "available": _has_usable_reference_profile(ref_profile),
+        "analyzed": isinstance(ref_profile, dict),
+        "applied": REFERENCE_PACING_USED,
         "median_cut_interval_seconds": ref_interval,
         "source": REFERENCE if os.path.isfile(REFERENCE) else None,
         "shot_intervals_seconds": ref_profile.get("shot_intervals_seconds", []) if ref_profile else [],
