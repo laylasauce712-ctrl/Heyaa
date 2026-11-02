@@ -24,7 +24,13 @@ class ProgressTraceTests(unittest.TestCase):
         self.assertTrue(preview.preview)
         self.assertEqual(preview.variants, 1)
         self.assertEqual(parse_media_source_args([]).variants, 1)
+        self.assertEqual(parse_media_source_args([]).edits, 1)
+        self.assertEqual(parse_media_source_args(["--edits", "5"]).edits, 5)
         self.assertEqual(parse_media_source_args(["--variants", "3"]).variants, 3)
+        with self.assertRaises(SystemExit):
+            parse_media_source_args(["--edits", "3", "--variants", "2"])
+        with self.assertRaises(SystemExit):
+            parse_media_source_args(["--edits", "3", "--clip-count-options", "8,12,16"])
         self.assertEqual(doctor.command, "doctor")
 
     def test_cleanup_part_files_and_publish_latest_run(self):
@@ -45,6 +51,56 @@ class ProgressTraceTests(unittest.TestCase):
             self.assertTrue(Path(latest).is_symlink())
             self.assertEqual(Path(latest).resolve(), run_dir.resolve())
             self.assertTrue(kept.is_file())
+
+    def test_source_usage_ledger_records_edl_ranges_and_rejects_cross_edit_overlap(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source.mp4"
+            ledger_path = root / "source_usage_ledger.json"
+            edl_path = root / "edit.json"
+            ledger_path.write_text(json.dumps({
+                "version": 1,
+                "source_path": str(source.resolve()),
+                "minimum_gap_seconds": 0.05,
+                "used_ranges": [],
+            }), encoding="utf-8")
+            edl = {
+                "fps_num": 60, "fps_den": 1,
+                "video": [
+                    {"type": "clip", "source": str(source), "source_start_f": 0, "source_dur_f": 60},
+                    {"type": "freeze", "source": "timeline:last_frame", "dur_f": 120},
+                ],
+            }
+            edl_path.write_text(json.dumps(edl), encoding="utf-8")
+            added = renderer._append_edl_source_ranges_to_ledger(
+                edl_path, ledger_path, 1, source
+            )
+            self.assertEqual(added, [{
+                "start_seconds": 0.0, "end_seconds": 1.0, "edit_index": 1,
+            }])
+            ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+            self.assertEqual(ledger["completed_edits"], [1])
+            # A second edit inside the protected gap must be rejected.
+            edl["video"] = [{
+                "type": "clip", "source": str(source),
+                "source_start_f": 62, "source_dur_f": 60,
+            }]
+            edl_path.write_text(json.dumps(edl), encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "reused source time"):
+                renderer._append_edl_source_ranges_to_ledger(
+                    edl_path, ledger_path, 2, source
+                )
+
+    def test_source_usage_ledger_refuses_a_different_source_file(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            ledger = root / "ledger.json"
+            ledger.write_text(json.dumps({
+                "version": 1, "source_path": str((root / "video-a.mp4").resolve()),
+                "used_ranges": [],
+            }), encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "different source file"):
+                renderer.load_source_usage_ledger(ledger, root / "video-b.mp4")
 
     def test_local_settings_path_can_be_selected_without_editing_params_json(self):
         with patch.dict("os.environ", {"HEYAA_PARAMS_PATH": "params.local.json"}):
