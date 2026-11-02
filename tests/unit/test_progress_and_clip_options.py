@@ -102,6 +102,98 @@ class ProgressTraceTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "different source file"):
                 renderer.load_source_usage_ledger(ledger, root / "video-b.mp4")
 
+    def test_distinct_edit_batch_writes_manifest_and_reserves_each_edl_interval(self):
+        from types import SimpleNamespace
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            args = SimpleNamespace(
+                edits=2, require_reference=False, clip_count=8,
+                video_url=None, tiktok_url=None, music_url=None, reference_url=None,
+            )
+
+            def fake_child(command, index):
+                edit_dir = root / "edits" / f"edit_{index:02d}"
+                edit_dir.mkdir(parents=True, exist_ok=True)
+                (edit_dir / "final_phonk_20s.mp4").write_bytes(b"rendered")
+                (edit_dir / "agent_report.json").write_text(json.dumps({
+                    "status": "ready_for_human_review",
+                    "results": {"export_storage": {"status": "ok"}},
+                }), encoding="utf-8")
+                start = 0 if index == 1 else 63
+                (edit_dir / "edit_decision_list.json").write_text(json.dumps({
+                    "fps_num": 60, "fps_den": 1,
+                    "video": [{
+                        "type": "clip", "source": str(Path("input/test_video.mp4").resolve()),
+                        "source_start_f": start, "source_dur_f": 60,
+                    }],
+                }), encoding="utf-8")
+                return subprocess.CompletedProcess(command, 0)
+
+            with (
+                patch.dict("os.environ", {"HEYAA_RUN_DIR": str(root)}),
+                patch.object(renderer, "_run_variant_process", side_effect=fake_child),
+                patch.object(renderer, "create_contact_sheet"),
+                patch.object(renderer, "publish_latest_run"),
+            ):
+                result = renderer._run_edit_batch(args)
+
+            self.assertEqual(result, 0)
+            manifest = json.loads((root / "edits_manifest.json").read_text(encoding="utf-8"))
+            ledger = json.loads((root / "source_usage_ledger.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["status"], "complete")
+            self.assertEqual(manifest["completed_edits"], 2)
+            self.assertEqual([item["status"] for item in manifest["edits"]], ["ok", "ok"])
+            self.assertEqual(len(ledger["used_ranges"]), 2)
+            self.assertEqual(ledger["completed_edits"], [1, 2])
+
+    def test_distinct_edit_batch_stops_when_child_reuses_reserved_source_time(self):
+        from types import SimpleNamespace
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            args = SimpleNamespace(
+                edits=3, require_reference=False, clip_count=None,
+                video_url=None, tiktok_url=None, music_url=None, reference_url=None,
+            )
+            calls = []
+
+            def fake_child(command, index):
+                calls.append(index)
+                edit_dir = root / "edits" / f"edit_{index:02d}"
+                edit_dir.mkdir(parents=True, exist_ok=True)
+                (edit_dir / "final_phonk_20s.mp4").write_bytes(b"rendered")
+                (edit_dir / "agent_report.json").write_text(json.dumps({
+                    "status": "ready_for_human_review",
+                    "results": {"export_storage": {"status": "ok"}},
+                }), encoding="utf-8")
+                start = 0 if index == 1 else 62
+                (edit_dir / "edit_decision_list.json").write_text(json.dumps({
+                    "fps_num": 60, "fps_den": 1,
+                    "video": [{
+                        "type": "clip", "source": str(Path("input/test_video.mp4").resolve()),
+                        "source_start_f": start, "source_dur_f": 60,
+                    }],
+                }), encoding="utf-8")
+                return subprocess.CompletedProcess(command, 0)
+
+            with (
+                patch.dict("os.environ", {"HEYAA_RUN_DIR": str(root)}),
+                patch.object(renderer, "_run_variant_process", side_effect=fake_child),
+                patch.object(renderer, "create_contact_sheet"),
+                patch.object(renderer, "publish_latest_run"),
+            ):
+                result = renderer._run_edit_batch(args)
+
+            manifest = json.loads((root / "edits_manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(result, 0)  # One completed edit is still a valid partial batch.
+            self.assertEqual(calls, [1, 2])  # Third edit must not start after the duplicate attempt.
+            self.assertEqual(manifest["status"], "partial")
+            self.assertEqual(manifest["completed_edits"], 1)
+            self.assertEqual(manifest["edits"][1]["status"], "failed")
+            self.assertIn("reused source time", manifest["edits"][1]["reason"])
+            self.assertEqual(manifest["edits"][2]["status"], "not_run")
+
     def test_local_settings_path_can_be_selected_without_editing_params_json(self):
         with patch.dict("os.environ", {"HEYAA_PARAMS_PATH": "params.local.json"}):
             self.assertEqual(renderer._settings_path(), "params.local.json")
