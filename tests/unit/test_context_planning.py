@@ -578,6 +578,53 @@ class ContextPlanningTests(unittest.TestCase):
         self.assertEqual(updated[0], 0.0)
         self.assertEqual(updated[-1], 8.0)
 
+    def test_source_usage_ledger_subtracts_previous_edits_and_keeps_fragments(self):
+        segments = [{
+            "start_seconds": 0.0, "end_seconds": 10.0,
+            "audio_loudness_db": -18.0, "motion_score": 0.7,
+        }]
+        available = renderer.exclude_used_source_ranges(
+            segments,
+            [{"start_seconds": 2.0, "end_seconds": 4.0}],
+            minimum_gap_seconds=0.5,
+        )
+        self.assertEqual(
+            [(round(x["start_seconds"], 3), round(x["end_seconds"], 3)) for x in available],
+            [(0.0, 1.5), (4.5, 10.0)],
+        )
+        self.assertEqual(available[0]["motion_score"], 0.7)
+
+    def test_source_usage_ledger_drops_fragments_too_short_for_a_clip(self):
+        segments = [{"start_seconds": 0.0, "end_seconds": 2.0}]
+        available = renderer.exclude_used_source_ranges(
+            segments,
+            [{"start_seconds": 0.0, "end_seconds": 1.7}],
+            minimum_gap_seconds=0.1,
+        )
+        self.assertEqual(available, [])
+
+    def test_source_usage_ledger_merges_overlapping_reservations(self):
+        segments = [{"start_seconds": 0.0, "end_seconds": 10.0}]
+        available = renderer.exclude_used_source_ranges(
+            segments,
+            [
+                {"start_seconds": 2.0, "end_seconds": 4.0},
+                {"start_seconds": 3.0, "end_seconds": 5.0},
+            ],
+            minimum_gap_seconds=0.0,
+        )
+        self.assertEqual(
+            [(x["start_seconds"], x["end_seconds"]) for x in available],
+            [(0.0, 2.0), (5.0, 10.0)],
+        )
+
+    def test_source_usage_ledger_rejects_invalid_intervals(self):
+        with self.assertRaisesRegex(ValueError, "invalid time range"):
+            renderer.exclude_used_source_ranges(
+                [{"start_seconds": 0.0, "end_seconds": 3.0}],
+                [{"start_seconds": 2.0, "end_seconds": 1.0}],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
