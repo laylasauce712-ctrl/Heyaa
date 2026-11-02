@@ -33,9 +33,12 @@ These are evidence-based Python modules today. Do not describe them as separate 
 
 ## User-selected edit count
 
-- The user chooses how many separate edits to generate for one source/batch.
-- Do not hard-code five outputs or generate extra variants by default.
+- The user chooses how many separate edits to generate for one source/batch. The CLI contract is `--edits 1..5`, with one render as the default.
+- Do not hard-code five outputs or generate extra edits by default.
 - Each requested edit must be a distinct edit plan, not merely a relabelled source-time curve or the same render copied to another filename.
+- A shared source-usage ledger reserves every motion-clip source interval from a completed edit. Later edits must exclude those intervals plus the configured source gap before analysis/planning.
+- If there is not enough remaining material to plan another complete edit, stop the batch and report the number completed. Never fall back to source progression or recycle earlier intervals in distinct-edit mode.
+- Keep legacy `--variants` as a separate comparison/debug path only; it is not the product's distinct-edit feature and must not count as additional edits.
 - Keep the phonk/montagem look and selected source/music/reference consistent while varying the actual edit decisions enough to make each output meaningfully distinct.
 - If the media cannot support the requested number of meaningfully different outputs, report the limitation honestly rather than manufacturing duplicates.
 - A user-selected edit count is different from the number of motion clips inside one EDL. Keep those controls separate.
