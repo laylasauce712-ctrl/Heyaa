@@ -22,7 +22,9 @@ class ProgressTraceTests(unittest.TestCase):
         preview = parse_media_source_args(["--preview"])
         doctor = parse_media_source_args(["doctor"])
         self.assertTrue(preview.preview)
-        self.assertEqual(preview.variants, 3)
+        self.assertEqual(preview.variants, 1)
+        self.assertEqual(parse_media_source_args([]).variants, 1)
+        self.assertEqual(parse_media_source_args(["--variants", "3"]).variants, 3)
         self.assertEqual(doctor.command, "doctor")
 
     def test_cleanup_part_files_and_publish_latest_run(self):
