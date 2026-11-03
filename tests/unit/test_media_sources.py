@@ -149,6 +149,22 @@ class TikTokUrlTests(unittest.TestCase):
 
 
 class ReferenceSelectionCliTests(unittest.TestCase):
+    def test_local_media_path_options_default_to_project_input_files(self):
+        args = parse_media_source_args([])
+        self.assertEqual(args.video_path, "input/test_video.mp4")
+        self.assertEqual(args.music_path, "input/phonk.mp3")
+        self.assertEqual(args.reference_path, "input/reference.mp4")
+
+    def test_local_media_path_options_accept_ui_selected_input_files(self):
+        args = parse_media_source_args([
+            "--video-path", "input/ui_source_123.mp4",
+            "--music-path", "input/ui_music_123.mp3",
+            "--reference-path", "",
+        ])
+        self.assertEqual(args.video_path, "input/ui_source_123.mp4")
+        self.assertEqual(args.music_path, "input/ui_music_123.mp3")
+        self.assertEqual(args.reference_path, "")
+
     def test_reference_url_is_an_explicit_required_selection(self):
         args = parse_media_source_args([
             "--reference-url", "https://example.com/reference.mp4",
