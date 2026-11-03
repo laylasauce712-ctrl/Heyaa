@@ -214,7 +214,7 @@ def _run_outputs(run_dir: Path) -> list[dict[str, Any]]:
         is_preview = path.name == "preview.mp4"
         report_path = path.parent / "agent_report.json"
         status = "preview" if is_preview else "ready_for_human_review"
-        if report_path.is_file():
+        if not is_preview and report_path.is_file():
             try:
                 report = json.loads(report_path.read_text(encoding="utf-8"))
                 status = str(report.get("status") or status)
