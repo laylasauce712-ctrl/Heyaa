@@ -506,7 +506,7 @@ def preview_job(job_id: UUID, owner_key: str = Depends(authenticate)):
                 "Bucket": os.environ["HEYAA_STORAGE_BUCKET"],
                 "Key": row["output_key"],
                 "ResponseContentType": "video/mp4",
-                "ResponseContentDisposition": 'attachment; filename="Heyaa-final.mp4"',
+                "ResponseContentDisposition": 'inline; filename="Heyaa-preview.mp4"',
             },
             ExpiresIn=DOWNLOAD_TTL_SECONDS,
         )
@@ -531,9 +531,14 @@ def download_job(job_id: UUID, owner_key: str = Depends(authenticate)):
     if row["status"] != "approved" or not row.get("output_key"):
         raise HTTPException(status_code=409, detail="Approve the render after human review before downloading.")
     try:
-        url = storage_client().generate_presigned_url(
+        url = public_storage_client().generate_presigned_url(
             "get_object",
-            Params={"Bucket": os.environ["HEYAA_STORAGE_BUCKET"], "Key": row["output_key"]},
+            Params={
+                "Bucket": os.environ["HEYAA_STORAGE_BUCKET"],
+                "Key": row["output_key"],
+                "ResponseContentType": "video/mp4",
+                "ResponseContentDisposition": 'attachment; filename="Heyaa-final.mp4"',
+            },
             ExpiresIn=DOWNLOAD_TTL_SECONDS,
         )
     except Exception:
