@@ -127,8 +127,8 @@ def claim_next_job(worker_id: str) -> dict[str, Any] | None:
             WHERE status = 'queued'
                OR (status = 'running' AND lease_expires_at < NOW())
             ORDER BY created_at
-            FOR UPDATE SKIP LOCKED
             LIMIT 1
+            FOR UPDATE SKIP LOCKED
             """
         ).fetchone()
         if not row:
@@ -230,20 +230,26 @@ def prepare_workspace(workspace: Path, payload: dict[str, Any], owner_key: str,
         "music": "input/cloud_music.mp3",
         "reference": "input/cloud_reference.mp4",
     }
-    command = [
-        sys.executable, "src/agent_director.py",
-        "--video-path", paths["video"],
-        "--music-path", paths["music"],
-        "--reference-path", paths["reference"] if media.get("reference") else "",
-        "--edits", "1",
-    ]
+    command = [sys.executable, "src/agent_director.py", "--edits", "1"]
+    path_flags = {
+        "video": "--video-path",
+        "music": "--music-path",
+        "reference": "--reference-path",
+    }
+    url_flags = {
+        "video": "--video-url",
+        "music": "--music-url",
+        "reference": "--reference-url",
+    }
     for slot in ("video", "music", "reference"):
         source = media.get(slot)
         if not source:
+            if slot == "reference":
+                command.extend([path_flags[slot], ""])
             continue
         if source["kind"] == "url":
-            flag = {"video": "--video-url", "music": "--music-url", "reference": "--reference-url"}[slot]
-            command.extend([flag, source["url"]])
+            # The path argument is the worker-local download destination.
+            command.extend([path_flags[slot], paths[slot], url_flags[slot], source["url"]])
         elif source["kind"] == "upload":
             destination = _safe_workspace_file(workspace, slot, source["object_key"])
             storage.download_file(
@@ -251,10 +257,7 @@ def prepare_workspace(workspace: Path, payload: dict[str, Any], owner_key: str,
                 source["object_key"],
                 str(destination),
             )
-            command.extend([
-                {"video": "--video-path", "music": "--music-path", "reference": "--reference-path"}[slot],
-                str(destination.relative_to(workspace)),
-            ])
+            command.extend([path_flags[slot], str(destination.relative_to(workspace))])
         else:
             raise RuntimeError(f"Unsupported {slot} source type.")
     if media.get("reference"):
@@ -263,10 +266,17 @@ def prepare_workspace(workspace: Path, payload: dict[str, Any], owner_key: str,
 
 
 def _progress_from_line(job_id: UUID, line: str) -> None:
-    import re
-    match = re.search(r"^\\[progress:([^\\]]+)\\]\\s+([^:]+):\\s*(.*)$", line.strip())
-    if match:
-        record_event(job_id, match.group(1), match.group(2).strip(), match.group(3).strip())
+    """Convert the renderer's text progress line into a durable cloud event."""
+    text = line.strip()
+    if not text.startswith("[progress:"):
+        return
+    stage, separator, remainder = text[len("[progress:"):].partition("]")
+    if not separator:
+        return
+    state, separator, summary = remainder.strip().partition(":")
+    if not separator or not stage.strip() or not state.strip():
+        return
+    record_event(job_id, stage.strip(), state.strip(), summary.strip())
 
 
 def run_renderer(job: dict[str, Any], worker_id: str, storage: Any) -> None:
@@ -358,7 +368,6 @@ def run_renderer(job: dict[str, Any], worker_id: str, storage: Any) -> None:
 
 def main() -> int:
     worker_id = os.environ.get("HEYAA_WORKER_ID") or f"{socket.gethostname()}-{os.getpid()}"
-    record_event_global = event
     print(f"[cloud-worker] {worker_id} online; polling for jobs", flush=True)
     while True:
         job = claim_next_job(worker_id)
