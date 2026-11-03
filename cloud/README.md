@@ -23,7 +23,14 @@ docker compose --env-file cloud/.env -f cloud/compose.yaml up --build
 API: http://localhost:8080
 Health: http://localhost:8080/healthz
 OpenAPI: http://localhost:8080/docs
+MinIO S3 endpoint: http://localhost:9000
 MinIO console: http://localhost:9001
+
+For uploads from a phone on the same Wi-Fi, change `HEYAA_STORAGE_PUBLIC_ENDPOINT_URL`
+in `cloud/.env` to the laptop's reachable LAN address (for example
+`http://192.168.1.20:9000`) and allow the phone-facing web origin in
+`cloud/minio-cors.xml`. The current web UI is not deployed yet; this is the
+storage endpoint required by the future browser client.
 
 The API uses one shared bearer token in this first private-beta slice. This is a single-tenant/developer credential, not a complete user-account system. Do not distribute it to browsers as a production client secret or expose this Compose stack to the internet.
 
