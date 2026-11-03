@@ -323,16 +323,16 @@ function renderOutputs(state) {
     const meta = document.createElement("small");
     meta.textContent = `${output.size_label} · ${output.status.replaceAll("_", " ")}`;
     info.append(title, meta);
+    let previewPlayer = null;
     if (output.is_preview) {
-      const player = document.createElement("video");
-      player.className = "output-preview-player";
-      player.src = `/api/artifact?path=${encodeURIComponent(output.path)}`;
-      player.controls = true;
-      player.preload = "metadata";
-      player.playsInline = true;
-      player.setAttribute("aria-label", "Quick preview render");
+      previewPlayer = document.createElement("video");
+      previewPlayer.className = "output-preview-player";
+      previewPlayer.src = `/api/artifact?path=${encodeURIComponent(output.path)}`;
+      previewPlayer.controls = true;
+      previewPlayer.preload = "metadata";
+      previewPlayer.playsInline = true;
+      previewPlayer.setAttribute("aria-label", "Quick preview render");
       card.classList.add("preview-output-card");
-      card.append(player);
     }
     const actions = document.createElement("div");
     actions.className = "output-actions";
@@ -352,7 +352,8 @@ function renderOutputs(state) {
       approve.addEventListener("click", () => approveOutput(output));
       actions.append(approve);
     }
-    card.append(info, actions);
+    if (previewPlayer) card.append(info, previewPlayer, actions);
+    else card.append(info, actions);
     els.outputs.append(card);
   }
 
