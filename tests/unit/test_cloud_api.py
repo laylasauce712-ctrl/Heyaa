@@ -1,7 +1,9 @@
 import hashlib
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+from contextlib import nullcontext
+from uuid import uuid4
 
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
@@ -65,6 +67,42 @@ class CloudApiTests(unittest.TestCase):
             with self.assertRaises(HTTPException) as caught:
                 create_job(request, "owner-key")
         self.assertEqual(caught.exception.status_code, 409)
+
+    def test_preview_url_is_inline_and_uses_public_storage_endpoint(self):
+        from cloud.api import preview_job
+
+        connection = MagicMock()
+        connection.__enter__.return_value.execute.return_value.fetchone.return_value = {
+            "status": "ready_for_review",
+            "output_key": "outputs/owner/job/final_phonk_20s.mp4",
+        }
+        signer = MagicMock()
+        signer.generate_presigned_url.return_value = "https://storage.example/preview"
+        with patch("cloud.api.database_connection", return_value=connection), patch(
+            "cloud.api.public_storage_client", return_value=signer
+        ):
+            result = preview_job(uuid4(), "owner")
+        self.assertEqual(result["url"], "https://storage.example/preview")
+        params = signer.generate_presigned_url.call_args.kwargs["Params"]
+        self.assertIn("inline", params["ResponseContentDisposition"])
+
+    def test_download_url_requires_approval_and_uses_public_storage_attachment(self):
+        from cloud.api import download_job
+
+        connection = MagicMock()
+        connection.__enter__.return_value.execute.return_value.fetchone.return_value = {
+            "status": "approved",
+            "output_key": "outputs/owner/job/final_phonk_20s.mp4",
+        }
+        signer = MagicMock()
+        signer.generate_presigned_url.return_value = "https://storage.example/final"
+        with patch("cloud.api.database_connection", return_value=connection), patch(
+            "cloud.api.public_storage_client", return_value=signer
+        ):
+            result = download_job(uuid4(), "owner")
+        self.assertEqual(result["url"], "https://storage.example/final")
+        params = signer.generate_presigned_url.call_args.kwargs["Params"]
+        self.assertIn("attachment", params["ResponseContentDisposition"])
 
     def test_job_cannot_reference_another_owners_object_key(self):
         class NeverCalledStorage:
