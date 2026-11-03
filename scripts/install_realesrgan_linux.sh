@@ -47,7 +47,16 @@ for suffix in param bin; do
   fi
 done
 
-"$DEST/realesrgan-ncnn-vulkan" -h >/dev/null
+# This ncnn-vulkan build prints help and returns 255 for -h. Validate
+# its expected usage output instead of treating that documented behavior
+# as an installation failure.
+HELP_OUTPUT="$("$DEST/realesrgan-ncnn-vulkan" -h 2>&1 || true)"
+if [[ "$HELP_OUTPUT" != *"Usage: realesrgan-ncnn-vulkan"* ]]; then
+  echo "[upscale install] Real-ESRGAN executable could not start or returned unexpected help output." >&2
+  echo "$HELP_OUTPUT" >&2
+  exit 1
+fi
+echo "[upscale install] Executable startup/help output verified."
 echo "[upscale install] Installed executable: $DEST/realesrgan-ncnn-vulkan"
 echo "[upscale install] Installed model directory: $DEST/models"
 echo "[upscale install] Default realesrgan-x4plus weights verified."
