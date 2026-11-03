@@ -85,7 +85,7 @@ class LocalStudioMediaSelectionTests(unittest.TestCase):
     def test_empty_source_selection_fails_instead_of_using_sample_media(self):
         config, _ = local_app._load_profile()
         with patch.object(local_app, "_load_profile", return_value=(config, "params.json")):
-            with self.assertRaisesRegex(ValueError, "Local video path is empty"):
+            with self.assertRaisesRegex(RuntimeError, "Local video path is empty"):
                 local_app._validate_render_request({
                     "video_path": "",
                     "music_path": "input/selected-music.mp3",
@@ -94,7 +94,7 @@ class LocalStudioMediaSelectionTests(unittest.TestCase):
     def test_empty_music_selection_fails_instead_of_using_sample_media(self):
         config, _ = local_app._load_profile()
         with patch.object(local_app, "_load_profile", return_value=(config, "params.json")):
-            with self.assertRaisesRegex(ValueError, "Local music path is empty"):
+            with self.assertRaisesRegex(RuntimeError, "Local music path is empty"):
                 local_app._validate_render_request({
                     "video_path": "input/selected-video.mp4",
                     "music_path": "",
