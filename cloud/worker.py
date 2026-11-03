@@ -121,6 +121,19 @@ def cancellation_requested(job_id: UUID) -> bool:
 
 def claim_next_job(worker_id: str) -> dict[str, Any] | None:
     with db_connection() as conn:
+        # A worker that died after a cancel request cannot leave the job in a
+        # terminal-looking state forever. Once its lease expires, close it.
+        conn.execute(
+            """
+            UPDATE heyaa_cloud_jobs
+            SET status = 'cancelled', lease_expires_at = NULL,
+                updated_at = NOW(),
+                progress = progress || %s::jsonb
+            WHERE status = 'cancel_requested'
+              AND lease_expires_at < NOW()
+            """,
+            (json.dumps([event("worker", "cancelled", "Worker lease expired after cancellation was requested.")]),),
+        )
         row = conn.execute(
             """
             SELECT job_id, owner_key, request
@@ -267,11 +280,15 @@ def prepare_workspace(workspace: Path, payload: dict[str, Any], owner_key: str,
 
 
 def _progress_from_line(job_id: UUID, line: str) -> None:
-    """Convert the renderer's text progress line into a durable cloud event."""
+    """Convert renderer progress and agent lifecycle lines into durable events."""
     text = line.strip()
-    if not text.startswith("[progress:"):
+    if text.startswith("[progress:"):
+        stage, separator, remainder = text[len("[progress:"):].partition("]")
+    elif text.startswith("[agent:"):
+        agent_name, separator, remainder = text[len("[agent:"):].partition("]")
+        stage = "agent:" + agent_name.strip()
+    else:
         return
-    stage, separator, remainder = text[len("[progress:"):].partition("]")
     if not separator:
         return
     state, separator, summary = remainder.strip().partition(":")
