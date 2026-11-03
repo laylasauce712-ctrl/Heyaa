@@ -84,17 +84,16 @@ def record_event(job_id: UUID, stage: str, state: str, summary: str) -> None:
 
 
 def record_log(job_id: UUID, line: str) -> None:
+    # Keep a bounded diagnostic tail with one write per line; never return it
+    # to anyone except the authenticated owner of the job.
     with db_connection() as conn:
-        row = conn.execute(
-            "SELECT log_tail FROM heyaa_cloud_jobs WHERE job_id = %s",
-            (job_id,),
-        ).fetchone()
-        if not row:
-            return
-        tail = (row.get("log_tail") or "") + line
         conn.execute(
-            "UPDATE heyaa_cloud_jobs SET log_tail = %s, updated_at = NOW() WHERE job_id = %s",
-            (tail[-MAX_LOG_CHARS:], job_id),
+            """
+            UPDATE heyaa_cloud_jobs
+            SET log_tail = RIGHT(log_tail || %s, %s), updated_at = NOW()
+            WHERE job_id = %s
+            """,
+            (line, MAX_LOG_CHARS, job_id),
         )
 
 
