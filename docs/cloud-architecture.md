@@ -8,7 +8,7 @@ Status: architecture baseline only. This document does not claim that Heyaa is d
 - The current Studio is a local Python HTTP server. It binds to 127.0.0.1:8765, reads local input/ files, starts the existing FFmpeg renderer, and writes to local output/.
 - GitHub Actions is not a persistent render server and does not keep a GPU worker available for user jobs.
 - The current Studio is intentionally local-only. Do not expose it directly to the public internet or change its bind address as a shortcut.
-- Real-ESRGAN asset checks previously proved only that the executable and model files existed. They did not prove a hardware-backed Vulkan device was available. AI preflight now distinguishes hardware Vulkan from CPU software drivers and blocks the known llvmpipe failure by default.
+- Real-ESRGAN asset checks previously proved only that the executable and model files existed. They did not prove a hardware-backed Vulkan device was available. AI preflight now distinguishes hardware Vulkan from CPU software drivers and blocks the known llvmpipe failure by default. It also refuses a mixed device list when llvmpipe is the first/default device and a hardware GPU appears only later, because the current renderer does not explicitly select a Vulkan device index.
 
 ## Target phone-first architecture
 
