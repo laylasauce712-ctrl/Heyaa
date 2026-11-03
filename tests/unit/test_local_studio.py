@@ -66,6 +66,41 @@ class LocalStudioSettingsTests(unittest.TestCase):
             local_app._save_profile({"edit_settings": {"layout_mode": "stretch"}})
 
 
+class LocalStudioMediaSelectionTests(unittest.TestCase):
+    def test_video_files_are_available_in_both_source_and_reference_slots(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "existing-source.mp4").write_bytes(b"video")
+            (root / "existing-reference.mov").write_bytes(b"reference")
+            (root / "existing-music.mp3").write_bytes(b"music")
+            with patch.object(local_app, "INPUT_ROOT", root):
+                media = local_app._media_files()
+        slots_by_name = {}
+        for item in media:
+            slots_by_name.setdefault(item["name"], set()).add(item["slot"])
+        self.assertEqual(slots_by_name["existing-source.mp4"], {"video", "reference"})
+        self.assertEqual(slots_by_name["existing-reference.mov"], {"video", "reference"})
+        self.assertEqual(slots_by_name["existing-music.mp3"], {"music"})
+
+    def test_empty_source_selection_fails_instead_of_using_sample_media(self):
+        config, _ = local_app._load_profile()
+        with patch.object(local_app, "_load_profile", return_value=(config, "params.json")):
+            with self.assertRaisesRegex(ValueError, "Local video path is empty"):
+                local_app._validate_render_request({
+                    "video_path": "",
+                    "music_path": "input/selected-music.mp3",
+                })
+
+    def test_empty_music_selection_fails_instead_of_using_sample_media(self):
+        config, _ = local_app._load_profile()
+        with patch.object(local_app, "_load_profile", return_value=(config, "params.json")):
+            with self.assertRaisesRegex(ValueError, "Local music path is empty"):
+                local_app._validate_render_request({
+                    "video_path": "input/selected-video.mp4",
+                    "music_path": "",
+                })
+
+
 class LocalStudioPathSafetyTests(unittest.TestCase):
     def test_quick_preview_is_listed_as_playable_but_never_approvable(self):
         with tempfile.TemporaryDirectory() as temporary:
