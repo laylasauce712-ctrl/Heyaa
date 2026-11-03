@@ -34,6 +34,22 @@ GPU0:
         self.assertEqual(result["status"], "hardware_available")
         self.assertFalse(result["devices"][0]["software"])
 
+    def test_later_hardware_device_does_not_hide_software_default_device(self):
+        summary = """Devices:
+========
+GPU0:
+    deviceType = PHYSICAL_DEVICE_TYPE_CPU
+    deviceName = llvmpipe
+    driverName = llvmpipe
+GPU1:
+    deviceType = PHYSICAL_DEVICE_TYPE_DISCRETE_GPU
+    deviceName = AMD Radeon RX 540
+    driverName = DRIVER_ID_MESA_RADV
+"""
+        result = parse_vulkan_summary(summary)
+        self.assertEqual(result["status"], "software_default")
+        self.assertIn("not explicitly selected", result["reason"])
+
     def test_probe_reports_missing_vulkaninfo_without_claiming_gpu_absence(self):
         with patch("src.heyaa.gpu.shutil.which", return_value=None):
             result = inspect_vulkan_hardware()
