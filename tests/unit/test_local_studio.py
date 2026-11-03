@@ -67,6 +67,16 @@ class LocalStudioSettingsTests(unittest.TestCase):
 
 
 class LocalStudioPathSafetyTests(unittest.TestCase):
+    def test_upload_slot_aliases_map_to_real_media_kinds(self):
+        self.assertEqual(local_app._normalize_upload_slot("source"), "video")
+        self.assertEqual(local_app._normalize_upload_slot("video"), "video")
+        self.assertEqual(local_app._normalize_upload_slot("music"), "music")
+        self.assertEqual(local_app._normalize_upload_slot("reference"), "reference")
+
+    def test_upload_slot_rejects_unknown_kinds(self):
+        with self.assertRaisesRegex(ValueError, "Upload slot must be"):
+            local_app._normalize_upload_slot("image")
+
     def test_artifact_route_accepts_files_under_runs_and_releases_only(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
