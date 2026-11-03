@@ -321,6 +321,39 @@ def parse_clip_count_options(value: str) -> tuple[int, ...]:
     return values
 
 
+def validate_input_media_path(path_value: str, kind: str, input_root: str | Path = "input") -> str:
+    """Resolve one selected local media file without allowing reads outside input/."""
+    if kind not in {"video", "music", "reference"}:
+        raise MediaSourceError(f"Unsupported local media type: {kind!r}.")
+    if not isinstance(path_value, str):
+        raise MediaSourceError(f"Local {kind} path must be a string.")
+    if not path_value.strip() and kind == "reference":
+        return ""
+    if not path_value.strip():
+        raise MediaSourceError(f"Local {kind} path is empty.")
+    root = Path(input_root).resolve()
+    candidate = Path(path_value)
+    if not candidate.is_absolute():
+        candidate = Path.cwd() / candidate
+    try:
+        resolved = candidate.resolve(strict=False)
+        resolved.relative_to(root)
+    except (OSError, ValueError) as exc:
+        raise MediaSourceError(
+            f"Local {kind} must be selected from the project's input/ folder; paths outside it are not allowed."
+        ) from exc
+    allowed = (
+        {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
+        if kind in {"video", "reference"}
+        else {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus"}
+    )
+    if resolved.suffix.lower() not in allowed:
+        raise MediaSourceError(
+            f"Unsupported local {kind} extension {resolved.suffix!r}; supported: {', '.join(sorted(allowed))}."
+        )
+    return str(resolved)
+
+
 def parse_media_source_args(argv=None):
     parser = argparse.ArgumentParser(
         description="Render a Heyaa Phonk montage from local files, direct HTTPS media links, or YouTube/TikTok video links."
@@ -333,6 +366,12 @@ def parse_media_source_args(argv=None):
     parser.add_argument("--tiktok-url", help="TikTok post/share URL used as source footage; alternative to --video-url.")
     parser.add_argument("--music-url", help="HTTPS audio URL (YouTube/TikTok post or direct media URL) used as the soundtrack.")
     parser.add_argument("--reference-url", help="HTTPS video URL (YouTube/TikTok post or direct media URL) used as the visual timing reference.")
+    parser.add_argument("--video-path", default="input/test_video.mp4",
+                        help="Local source file selected from the project input/ folder.")
+    parser.add_argument("--music-path", default="input/phonk.mp3",
+                        help="Local soundtrack file selected from the project input/ folder.")
+    parser.add_argument("--reference-path", default="input/reference.mp4",
+                        help="Optional local reference file in input/; pass an empty string to disable the local reference.")
     parser.add_argument("--require-reference", action="store_true",
                         help="Require a usable local input/reference.mp4; never fall back to default pacing when selected.")
     parser.add_argument(
