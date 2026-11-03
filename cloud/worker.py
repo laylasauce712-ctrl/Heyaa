@@ -21,6 +21,7 @@ from uuid import UUID
 
 import boto3
 import psycopg
+from botocore.config import Config
 from psycopg.rows import dict_row
 
 from src.heyaa.gpu import inspect_vulkan_hardware
@@ -51,6 +52,7 @@ def s3_client():
         region_name=os.environ.get("HEYAA_STORAGE_REGION", "auto"),
         aws_access_key_id=os.environ["HEYAA_STORAGE_ACCESS_KEY"],
         aws_secret_access_key=os.environ["HEYAA_STORAGE_SECRET_KEY"],
+        config=Config(s3={"addressing_style": "path"}),
     )
 
 
