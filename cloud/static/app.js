@@ -161,6 +161,11 @@
     authToken = value;
     $("connect").disabled = true;
     try {
+      const capabilities = await api("/v1/capabilities");
+      $("aiUpscale").disabled = !capabilities.ai_upscale_enabled;
+      $("aiHint").textContent = capabilities.ai_upscale_enabled
+        ? "AI requests are enabled by the operator; the worker still verifies its hardware-backed Vulkan device before processing."
+        : "AI Restore is disabled on this deployment. A GPU worker and operator enablement are required.";
       await loadJobs();
       $("token").value = "";
       $("login").style.display = "none";
@@ -180,7 +185,7 @@
       $("uploadProgress").textContent = "Queueing render job…";
       const job = await api("/v1/jobs",{
         method:"POST",
-        body:JSON.stringify({video,music,reference,layout_mode:$("layout").value,ai_upscale_enabled:false})
+        body:JSON.stringify({video,music,reference,layout_mode:$("layout").value,ai_upscale_enabled:$("aiUpscale").checked})
       });
       selectedJob = job.job_id;
       await loadJobs(); await selectJob(job.job_id);
