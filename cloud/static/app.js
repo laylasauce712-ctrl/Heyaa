@@ -113,6 +113,13 @@
     const description = document.createElement("p"); description.className = "hint";
     description.textContent = "Job " + job.job_id + (job.error ? " · " + job.error : "");
     $("jobSummary").append(description);
+    if (job.report) {
+      const evidence = document.createElement("details");
+      const heading = document.createElement("summary"); heading.textContent = "Agent Report · technical evidence";
+      const report = document.createElement("pre"); report.textContent = JSON.stringify(job.report, null, 2);
+      evidence.append(heading, report);
+      $("jobSummary").append(evidence);
+    }
     renderEvents(job.progress || []);
     $("logTail").textContent = job.log_tail || "No render log yet.";
     $("previewArea").replaceChildren(); $("jobActions").replaceChildren();
