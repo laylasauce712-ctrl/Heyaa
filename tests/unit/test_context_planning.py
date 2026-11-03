@@ -482,6 +482,44 @@ class ContextPlanningTests(unittest.TestCase):
         self.assertAlmostEqual(measured[0]["audio_loudness_db"], -12.5)
         self.assertAlmostEqual(measured[0]["motion_score"], 3.25)
 
+    def test_silent_source_segments_are_measured_without_an_audio_filter(self):
+        logs = (
+            "frame:0 pts:0 pts_time:0.0\\n"
+            "lavfi.signalstats.YAVG=4.75\\n"
+        )
+        with patch(
+            "src.agent_director.subprocess.run",
+            return_value=subprocess.CompletedProcess(["ffmpeg"], 0, "", logs),
+        ) as mocked_run:
+            measured = renderer.measure_source_scene_features(
+                "silent-source.mp4",
+                [{"start_seconds": 0.0, "end_seconds": 1.0}],
+                include_audio=False,
+            )
+        command = mocked_run.call_args.args[0]
+        self.assertNotIn("-af", command)
+        self.assertNotIn("astats=metadata=1:reset=0", command)
+        self.assertFalse(measured[0]["audio_measurement_available"])
+        self.assertTrue(measured[0]["motion_measurement_available"])
+        self.assertAlmostEqual(measured[0]["motion_score"], 4.75)
+
+    def test_silent_source_ranking_uses_visual_motion_only(self):
+        ranked = renderer.rank_source_scene_segments([
+            {
+                "start_seconds": 0.0, "end_seconds": 2.0,
+                "audio_loudness_db": -120.0, "audio_measurement_available": False,
+                "motion_score": 2.0, "motion_measurement_available": True,
+            },
+            {
+                "start_seconds": 2.0, "end_seconds": 4.0,
+                "audio_loudness_db": -120.0, "audio_measurement_available": False,
+                "motion_score": 12.0, "motion_measurement_available": True,
+            },
+        ])
+        best = max(ranked, key=lambda item: item["selection_score"])
+        self.assertEqual(best["start_seconds"], 2.0)
+        self.assertEqual(best["selection_score_method"], "visual_motion_only")
+
     def test_ranked_multiscene_assignment_is_chronological_disjoint_and_has_no_forced_shift(self):
         fps = 10
         gap = 1
