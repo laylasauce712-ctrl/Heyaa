@@ -253,6 +253,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .output-list { display: grid; align-content: start; gap: 7px; }
 .empty-outputs { min-height: 120px; display: grid; place-items: center; color: var(--dim); font-size: 9px; text-align: center; border: 1px dashed rgba(169,181,211,.13); border-radius: 10px; padding: 15px; }
 .output-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 11px; border: 1px solid var(--line); border-radius: 10px; background: rgba(10,13,20,.35); }
+.preview-output-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+.output-preview-player { grid-column: 1 / -1; display: block; width: 100%; max-height: 260px; background: #05070b; border-radius: 8px; }
+
 .output-info { min-width: 0; display: grid; gap: 4px; }
 .output-info strong { color: #d9dfee; font-size: 9px; overflow-wrap: anywhere; }
 .output-info small { color: var(--dim); font-size: 8px; text-transform: capitalize; }
