@@ -85,6 +85,19 @@ class LocalStudioPathSafetyTests(unittest.TestCase):
             self.assertFalse(outputs[0]["can_approve"])
             self.assertEqual(outputs[0]["status"], "preview")
 
+    def test_video_byte_ranges_support_progressive_playback_and_seeking(self):
+        self.assertIsNone(local_app._parse_byte_range(None, 100))
+        self.assertEqual(local_app._parse_byte_range("bytes=0-9", 100), (0, 9))
+        self.assertEqual(local_app._parse_byte_range("bytes=90-", 100), (90, 99))
+        self.assertEqual(local_app._parse_byte_range("bytes=-10", 100), (90, 99))
+        self.assertEqual(local_app._parse_byte_range("bytes=95-200", 100), (95, 99))
+
+    def test_video_byte_ranges_reject_invalid_or_unsatisfiable_ranges(self):
+        for value in ("items=0-5", "bytes=-0", "bytes=100-", "bytes=8-2", "bytes=0-1,4-5"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "byte range"):
+                    local_app._parse_byte_range(value, 100)
+
     def test_upload_slot_aliases_map_to_real_media_kinds(self):
         self.assertEqual(local_app._normalize_upload_slot("source"), "video")
         self.assertEqual(local_app._normalize_upload_slot("video"), "video")
