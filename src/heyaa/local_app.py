@@ -372,10 +372,18 @@ def _validate_render_request(data: dict[str, Any]) -> tuple[list[str], dict[str,
     from src.heyaa.media_sources import validate_input_media_path, validate_media_file
 
     # Never silently substitute conventional sample media for an empty Studio selection.
-    video_path = validate_input_media_path(str(data.get("video_path") or ""), "video")
-    music_path = validate_input_media_path(str(data.get("music_path") or ""), "music")
-    reference_path = validate_input_media_path(
-        str(data.get("reference_path") or ""), "reference"
+    # URL-backed slots intentionally have no local path until the downloader resolves them.
+    video_path = (
+        "" if media_urls["video"]
+        else validate_input_media_path(str(data.get("video_path") or ""), "video")
+    )
+    music_path = (
+        "" if media_urls["music"]
+        else validate_input_media_path(str(data.get("music_path") or ""), "music")
+    )
+    reference_path = (
+        "" if media_urls["reference"]
+        else validate_input_media_path(str(data.get("reference_path") or ""), "reference")
     )
     if not media_urls["video"]:
         validate_media_file(video_path, "video")
