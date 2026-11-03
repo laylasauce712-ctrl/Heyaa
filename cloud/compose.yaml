@@ -49,8 +49,9 @@ services:
     build:
       context: ..
       dockerfile: cloud/Dockerfile.api
-    env_file: .env
     environment:
+      HEYAA_CLOUD_API_TOKEN: ${HEYAA_CLOUD_API_TOKEN:?Configure HEYAA_CLOUD_API_TOKEN}
+      HEYAA_ALLOWED_ORIGINS: ${HEYAA_ALLOWED_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080}
       HEYAA_DATABASE_URL: ${HEYAA_DATABASE_URL:?Configure HEYAA_DATABASE_URL}
       HEYAA_STORAGE_ENDPOINT_URL: http://minio:9000
       HEYAA_STORAGE_PUBLIC_ENDPOINT_URL: ${HEYAA_STORAGE_PUBLIC_ENDPOINT_URL:-http://localhost:9000}
@@ -80,7 +81,6 @@ services:
     build:
       context: ..
       dockerfile: cloud/Dockerfile.worker
-    env_file: .env
     environment:
       HEYAA_DATABASE_URL: ${HEYAA_DATABASE_URL:?Configure HEYAA_DATABASE_URL}
       HEYAA_STORAGE_ENDPOINT_URL: http://minio:9000
