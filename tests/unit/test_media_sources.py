@@ -19,8 +19,48 @@ from src.heyaa.media_sources import (
     validate_media_file,
     validate_media_url,
     validate_youtube_url,
+    validate_input_media_path,
     prepare_media_sources,
 )
+
+
+class LocalInputPathTests(unittest.TestCase):
+    def test_accepts_supported_media_inside_selected_input_root(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            video = root / "cut-a.mp4"
+            music = root / "beat.wav"
+            video.write_bytes(b"not-probed-here")
+            music.write_bytes(b"not-probed-here")
+            self.assertEqual(
+                validate_input_media_path(str(video), "video", input_root=root),
+                str(video.resolve()),
+            )
+            self.assertEqual(
+                validate_input_media_path(str(music), "music", input_root=root),
+                str(music.resolve()),
+            )
+
+    def test_rejects_local_media_outside_selected_input_root(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            input_dir = root / "input"
+            input_dir.mkdir()
+            outside = root / "private.mp4"
+            outside.write_bytes(b"x")
+            with self.assertRaisesRegex(MediaSourceError, "outside it are not allowed"):
+                validate_input_media_path(str(outside), "video", input_root=input_dir)
+
+    def test_rejects_wrong_extension_for_media_slot(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            image = root / "cover.png"
+            image.write_bytes(b"x")
+            with self.assertRaisesRegex(MediaSourceError, "Unsupported local video extension"):
+                validate_input_media_path(str(image), "video", input_root=root)
+
+    def test_empty_local_reference_means_no_reference(self):
+        self.assertEqual(validate_input_media_path("", "reference"), "")
 
 
 class TikTokUrlTests(unittest.TestCase):
