@@ -412,6 +412,13 @@ def _validate_render_request(data: dict[str, Any]) -> tuple[list[str], dict[str,
                      "reference_path": reference_path, "clip_count": clip_count}
 
 
+def _normalize_upload_slot(slot: str) -> str:
+    """Map the UI's source slot onto the renderer's video media kind."""
+    if slot not in {"source", "video", "music", "reference"}:
+        raise ValueError("Upload slot must be source, music or reference.")
+    return "video" if slot in {"source", "video"} else slot
+
+
 def _safe_artifact_path(value: str) -> Path:
     candidate = (ROOT / value).resolve(strict=True)
     allowed_roots = (RUNS_ROOT.resolve(), RELEASES_ROOT.resolve())
@@ -582,10 +589,7 @@ class StudioHandler(BaseHTTPRequestHandler):
 
     def _upload(self, query_string: str) -> None:
         query = parse_qs(query_string)
-        slot = query.get("slot", [""])[0]
-        if slot not in {"source", "video", "music", "reference"}:
-            raise ValueError("Upload slot must be source, music or reference.")
-        slot = {"source": "video", "video": "video", "music": "music", "reference": "reference"}[slot]
+        slot = _normalize_upload_slot(query.get("slot", [""])[0])
         raw_name = self.headers.get("X-Filename", "upload")
         filename = Path(raw_name.replace("\\", "/")).name
         suffix = Path(filename).suffix.lower()
