@@ -61,6 +61,23 @@ def storage_client():
     )
 
 
+def public_storage_client():
+    """S3 signer whose endpoint is reachable by the browser, not just Docker."""
+    endpoint = os.environ.get("HEYAA_STORAGE_PUBLIC_ENDPOINT_URL") or os.environ.get("HEYAA_STORAGE_ENDPOINT_URL") or None
+    required = ("HEYAA_STORAGE_BUCKET", "HEYAA_STORAGE_ACCESS_KEY", "HEYAA_STORAGE_SECRET_KEY")
+    missing = [key for key in required if not os.environ.get(key)]
+    if missing:
+        raise RuntimeError("Missing object-storage configuration: " + ", ".join(missing))
+    return boto3.client(
+        "s3",
+        endpoint_url=endpoint,
+        region_name=os.environ.get("HEYAA_STORAGE_REGION", "auto"),
+        aws_access_key_id=os.environ["HEYAA_STORAGE_ACCESS_KEY"],
+        aws_secret_access_key=os.environ["HEYAA_STORAGE_SECRET_KEY"],
+        config=Config(s3={"addressing_style": "path"}),
+    )
+
+
 def ensure_schema() -> None:
     with database_connection() as conn:
         conn.execute(
@@ -281,7 +298,7 @@ def create_upload(request: UploadRequest, owner_key: str = Depends(authenticate)
     suffix, max_bytes = _validate_upload(request)
     key = f"uploads/{owner_key}/{uuid4().hex}{suffix}"
     try:
-        s3 = storage_client()
+        s3 = public_storage_client()
         post = s3.generate_presigned_post(
             Bucket=os.environ["HEYAA_STORAGE_BUCKET"],
             Key=key,
@@ -426,7 +443,7 @@ def preview_job(job_id: UUID, owner_key: str = Depends(authenticate)):
     if row["status"] not in {"ready_for_review", "approved"} or not row.get("output_key"):
         raise HTTPException(status_code=409, detail="The render is not ready for review.")
     try:
-        url = storage_client().generate_presigned_url(
+        url = public_storage_client().generate_presigned_url(
             "get_object",
             Params={"Bucket": os.environ["HEYAA_STORAGE_BUCKET"], "Key": row["output_key"]},
             ExpiresIn=DOWNLOAD_TTL_SECONDS,
