@@ -19,8 +19,9 @@ jobs:
           sudo apt-get install -y ffmpeg
       - name: Validate renderer syntax and settings JSON
         run: |
-          python -m py_compile src/agent_director.py src/heyaa/agents.py src/heyaa/backends/contracts.py src/heyaa/backends/registry.py src/heyaa/backends/pyscenedetect.py src/heyaa/backends/shadow_compare.py scripts/scene_backend_worker.py tests/unit/test_pyscenedetect_backend.py src/heyaa/backends/beat_this.py scripts/beat_backend_worker.py tests/unit/test_beat_this_backend.py src/heyaa/backends/norfair.py scripts/norfair_backend_worker.py tests/unit/test_norfair_backend.py
+          python -m py_compile src/agent_director.py src/heyaa/agents.py src/heyaa/media_sources.py src/heyaa/local_app.py src/heyaa/release.py src/heyaa/backends/contracts.py src/heyaa/backends/registry.py src/heyaa/backends/pyscenedetect.py src/heyaa/backends/shadow_compare.py scripts/scene_backend_worker.py tests/unit/test_pyscenedetect_backend.py src/heyaa/backends/beat_this.py scripts/beat_backend_worker.py tests/unit/test_beat_this_backend.py src/heyaa/backends/norfair.py scripts/norfair_backend_worker.py tests/unit/test_norfair_backend.py tests/unit/test_local_studio.py
           python -m json.tool params.json > /dev/null
+          bash -n scripts/start_heyaa_ui.sh
           bash -n scripts/install_realesrgan_linux.sh
           bash -n scripts/prepare_local_worktree.sh
           bash -n scripts/install_scene_backend_linux.sh
