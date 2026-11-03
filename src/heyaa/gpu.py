@@ -74,18 +74,26 @@ def parse_vulkan_summary(output: str) -> dict[str, Any]:
         }
 
     hardware = [device for device in devices if not device["software"]]
-    if hardware:
+    # Real-ESRGAN's ncnn-vulkan invocation currently does not pass a GPU index.
+    # Treat the first enumerated device as the default target; a hardware device
+    # later in the list must not hide llvmpipe at GPU0.
+    if not devices[0]["software"]:
         return {
             "status": "hardware_available",
-            "reason": f"{len(hardware)} hardware-backed Vulkan device(s) detected",
+            "reason": f"Default Vulkan device is hardware-backed: {devices[0]['device_name']}",
             "devices": devices,
         }
     names = ", ".join(device["device_name"] for device in devices)
-    return {
-        "status": "software_only",
-        "reason": f"Vulkan exposes only CPU/software device(s): {names}",
-        "devices": devices,
-    }
+    if hardware:
+        reason = (
+            f"Default Vulkan device is software-only ({devices[0]['device_name']}); "
+            "hardware devices exist later in the list but are not explicitly selected"
+        )
+        status = "software_default"
+    else:
+        reason = f"Vulkan exposes only CPU/software device(s): {names}"
+        status = "software_only"
+    return {"status": status, "reason": reason, "devices": devices}
 
 
 @lru_cache(maxsize=1)
