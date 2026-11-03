@@ -6,7 +6,6 @@ available. This probe deliberately distinguishes hardware from CPU drivers.
 """
 from __future__ import annotations
 
-import re
 import shutil
 import subprocess
 from functools import lru_cache
@@ -27,20 +26,29 @@ def parse_vulkan_summary(output: str) -> dict[str, Any]:
     if not isinstance(output, str) or not output.strip():
         return {"status": "no_device", "reason": "vulkaninfo returned no device summary", "devices": []}
 
-    starts = list(re.finditer(r"(?m)^GPU[0-9]+:[ \\t]*$", output))
-    blocks: list[str] = []
-    if starts:
-        for index, match in enumerate(starts):
-            end = starts[index + 1].start() if index + 1 < len(starts) else len(output)
-            blocks.append(output[match.end():end])
-    elif re.search(r"(?m)^[ \\t]*deviceName[ \\t]*=", output):
-        blocks = [output]
+    blocks: list[list[str]] = []
+    current: list[str] | None = None
+    for line in output.splitlines():
+        label = line.strip()
+        if label.startswith("GPU") and label.endswith(":") and label[3:-1].isdigit():
+            if current is not None:
+                blocks.append(current)
+            current = []
+        elif current is not None:
+            current.append(line)
+    if current is not None:
+        blocks.append(current)
+    if not blocks and any(line.strip().startswith("deviceName") for line in output.splitlines()):
+        blocks = [output.splitlines()]
 
     devices = []
     for block in blocks:
         def field(name: str) -> str | None:
-            match = re.search(rf"(?m)^[ \\t]*{re.escape(name)}[ \\t]*=[ \\t]*(.*?)[ \\t]*$", block)
-            return match.group(1).strip() if match else None
+            for line in block:
+                key, separator, value = line.partition("=")
+                if separator and key.strip() == name:
+                    return value.strip()
+            return None
 
         name = field("deviceName") or "unnamed Vulkan device"
         device_type = field("deviceType") or "unknown"
