@@ -4417,10 +4417,10 @@ def main(argv=None):
         )
         audio_parts.append(
             "[musicout][impact_sfx]amix=inputs=2:duration=first:dropout_transition=0,"
-            "alimiter=limit=0.65:level=0[aout]"
+            "aresample=192000,alimiter=limit=0.75:level=0:latency=1,aresample=48000[aout]"
         )
     else:
-        audio_parts.append("[musicout]alimiter=limit=0.65:level=0[aout]")
+        audio_parts.append("[musicout]aresample=192000,alimiter=limit=0.75:level=0:latency=1,aresample=48000[aout]")
     filter_graph += ";" + ";".join(audio_parts)
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", joined]
     if audio_start_seconds > 0:
