@@ -254,6 +254,7 @@ def _public_job(row: dict[str, Any]) -> dict[str, Any]:
         "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
         "updated_at": row["updated_at"].isoformat() if row.get("updated_at") else None,
         "progress": row.get("progress") or [],
+        "log_tail": row.get("log_tail") or "",
         "error": row.get("error"),
         "report": row.get("report"),
         "has_output": bool(row.get("output_key")),
@@ -347,7 +348,7 @@ def list_jobs(owner_key: str = Depends(authenticate)):
     with database_connection() as conn:
         rows = conn.execute(
             """
-            SELECT job_id, status, progress, error, report, output_key, created_at, updated_at
+            SELECT job_id, status, progress, log_tail, error, report, output_key, created_at, updated_at
             FROM heyaa_cloud_jobs
             WHERE owner_key = %s
             ORDER BY created_at DESC
@@ -363,7 +364,7 @@ def get_job(job_id: UUID, owner_key: str = Depends(authenticate)):
     with database_connection() as conn:
         row = conn.execute(
             """
-            SELECT job_id, status, progress, error, report, output_key, created_at, updated_at
+            SELECT job_id, status, progress, log_tail, error, report, output_key, created_at, updated_at
             FROM heyaa_cloud_jobs WHERE job_id = %s AND owner_key = %s
             """,
             (job_id, owner_key),
