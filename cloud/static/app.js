@@ -25,13 +25,12 @@
     $("createJob").textContent = busy ? (label || "Working…") : "Create edit →";
   }
   function extMime(file, slot) {
-    if (file.type) return file.type;
     const ext = file.name.split(".").pop().toLowerCase();
     const map = {
       mp4:"video/mp4",mov:"video/quicktime",mkv:"video/x-matroska",webm:"video/webm",m4v:"video/x-m4v",
       mp3:"audio/mpeg",wav:"audio/wav",m4a:"audio/mp4",aac:"audio/aac",flac:"audio/flac",ogg:"audio/ogg",opus:"audio/opus"
     };
-    return map[ext] || (slot === "music" ? "audio/mpeg" : "video/mp4");
+    return map[ext] || file.type || (slot === "music" ? "audio/mpeg" : "video/mp4");
   }
   function xhrUpload(url, fields, file, onProgress) {
     return new Promise((resolve, reject) => {
