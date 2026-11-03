@@ -323,6 +323,17 @@ function renderOutputs(state) {
     const meta = document.createElement("small");
     meta.textContent = `${output.size_label} · ${output.status.replaceAll("_", " ")}`;
     info.append(title, meta);
+    if (output.is_preview) {
+      const player = document.createElement("video");
+      player.className = "output-preview-player";
+      player.src = `/api/artifact?path=${encodeURIComponent(output.path)}`;
+      player.controls = true;
+      player.preload = "metadata";
+      player.playsInline = true;
+      player.setAttribute("aria-label", "Quick preview render");
+      card.classList.add("preview-output-card");
+      card.append(player);
+    }
     const actions = document.createElement("div");
     actions.className = "output-actions";
     const download = document.createElement("a");
