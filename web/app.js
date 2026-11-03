@@ -67,29 +67,21 @@ function formatSize(bytes) {
 function fillMediaSelect(select, slot, media, selectedPath = "") {
   const files = media.filter((file) => file.slot === slot);
   select.replaceChildren();
-  if (slot === "reference") {
-    const none = document.createElement("option");
-    none.value = "";
-    none.textContent = "No reference selected";
-    select.append(none);
-  }
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = slot === "reference"
+    ? "No reference selected"
+    : (slot === "video" ? "Select source video" : "Select soundtrack");
+  select.append(placeholder);
   for (const file of files) {
     const option = document.createElement("option");
     option.value = file.path;
     option.textContent = file.name;
     select.append(option);
   }
-  if (selectedPath && files.some((file) => file.path === selectedPath)) {
-    select.value = selectedPath;
-  } else if (slot !== "reference") {
-    const conventional = slot === "video" ? "input/test_video.mp4" : "input/phonk.mp3";
-    select.value = files.some((file) => file.path === conventional)
-      ? conventional
-      : (files[0]?.path || "");
-  } else {
-    select.value = files.some((file) => file.path === "input/reference.mp4")
-      ? "input/reference.mp4" : "";
-  }
+  // Preserve an actual prior choice; never auto-select a sample or arbitrary file.
+  select.value = selectedPath && files.some((file) => file.path === selectedPath)
+    ? selectedPath : "";
   return files.find((file) => file.path === select.value) || null;
 }
 
@@ -431,8 +423,14 @@ async function startRender(preview = false) {
   $("#busy-title").textContent = preview ? "Building quick preview" : "Starting your render";
   $("#busy-copy").textContent = "Saving local options and validating selected media.";
   try {
-    await saveSettings();
     const request = renderRequest(preview);
+    if (!request.video_path && !request.video_url) {
+      throw new Error("Select a source video or provide a video URL before rendering.");
+    }
+    if (!request.music_path && !request.music_url) {
+      throw new Error("Select a soundtrack or provide a music URL before rendering.");
+    }
+    await saveSettings();
     if (!preview && els.ai.checked && !currentState?.ai_upscale?.available) {
       throw new Error("Real-ESRGAN assets are not installed. Turn off AI Restore or install the configured model first.");
     }
