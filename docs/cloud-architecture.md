@@ -1,13 +1,13 @@
 # Heyaa cloud architecture and deployment plan
 
-Status: architecture baseline only. This document does not claim that Heyaa is deployed to a cloud host.
+Status: first cloud foundation implemented on `feat/cloud-studio-foundation`; local Compose stack and responsive private-beta client are in place. No public hosting, managed database, cloud bucket or GPU worker fleet has been provisioned.
 
 ## Current verified architecture
 
 - GitHub stores the source code and runs GitHub Actions for automated tests.
 - The current Studio is a local Python HTTP server. It binds to 127.0.0.1:8765, reads local input/ files, starts the existing FFmpeg renderer, and writes to local output/.
 - GitHub Actions is not a persistent render server and does not keep a GPU worker available for user jobs.
-- The current Studio is intentionally local-only. Do not expose it directly to the public internet or change its bind address as a shortcut.
+- The original developer Studio remains local-only. A separate cloud API now serves a responsive phone-first Studio from the API origin; it is still a local/private-beta Compose stack, not a public deployment.
 - Real-ESRGAN asset checks previously proved only that the executable and model files existed. They did not prove a hardware-backed Vulkan device was available. AI preflight now distinguishes hardware Vulkan from CPU software drivers and blocks the known llvmpipe failure by default. It also refuses a mixed device list when llvmpipe is the first/default device and a hardware GPU appears only later, because the current renderer does not explicitly select a Vulkan device index.
 
 ## Target phone-first architecture
@@ -22,7 +22,7 @@ Status: architecture baseline only. This document does not claim that Heyaa is d
 
 ## Security and reliability requirements
 
-- Require authenticated API access; never ship a server token inside browser JavaScript.
+- Require authenticated API access. The current private-beta page asks the operator to enter a shared bearer token and holds it only in page memory; this is a development bootstrap, not production user authentication. Production must replace it with per-user OIDC/session auth and must not embed a service token in browser assets.
 - Scope every job and object key to an authenticated owner. A job ID alone is not authorization.
 - Use short-lived presigned object URLs and enforce slot-specific file extensions, content types and size limits before job submission.
 - Accept platform URLs only through the existing YouTube/TikTok validation path. Do not let the cloud worker fetch arbitrary private-network URLs; direct URL downloads need an explicit public-host/SSRF policy.
@@ -39,20 +39,23 @@ Status: architecture baseline only. This document does not claim that Heyaa is d
 - Detect hardware-backed Vulkan before AI processing, preventing the observed 600-second llvmpipe timeout.
 - Keep the local Studio and renderer working while the cloud path is developed independently.
 
-### Phase 1 — cloud control plane
-- Add a containerized API with health checks, authentication, strict request validation and a persistent job contract.
-- Add PostgreSQL-backed job claiming/status/events and S3-compatible presigned upload/download support.
-- Add API tests for authentication, object ownership, upload constraints and job state transitions.
+### Phase 1 — cloud control plane (implemented foundation)
+- FastAPI container, health check, shared private-beta bearer auth, strict upload/URL validation and durable job contract.
+- PostgreSQL-backed job claiming/status/events and S3-compatible presigned upload/download support.
+- API tests cover authentication, owner-scoped object keys, upload metadata and URL constraints.
+- Remaining before public beta: real user identity/OIDC, rate limits, per-user quota/concurrency and retention policies.
 
-### Phase 2 — isolated render worker
-- Package the existing renderer in a worker image.
-- Pull only the selected job's private assets into an isolated workspace.
-- Report actual EDL/agent/progress events to the job record.
-- Upload the completed render and Agent Report; expose it as ready for human review, not automatically approved.
+### Phase 2 — isolated render worker (implemented foundation)
+- Package the existing renderer, FFmpeg and yt-dlp in a worker image.
+- Pull only selected job assets into a temporary isolated workspace.
+- Report renderer progress events and a bounded log tail to the job record; maintain a worker lease and support cancellation.
+- Upload a technically approved render and Agent Report to private storage; expose it as ready for human review, not automatically approved.
+- AI is off by default and requires a hardware-backed Vulkan worker. Container build/runtime GPU passthrough still needs host-specific verification.
 
-### Phase 3 — phone-first UI
-- Replace local-only API calls with a cloud API client while keeping the same visual Studio.
-- Add sign-in, upload progress, job list, live Agent Room events, preview/review and download.
+### Phase 3 — phone-first UI (first slice implemented)
+- Responsive client is served by the cloud API and uses the same-origin API.
+- It supports private file uploads, YouTube/TikTok links, job list/status, Agent Room events, render-log inspection, preview, explicit approval and approved download.
+- The client clears its shared development token on refresh; production per-user sign-in/session auth and multi-user isolation remain future work.
 - Preserve local mode as a developer/testing option.
 
 ### Phase 4 — hosting and release
