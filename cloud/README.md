@@ -35,7 +35,7 @@ origin in both `HEYAA_ALLOWED_ORIGINS` and `cloud/minio-cors.xml`, and use the
 Windows firewall to restrict access. The current web UI is not deployed yet;
 these settings prepare the storage endpoint for the future browser client.
 
-The responsive Studio is served at the API root. It asks for the bearer token each session and keeps it in page memory only (not localStorage or a cookie). The API uses one shared bearer token in this first private-beta slice. This is a single-tenant/developer credential, not a complete user-account system. Do not distribute it to other users or expose this Compose stack to the internet; production requires real account authentication/OIDC.
+The responsive Studio is served at the API root. It asks for the bearer token each session and keeps it in page memory only (not localStorage or a cookie). The API uses one shared bearer token in this first private-beta slice. This is a single-tenant/developer credential, not a complete user-account system. Compose injects this token into the API only; it is not passed to the render worker. Do not distribute it to other users or expose this stack to the internet; production requires real account authentication/OIDC.
 
 ## API flow
 
