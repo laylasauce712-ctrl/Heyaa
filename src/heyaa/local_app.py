@@ -426,7 +426,7 @@ def _parse_byte_range(value: str | None, size: int) -> tuple[int, int] | None:
     """Parse one HTTP bytes range; return inclusive bounds or None for a full response."""
     if value is None:
         return None
-    match = re.fullmatch(r"bytes=(\\d*)-(\\d*)", value.strip())
+    match = re.fullmatch(r"bytes=(\d*)-(\d*)", value.strip())
     if not match or (not match.group(1) and not match.group(2)) or size <= 0:
         raise ValueError("Unsupported or unsatisfiable byte range.")
     left, right = match.groups()
