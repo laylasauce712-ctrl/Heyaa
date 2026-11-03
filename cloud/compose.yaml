@@ -23,8 +23,8 @@ services:
     volumes:
       - heyaa-media:/data
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "${HEYAA_STORAGE_BIND_ADDRESS:-127.0.0.1}:9000:9000"
+      - "${HEYAA_STORAGE_BIND_ADDRESS:-127.0.0.1}:9001:9001"
     restart: unless-stopped
 
   minio-init:
@@ -59,7 +59,16 @@ services:
       HEYAA_STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:?Configure MINIO_ROOT_USER}
       HEYAA_STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?Configure MINIO_ROOT_PASSWORD}
     ports:
-      - "8080:8080"
+      - "${HEYAA_API_BIND_ADDRESS:-127.0.0.1}:8080:8080"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 12
     depends_on:
       db:
         condition: service_healthy
@@ -85,6 +94,8 @@ services:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
+      api:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
