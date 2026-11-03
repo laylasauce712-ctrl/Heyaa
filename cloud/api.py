@@ -203,7 +203,8 @@ async def apply_security_headers(request, call_next):
         "img-src 'self' data:; "
         "object-src 'none'; "
         "base-uri 'self'; "
-        "frame-ancestors 'none'"
+        "frame-ancestors 'none'; "
+        "form-action 'self'"
     )
     response.headers["Content-Security-Policy"] = policy
     response.headers["X-Content-Type-Options"] = "nosniff"
