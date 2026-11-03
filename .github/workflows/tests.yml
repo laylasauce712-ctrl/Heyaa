@@ -24,6 +24,7 @@ jobs:
           python -m py_compile src/agent_director.py src/heyaa/agents.py src/heyaa/media_sources.py src/heyaa/local_app.py src/heyaa/release.py src/heyaa/gpu.py src/heyaa/backends/contracts.py src/heyaa/backends/registry.py src/heyaa/backends/pyscenedetect.py src/heyaa/backends/shadow_compare.py scripts/scene_backend_worker.py tests/unit/test_pyscenedetect_backend.py src/heyaa/backends/beat_this.py scripts/beat_backend_worker.py tests/unit/test_beat_this_backend.py src/heyaa/backends/norfair.py scripts/norfair_backend_worker.py tests/unit/test_norfair_backend.py tests/unit/test_local_studio.py cloud/api.py cloud/contracts.py cloud/worker.py tests/unit/test_cloud_contracts.py tests/unit/test_cloud_api.py tests/unit/test_cloud_worker.py tests/unit/test_gpu_probe.py
           python -m json.tool params.json > /dev/null
           node --check web/app.js
+          node --check cloud/static/app.js
           cp cloud/.env.example cloud/.env
           docker compose --env-file cloud/.env -f cloud/compose.yaml config --quiet
           rm -f cloud/.env
