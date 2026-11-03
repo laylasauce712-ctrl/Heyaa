@@ -113,7 +113,7 @@ class LocalStudioPathSafetyTests(unittest.TestCase):
             patch.object(local_app, "_load_profile", return_value=(config, "params.json")),
             patch(
                 "src.heyaa.media_sources.validate_input_media_path",
-                side_effect=lambda value, kind: f"/project/{value}",
+                side_effect=lambda value, kind: f"/project/{value}" if value else "",
             ),
             patch("src.heyaa.media_sources.validate_media_file"),
         ):
@@ -129,11 +129,15 @@ class LocalStudioPathSafetyTests(unittest.TestCase):
         self.assertEqual(command[command.index("--clip-count") + 1], "16")
         self.assertEqual(command[command.index("--video-path") + 1], "/project/input/source-a.mp4")
         self.assertEqual(command[command.index("--music-path") + 1], "/project/input/beat-a.mp3")
-        self.assertEqual(command[command.index("--reference-path") + 1], "/project/")
+        self.assertEqual(command[command.index("--reference-path") + 1], "")
 
-    def test_render_request_rejects_legacy_arbitrary_style_or_path_options(self):
-        with self.assertRaisesRegex(ValueError, "between 1 and 5 distinct edits"):
-            local_app._validate_render_request({"edits": 6})
+    def test_render_request_rejects_out_of_range_edit_count_before_launch(self):
+        with (
+            patch("src.heyaa.media_sources.validate_input_media_path", side_effect=lambda value, kind: f"/project/{value}" if value else ""),
+            patch("src.heyaa.media_sources.validate_media_file"),
+        ):
+            with self.assertRaisesRegex(ValueError, "between 1 and 5 distinct edits"):
+                local_app._validate_render_request({"edits": 6})
 
 
 if __name__ == "__main__":
