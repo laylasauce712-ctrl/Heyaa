@@ -67,6 +67,24 @@ class LocalStudioSettingsTests(unittest.TestCase):
 
 
 class LocalStudioPathSafetyTests(unittest.TestCase):
+    def test_quick_preview_is_listed_as_playable_but_never_approvable(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runs = root / "output" / "runs"
+            run_dir = runs / "run-preview"
+            run_dir.mkdir(parents=True)
+            preview = run_dir / "preview.mp4"
+            preview.write_bytes(b"preview")
+            (run_dir / "agent_report.json").write_text(json.dumps({
+                "status": "ready_for_human_review",
+            }), encoding="utf-8")
+            with patch.object(local_app, "RUNS_ROOT", runs):
+                outputs = local_app._run_outputs(run_dir)
+            self.assertEqual(len(outputs), 1)
+            self.assertTrue(outputs[0]["is_preview"])
+            self.assertFalse(outputs[0]["can_approve"])
+            self.assertEqual(outputs[0]["status"], "preview")
+
     def test_upload_slot_aliases_map_to_real_media_kinds(self):
         self.assertEqual(local_app._normalize_upload_slot("source"), "video")
         self.assertEqual(local_app._normalize_upload_slot("video"), "video")
