@@ -331,30 +331,77 @@ def run_renderer(job: dict[str, Any], worker_id: str, storage: Any) -> None:
             if terminating_for_cancel:
                 finish_job(job_id, "cancelled", error="Cancelled by user.")
                 return
+
+            bucket = os.environ["HEYAA_STORAGE_BUCKET"]
+            run_root = workspace / "output" / "runs"
+            reports = sorted(
+                run_root.rglob("agent_report.json") if run_root.exists() else [],
+                key=lambda path: path.stat().st_mtime,
+                reverse=True,
+            )
+            report_path = reports[0] if reports else None
+            report = None
+            report_key = None
+            if report_path and report_path.is_file():
+                report = json.loads(report_path.read_text(encoding="utf-8"))
+                report_key = f"reports/{owner_key}/{job_id}/agent_report.json"
+                storage.upload_file(
+                    str(report_path), bucket, report_key,
+                    ExtraArgs={"ContentType": "application/json"},
+                )
+
             if return_code != 0:
-                raise RuntimeError(f"Renderer exited with code {return_code}.")
+                finish_job(
+                    job_id,
+                    "failed",
+                    error=f"Renderer exited with code {return_code}.",
+                    report_key=report_key,
+                    report=report,
+                )
+                return
+
             outputs = sorted(
-                (workspace / "output" / "runs").rglob("final_phonk_20s.mp4"),
+                run_root.rglob("final_phonk_20s.mp4") if run_root.exists() else [],
                 key=lambda path: path.stat().st_mtime,
                 reverse=True,
             )
             if not outputs:
-                raise RuntimeError("Renderer exited successfully but no final_phonk_20s.mp4 was created.")
+                finish_job(
+                    job_id,
+                    "failed",
+                    error="Renderer exited successfully but no final_phonk_20s.mp4 was created.",
+                    report_key=report_key,
+                    report=report,
+                )
+                return
             video_path = outputs[0]
             report_path = video_path.parent / "agent_report.json"
             if not report_path.is_file():
-                raise RuntimeError("Final render has no Agent Report; it cannot be marked ready for review.")
+                finish_job(job_id, "failed", error="Final render has no Agent Report; it cannot be marked ready for review.")
+                return
             report = json.loads(report_path.read_text(encoding="utf-8"))
             if report.get("status") != "ready_for_human_review":
-                raise RuntimeError(
-                    "The render did not pass the required Director gates: "
-                    + str(report.get("status") or "unknown report status")
+                if report_key is None or report_path != reports[0]:
+                    report_key = f"reports/{owner_key}/{job_id}/agent_report.json"
+                    storage.upload_file(
+                        str(report_path), bucket, report_key,
+                        ExtraArgs={"ContentType": "application/json"},
+                    )
+                finish_job(
+                    job_id,
+                    "failed",
+                    error="The render did not pass the required Director gates: "
+                          + str(report.get("status") or "unknown report status"),
+                    report_key=report_key,
+                    report=report,
                 )
+                return
+
             output_key = f"outputs/{owner_key}/{job_id}/final_phonk_20s.mp4"
-            report_key = f"outputs/{owner_key}/{job_id}/agent_report.json"
-            bucket = os.environ["HEYAA_STORAGE_BUCKET"]
+            report_key = f"reports/{owner_key}/{job_id}/agent_report.json"
             storage.upload_file(str(video_path), bucket, output_key, ExtraArgs={"ContentType": "video/mp4"})
-            storage.upload_file(str(report_path), bucket, report_key, ExtraArgs={"ContentType": "application/json"})
+            if report_path != (reports[0] if reports else None):
+                storage.upload_file(str(report_path), bucket, report_key, ExtraArgs={"ContentType": "application/json"})
             finish_job(
                 job_id,
                 "ready_for_review",
