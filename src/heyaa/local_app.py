@@ -201,8 +201,10 @@ def _run_outputs(run_dir: Path) -> list[dict[str, Any]]:
     outputs = []
     if not run_dir.is_dir():
         return outputs
-    for path in run_dir.rglob("final_phonk*.mp4"):
+    for path in run_dir.rglob("*.mp4"):
         if not path.is_file() or path.is_symlink():
+            continue
+        if path.name != "preview.mp4" and not path.name.startswith("final_phonk"):
             continue
         try:
             relative = path.resolve().relative_to(RUNS_ROOT.resolve())
