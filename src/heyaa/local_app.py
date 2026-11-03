@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import mimetypes
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -421,6 +422,26 @@ def _normalize_upload_slot(slot: str) -> str:
     return "video" if slot in {"source", "video"} else slot
 
 
+def _parse_byte_range(value: str | None, size: int) -> tuple[int, int] | None:
+    """Parse one HTTP bytes range; return inclusive bounds or None for a full response."""
+    if value is None:
+        return None
+    match = re.fullmatch(r"bytes=(\\d*)-(\\d*)", value.strip())
+    if not match or (not match.group(1) and not match.group(2)) or size <= 0:
+        raise ValueError("Unsupported or unsatisfiable byte range.")
+    left, right = match.groups()
+    if not left:
+        suffix = int(right)
+        if suffix <= 0:
+            raise ValueError("Unsupported or unsatisfiable byte range.")
+        return max(0, size - suffix), size - 1
+    start = int(left)
+    end = int(right) if right else size - 1
+    if start >= size or end < start:
+        raise ValueError("Unsupported or unsatisfiable byte range.")
+    return start, min(end, size - 1)
+
+
 def _safe_artifact_path(value: str) -> Path:
     candidate = (ROOT / value).resolve(strict=True)
     allowed_roots = (RUNS_ROOT.resolve(), RELEASES_ROOT.resolve())
@@ -509,14 +530,36 @@ class StudioHandler(BaseHTTPRequestHandler):
             content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
             try:
                 size = path.stat().st_size
-                self.send_response(200)
+                try:
+                    selected_range = _parse_byte_range(self.headers.get("Range"), size)
+                except ValueError:
+                    self.send_response(416)
+                    self.send_header("Content-Range", f"bytes */{size}")
+                    self.send_header("Content-Length", "0")
+                    self.send_header("Accept-Ranges", "bytes")
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    return
+                start, end = selected_range if selected_range else (0, max(0, size - 1))
+                length = max(0, end - start + 1)
+                self.send_response(206 if selected_range else 200)
                 self.send_header("Content-Type", content_type)
-                self.send_header("Content-Length", str(size))
+                self.send_header("Content-Length", str(length))
+                self.send_header("Accept-Ranges", "bytes")
+                if selected_range:
+                    self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
                 self.send_header("Cache-Control", "no-store")
                 self.send_header("X-Content-Type-Options", "nosniff")
                 self.end_headers()
                 with path.open("rb") as handle:
-                    shutil.copyfileobj(handle, self.wfile, length=1024 * 1024)
+                    handle.seek(start)
+                    remaining = length
+                    while remaining > 0:
+                        chunk = handle.read(min(1024 * 1024, remaining))
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                        remaining -= len(chunk)
             except OSError:
                 return
             return
