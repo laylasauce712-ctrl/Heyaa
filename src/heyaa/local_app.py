@@ -43,11 +43,6 @@ ALLOWED_EXTENSIONS = {
     "music": {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus"},
     "reference": {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"},
 }
-DEFAULT_MEDIA = {
-    "video": "input/test_video.mp4",
-    "music": "input/phonk.mp3",
-    "reference": "input/reference.mp4",
-}
 EDIT_KEYS = {
     "duration_seconds", "speed", "layout_mode", "mirror_enabled",
     "reference_pacing", "subject_lock_enabled", "ending_skull_enabled",
