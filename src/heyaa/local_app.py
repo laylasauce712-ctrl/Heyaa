@@ -122,26 +122,31 @@ def _save_profile(changes: dict[str, Any]) -> dict[str, Any]:
 
 
 def _media_files() -> list[dict[str, Any]]:
+    """List media in every compatible Studio slot; video files may be source or reference."""
     INPUT_ROOT.mkdir(parents=True, exist_ok=True)
     result = []
     for path in INPUT_ROOT.iterdir():
         if path.is_symlink() or not path.is_file():
             continue
         suffix = path.suffix.lower()
-        slot = next((kind for kind, extensions in ALLOWED_EXTENSIONS.items() if suffix in extensions), None)
-        if slot is None:
+        slots = [
+            kind for kind in ("video", "music", "reference")
+            if suffix in ALLOWED_EXTENSIONS[kind]
+        ]
+        if not slots:
             continue
         try:
             size = path.stat().st_size
         except OSError:
             continue
-        result.append({
-            "name": path.name,
-            "path": f"input/{path.name}",
-            "slot": slot,
-            "size_bytes": size,
-            "size_label": _format_bytes(size),
-        })
+        for slot in slots:
+            result.append({
+                "name": path.name,
+                "path": f"input/{path.name}",
+                "slot": slot,
+                "size_bytes": size,
+                "size_label": _format_bytes(size),
+            })
     return sorted(result, key=lambda x: (x["slot"], x["name"].lower()))
 
 
@@ -366,12 +371,9 @@ def _validate_render_request(data: dict[str, Any]) -> tuple[list[str], dict[str,
 
     from src.heyaa.media_sources import validate_input_media_path, validate_media_file
 
-    video_path = validate_input_media_path(
-        str(data.get("video_path") or DEFAULT_MEDIA["video"]), "video"
-    )
-    music_path = validate_input_media_path(
-        str(data.get("music_path") or DEFAULT_MEDIA["music"]), "music"
-    )
+    # Never silently substitute conventional sample media for an empty Studio selection.
+    video_path = validate_input_media_path(str(data.get("video_path") or ""), "video")
+    music_path = validate_input_media_path(str(data.get("music_path") or ""), "music")
     reference_path = validate_input_media_path(
         str(data.get("reference_path") or ""), "reference"
     )
