@@ -51,7 +51,8 @@
           <label for="layout">Vertical framing</label>
           <select id="layout"><option value="fill">Fill — full-screen crop</option><option value="blur_fit">Blur fit — preserve full frame</option></select>
           <p class="hint">The renderer uses the current project profile for duration, speed, freeze and audio settings.</p>
-          <p class="hint">AI restoration is enabled only on a worker that has a verified hardware-backed Vulkan GPU.</p>
+          <label class="hint" for="aiUpscale"><input id="aiUpscale" type="checkbox" disabled> AI Restore (hardware GPU worker only)</label>
+          <p id="aiHint" class="hint">Checking whether this deployment has an approved GPU worker…</p>
         </div>
       </div>
       <div class="card">
