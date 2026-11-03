@@ -51,7 +51,7 @@ All job and upload object keys are scoped to the same bearer-token owner. The fi
 
 ## GPU worker configuration
 
-The default local Compose stack sets `HEYAA_ENABLE_AI_UPSCALE=0`. Do not enable it on CPU-only Vulkan (llvmpipe/lavapipe). A real cloud GPU worker must have its host driver/device exposed to the container, the Real-ESRGAN model files, and a successful `vulkaninfo --summary` preflight. The ncnn-vulkan binary is installed in the worker image, but its presence alone does not mean hardware acceleration is available.
+The default local Compose stack sets `HEYAA_ENABLE_AI_UPSCALE=0`, so the phone UI disables the AI Restore toggle. Set it to `1` only after both the API and worker are configured for a GPU worker. The worker independently verifies that a hardware-backed Vulkan device is its default device; a setting alone cannot bypass that check. A real cloud GPU worker must have its host driver/device exposed to the container, the Real-ESRGAN model files, and a successful `vulkaninfo --summary` preflight. The ncnn-vulkan binary is installed in the worker image, but its presence alone does not mean hardware acceleration is available.
 
 ## Current limitations
 
