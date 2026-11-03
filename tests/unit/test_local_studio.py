@@ -101,6 +101,25 @@ class LocalStudioMediaSelectionTests(unittest.TestCase):
                 })
 
 
+    def test_url_backed_source_and_music_do_not_require_local_paths(self):
+        config, _ = local_app._load_profile()
+        with (
+            patch.object(local_app, "_load_profile", return_value=(config, "params.json")),
+            patch("src.heyaa.media_sources.validate_media_url"),
+            patch("src.heyaa.media_sources.validate_media_file"),
+        ):
+            command, _ = local_app._validate_render_request({
+                "video_path": "",
+                "music_path": "",
+                "video_url": "https://cdn.example.test/source.mp4",
+                "music_url": "https://cdn.example.test/music.mp3",
+            })
+        self.assertIn("--video-url", command)
+        self.assertIn("--music-url", command)
+        self.assertEqual(command[command.index("--video-url") + 1], "https://cdn.example.test/source.mp4")
+        self.assertEqual(command[command.index("--music-url") + 1], "https://cdn.example.test/music.mp3")
+
+
 class LocalStudioPathSafetyTests(unittest.TestCase):
     def test_quick_preview_is_listed_as_playable_but_never_approvable(self):
         with tempfile.TemporaryDirectory() as temporary:
