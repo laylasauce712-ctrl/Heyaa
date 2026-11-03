@@ -100,6 +100,10 @@ jobs:
               report["metadata"]["downbeat_count"], "downbeats."
           )
           PY
+      - name: Build cloud API container image
+        run: docker build --pull -f cloud/Dockerfile.api -t heyaa-cloud-api:ci .
+      - name: Build isolated render worker container image
+        run: docker build --pull -f cloud/Dockerfile.worker -t heyaa-cloud-worker:ci .
       - name: Verify isolated Norfair HOG association worker
         run: |
           set -euo pipefail
