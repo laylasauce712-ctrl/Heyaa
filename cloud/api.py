@@ -488,7 +488,12 @@ def preview_job(job_id: UUID, owner_key: str = Depends(authenticate)):
     try:
         url = public_storage_client().generate_presigned_url(
             "get_object",
-            Params={"Bucket": os.environ["HEYAA_STORAGE_BUCKET"], "Key": row["output_key"]},
+            Params={
+                "Bucket": os.environ["HEYAA_STORAGE_BUCKET"],
+                "Key": row["output_key"],
+                "ResponseContentType": "video/mp4",
+                "ResponseContentDisposition": 'attachment; filename="Heyaa-final.mp4"',
+            },
             ExpiresIn=DOWNLOAD_TTL_SECONDS,
         )
     except Exception:
