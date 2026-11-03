@@ -26,11 +26,14 @@ OpenAPI: http://localhost:8080/docs
 MinIO S3 endpoint: http://localhost:9000
 MinIO console: http://localhost:9001
 
-For uploads from a phone on the same Wi-Fi, change `HEYAA_STORAGE_PUBLIC_ENDPOINT_URL`
-in `cloud/.env` to the laptop's reachable LAN address (for example
-`http://192.168.1.20:9000`) and allow the phone-facing web origin in
-`cloud/minio-cors.xml`. The current web UI is not deployed yet; this is the
-storage endpoint required by the future browser client.
+The API and MinIO ports bind to `127.0.0.1` by default. For deliberate LAN testing,
+set `HEYAA_API_BIND_ADDRESS=0.0.0.0` and
+`HEYAA_STORAGE_BIND_ADDRESS=0.0.0.0`, then set
+`HEYAA_STORAGE_PUBLIC_ENDPOINT_URL` to the laptop's reachable LAN address
+(for example `http://192.168.1.20:9000`). Allow only the phone-facing web
+origin in both `HEYAA_ALLOWED_ORIGINS` and `cloud/minio-cors.xml`, and use the
+Windows firewall to restrict access. The current web UI is not deployed yet;
+these settings prepare the storage endpoint for the future browser client.
 
 The API uses one shared bearer token in this first private-beta slice. This is a single-tenant/developer credential, not a complete user-account system. Do not distribute it to browsers as a production client secret or expose this Compose stack to the internet.
 
