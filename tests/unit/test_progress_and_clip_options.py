@@ -110,6 +110,8 @@ class ProgressTraceTests(unittest.TestCase):
             args = SimpleNamespace(
                 edits=2, require_reference=False, clip_count=8,
                 video_url=None, tiktok_url=None, music_url=None, reference_url=None,
+                video_path="input/test_video.mp4", music_path="input/phonk.mp3",
+                reference_path="input/reference.mp4",
             )
 
             def fake_child(command, index):
@@ -155,6 +157,8 @@ class ProgressTraceTests(unittest.TestCase):
             args = SimpleNamespace(
                 edits=3, require_reference=False, clip_count=None,
                 video_url=None, tiktok_url=None, music_url=None, reference_url=None,
+                video_path="input/test_video.mp4", music_path="input/phonk.mp3",
+                reference_path="input/reference.mp4",
             )
             calls = []
 
