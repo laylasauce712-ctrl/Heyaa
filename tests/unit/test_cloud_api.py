@@ -78,9 +78,9 @@ class CloudApiTests(unittest.TestCase):
         }
         signer = MagicMock()
         signer.generate_presigned_url.return_value = "https://storage.example/preview"
-        with patch("cloud.api.database_connection", return_value=connection), patch(
-            "cloud.api.public_storage_client", return_value=signer
-        ):
+        with patch.dict(os.environ, {"HEYAA_STORAGE_BUCKET": "heyaa-test"}), patch(
+            "cloud.api.database_connection", return_value=connection
+        ), patch("cloud.api.public_storage_client", return_value=signer):
             result = preview_job(uuid4(), "owner")
         self.assertEqual(result["url"], "https://storage.example/preview")
         params = signer.generate_presigned_url.call_args.kwargs["Params"]
@@ -96,9 +96,9 @@ class CloudApiTests(unittest.TestCase):
         }
         signer = MagicMock()
         signer.generate_presigned_url.return_value = "https://storage.example/final"
-        with patch("cloud.api.database_connection", return_value=connection), patch(
-            "cloud.api.public_storage_client", return_value=signer
-        ):
+        with patch.dict(os.environ, {"HEYAA_STORAGE_BUCKET": "heyaa-test"}), patch(
+            "cloud.api.database_connection", return_value=connection
+        ), patch("cloud.api.public_storage_client", return_value=signer):
             result = download_job(uuid4(), "owner")
         self.assertEqual(result["url"], "https://storage.example/final")
         params = signer.generate_presigned_url.call_args.kwargs["Params"]
