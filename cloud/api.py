@@ -365,8 +365,22 @@ def create_upload(request: UploadRequest, owner_key: str = Depends(authenticate)
     }
 
 
+@app.get("/v1/capabilities")
+def cloud_capabilities(_owner_key: str = Depends(authenticate)):
+    return {
+        "ai_upscale_enabled": os.environ.get("HEYAA_AI_UPSCALE_REQUESTS_ENABLED") == "1",
+        "max_edits_per_job": 1,
+        "supported_platforms": ["youtube", "tiktok"],
+    }
+
+
 @app.post("/v1/jobs", status_code=202)
 def create_job(request: JobCreate, owner_key: str = Depends(authenticate)):
+    if request.ai_upscale_enabled and os.environ.get("HEYAA_AI_UPSCALE_REQUESTS_ENABLED") != "1":
+        raise HTTPException(
+            status_code=409,
+            detail="AI restoration is not enabled for this cloud deployment. Use a verified GPU worker before enabling it.",
+        )
     try:
         s3 = storage_client()
         media = {
