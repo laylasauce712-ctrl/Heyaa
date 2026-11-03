@@ -17,7 +17,7 @@
   "edit_settings": {
     "duration_seconds": 20,
     "speed": 1.1,
-    "min_clips": 8,
+    "min_clips": 11,
     "max_clips": 40,
     "min_shot_seconds": 0.35,
     "reference_pacing": true,
