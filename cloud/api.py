@@ -11,6 +11,8 @@ import json
 import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
+from urllib.parse import urlparse
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
@@ -19,6 +21,8 @@ import psycopg
 from botocore.config import Config
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from psycopg.rows import dict_row
@@ -169,12 +173,50 @@ async def lifespan(_app: FastAPI):
     yield
 
 
+STATIC_ROOT = Path(__file__).resolve().parent / "static"
+
 app = FastAPI(
-    title="Heyaa Cloud API",
+    title="Heyaa Cloud Studio",
     version="1.0.0",
-    description="Authenticated media uploads, durable render jobs and private exports.",
+    description="Phone-friendly private Studio and authenticated render control plane.",
     lifespan=lifespan,
 )
+app.mount("/static", StaticFiles(directory=STATIC_ROOT), name="static")
+
+
+@app.middleware("http")
+async def apply_security_headers(request, call_next):
+    response = await call_next(request)
+    storage_url = os.environ.get("HEYAA_STORAGE_PUBLIC_ENDPOINT_URL") or os.environ.get("HEYAA_STORAGE_ENDPOINT_URL") or ""
+    parsed_storage = urlparse(storage_url) if storage_url else None
+    storage_origin = (
+        f"{parsed_storage.scheme}://{parsed_storage.netloc}"
+        if parsed_storage and parsed_storage.scheme and parsed_storage.netloc else ""
+    )
+    connect_sources = "'self'" + (f" {storage_origin}" if storage_origin else "")
+    policy = (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self'; "
+        f"connect-src {connect_sources}; "
+        f"media-src {connect_sources}; "
+        "img-src 'self' data:; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "frame-ancestors 'none'"
+    )
+    response.headers["Content-Security-Policy"] = policy
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Frame-Options"] = "DENY"
+    return response
+
+
+@app.get("/", include_in_schema=False)
+def studio_home():
+    return FileResponse(STATIC_ROOT / "index.html", media_type="text/html")
+
+
 origins = [value.strip() for value in os.environ.get("HEYAA_ALLOWED_ORIGINS", "").split(",") if value.strip()]
 if origins:
     app.add_middleware(
