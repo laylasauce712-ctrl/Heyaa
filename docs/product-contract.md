@@ -55,12 +55,14 @@ These are evidence-based Python modules today. Do not describe them as separate 
 
 ## Visual product direction
 
-- Build one local UI inside the Heyaa repository; do not create a parallel app or a second backend.
-- The intended look is a dark, cinematic creative-studio/agency interface with one consistent theme and icon system.
-- Initial theme tokens: near-black canvas (#0B0D12), charcoal surfaces (#131722 / #1A2030), restrained violet primary accent (#8B5CF6), cool cyan for technical telemetry (#38BDF8), neutral text hierarchy and clear warning/error states. Avoid neon overload, gradient-heavy cards and dashboard clutter.
-- The interface should expose source/music/reference selection, user-selected edit count, render settings, real Agent Room events, previews, QA results, explicit approval and local release/archive browsing.
-- Use Lucide from https://github.com/lucide-icons/lucide as the single icon family. It is an actively maintained SVG icon toolkit with an ISC license; use its consistent stroke style and do not mix unrelated icon packs.
-- No PowerShell. Development and launch instructions must use WSL Ubuntu and Bash. The PC performs rendering; the phone receives finished exports.
+- The first local Heyaa Studio UI is implemented in `web/` and served by `src/heyaa/local_app.py` using Python's standard library. It is a thin localhost control surface over the existing renderer, not a second app or backend.
+- The UI is bound to `127.0.0.1` only and has no external web-framework or CDN dependency. The WSL launcher is `bash scripts/start_heyaa_ui.sh`.
+- The visual language is a dark, cinematic creative studio: near-black canvas (#0B0D12), charcoal surfaces (#131722 / #1A2030), restrained violet primary accent (#8B5CF6), cool cyan telemetry (#38BDF8), neutral text hierarchy and clear warning/error states. Avoid neon overload, gradient-heavy cards and dashboard clutter.
+- The Studio exposes local media upload/selection, supported media URLs, user-selected edit count, automatic/explicit motion-clip count, duration/speed, Blur Fit/Fill, implemented quality/effect toggles, real Agent Room events, contact-sheet preview, recent renders and explicit local release approval.
+- The interface shows only supported Phonk/Montagem style choices (currently one style), fixed full-export codec/resolution/FPS, mandatory EDL and preview-specific limitations. Experimental shadow observers are not presented as production render controls.
+- Settings changed through the UI are written to ignored `params.local.json`; tracked `params.json` is never modified. Uploads are written under new unique names in `input/`, never over default media files.
+- Use one restrained line-SVG icon treatment and a consistent icon family; do not mix unrelated icon packs.
+- No PowerShell. Development and launch instructions use WSL Ubuntu and Bash. The PC performs rendering; the phone receives finished exports.
 
 ## Quality and proof
 
