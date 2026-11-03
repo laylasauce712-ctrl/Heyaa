@@ -20,7 +20,13 @@ COPY scripts/install_realesrgan_linux.sh /opt/heyaa/scripts/install_realesrgan_l
 COPY params.json /opt/heyaa/params.json
 COPY cloud/ /opt/heyaa/cloud/
 
-RUN bash scripts/install_realesrgan_linux.sh tools/realesrgan
+RUN bash scripts/install_realesrgan_linux.sh tools/realesrgan \
+    && groupadd --system --gid 10001 heyaa \
+    && useradd --system --uid 10001 --gid heyaa --create-home --home-dir /home/heyaa heyaa
+
+USER 10001:10001
+ENV HOME=/home/heyaa \
+    HEYAA_WORK_ROOT=/tmp/heyaa-cloud-jobs
 
 # Vulkan ICD and GPU device access must be provided by the selected worker host.
 # CPU-only Vulkan (llvmpipe/lavapipe) is rejected by the renderer preflight.
