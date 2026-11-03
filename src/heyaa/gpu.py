@@ -27,19 +27,19 @@ def parse_vulkan_summary(output: str) -> dict[str, Any]:
     if not isinstance(output, str) or not output.strip():
         return {"status": "no_device", "reason": "vulkaninfo returned no device summary", "devices": []}
 
-    starts = list(re.finditer(r"(?m)^GPU\\d+:\\s*$", output))
+    starts = list(re.finditer(r"(?m)^GPU[0-9]+:[ \\t]*$", output))
     blocks: list[str] = []
     if starts:
         for index, match in enumerate(starts):
             end = starts[index + 1].start() if index + 1 < len(starts) else len(output)
             blocks.append(output[match.end():end])
-    elif re.search(r"(?m)^\\s*deviceName\\s*=", output):
+    elif re.search(r"(?m)^[ \\t]*deviceName[ \\t]*=", output):
         blocks = [output]
 
     devices = []
     for block in blocks:
         def field(name: str) -> str | None:
-            match = re.search(rf"(?m)^\\s*{re.escape(name)}\\s*=\\s*(.*?)\\s*$", block)
+            match = re.search(rf"(?m)^[ \\t]*{re.escape(name)}[ \\t]*=[ \\t]*(.*?)[ \\t]*$", block)
             return match.group(1).strip() if match else None
 
         name = field("deviceName") or "unnamed Vulkan device"
