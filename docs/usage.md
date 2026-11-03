@@ -2,6 +2,18 @@
 
 All commands in this guide use WSL Ubuntu and Bash. PowerShell is not part of the supported workflow.
 
+## Open the local Studio UI
+
+From WSL Ubuntu, in the Heyaa repository root:
+
+```bash
+bash scripts/start_heyaa_ui.sh
+```
+
+Open **http://127.0.0.1:8765** in your browser. The Studio binds to localhost only; it is not exposed to your LAN. You can upload/select source footage, a soundtrack and an optional reference, set the number of distinct edits and the implemented effect toggles, preview the recorded Agent Room events, download outputs, and explicitly approve a selected render into `output/releases/`.
+
+Uploads are stored as new uniquely named files under `input/`; the Studio does not overwrite the conventional `input/test_video.mp4`, `input/phonk.mp3`, or `input/reference.mp4` files. Render options are saved in the ignored local `params.local.json`, never in tracked `params.json`. Stop the UI server with `Ctrl+C` in the WSL terminal; an already-started render process continues separately.
+
 ## One edit (default)
 
 Place the source video and soundtrack at:
