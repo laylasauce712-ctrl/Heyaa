@@ -14,9 +14,13 @@ from fractions import Fraction
 from pathlib import Path
 
 try:
-    from src.heyaa.media_sources import parse_media_source_args, prepare_media_sources
+    from src.heyaa.media_sources import (
+        parse_media_source_args, prepare_media_sources, validate_input_media_path,
+    )
 except ModuleNotFoundError:
-    from heyaa.media_sources import parse_media_source_args, prepare_media_sources
+    from heyaa.media_sources import (
+        parse_media_source_args, prepare_media_sources, validate_input_media_path,
+    )
 
 try:
     from src.heyaa.edl.validate import validate_edl
@@ -2960,6 +2964,9 @@ def _run_variant_batch(args):
         command = [
             sys.executable, str(Path(__file__).resolve()),
             "--variants", "1", "--variant-index", str(index),
+            "--video-path", args.video_path,
+            "--music-path", args.music_path,
+            "--reference-path", args.reference_path,
         ]
         if args.require_reference:
             command.append("--require-reference")
@@ -3132,7 +3139,7 @@ def _run_edit_batch(args):
     run_root = Path(os.environ.get("HEYAA_RUN_DIR", "output"))
     edit_root = run_root / "edits"
     edit_root.mkdir(parents=True, exist_ok=True)
-    source_path = Path("input/test_video.mp4").resolve()
+    source_path = Path(VIDEO).resolve()
     ledger_path = run_root / "source_usage_ledger.json"
     manifest_path = run_root / "edits_manifest.json"
     ledger = {
@@ -3160,6 +3167,9 @@ def _run_edit_batch(args):
             sys.executable, str(Path(__file__).resolve()),
             "--edits", "1", "--edit-index", str(index),
             "--source-usage-ledger", str(ledger_path),
+            "--video-path", args.video_path,
+            "--music-path", args.music_path,
+            "--reference-path", args.reference_path,
         ]
         if args.require_reference:
             command.append("--require-reference")
@@ -3474,10 +3484,15 @@ def main(argv=None):
     PREVIEW_MODE = bool(args.preview)
     if PREVIEW_MODE:
         args.variants = 1
-    # A remote reference URL, an explicit require flag, or a local reference file
-    # is an actual user selection. Such a selection must not silently fall back.
+    # Resolve user-selected local media only inside input/. The local UI can keep
+    # uniquely named uploads here without overwriting the default input files.
+    VIDEO = validate_input_media_path(args.video_path, "video")
+    MUSIC = validate_input_media_path(args.music_path, "music")
+    REFERENCE = validate_input_media_path(args.reference_path, "reference")
+    # A remote URL, explicit require flag, or existing selected local reference
+    # is an actual reference selection; it must never silently fall back.
     args.require_reference = bool(
-        args.require_reference or args.reference_url or Path(REFERENCE).is_file()
+        args.require_reference or args.reference_url or (REFERENCE and Path(REFERENCE).is_file())
     )
     if args.clip_count_options is not None and args.clip_count is not None:
         raise SystemExit("Use either --clip-count or --clip-count-options, not both.")
@@ -3574,7 +3589,7 @@ def main(argv=None):
         reference_url=args.reference_url,
         video_path=VIDEO,
         music_path=MUSIC,
-        reference_path=REFERENCE,
+        reference_path=REFERENCE or "",
         require_reference=args.require_reference,
     )
     progress_event("source_preparation", "completed", "Required source files validated.",
