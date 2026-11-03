@@ -53,6 +53,19 @@ class CloudApiTests(unittest.TestCase):
             _validate_upload(request)
         self.assertEqual(caught.exception.status_code, 415)
 
+    def test_ai_upscale_request_is_rejected_when_deployment_flag_is_off(self):
+        from cloud.api import JobCreate, MediaInput, create_job
+
+        request = JobCreate(
+            video=MediaInput(url="https://www.tiktok.com/@creator/video/1234567890123456789"),
+            music=MediaInput(url="https://www.youtube.com/watch?v=abcdefghijk"),
+            ai_upscale_enabled=True,
+        )
+        with patch.dict(os.environ, {"HEYAA_AI_UPSCALE_REQUESTS_ENABLED": "0"}, clear=True):
+            with self.assertRaises(HTTPException) as caught:
+                create_job(request, "owner-key")
+        self.assertEqual(caught.exception.status_code, 409)
+
     def test_job_cannot_reference_another_owners_object_key(self):
         class NeverCalledStorage:
             def head_object(self, **_kwargs):
