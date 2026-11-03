@@ -583,7 +583,7 @@ class StudioHandler(BaseHTTPRequestHandler):
     def _upload(self, query_string: str) -> None:
         query = parse_qs(query_string)
         slot = query.get("slot", [""])[0]
-        if slot not in ALLOWED_EXTENSIONS:
+        if slot not in {"source", "video", "music", "reference"}:
             raise ValueError("Upload slot must be source, music or reference.")
         slot = {"source": "video", "video": "video", "music": "music", "reference": "reference"}[slot]
         raw_name = self.headers.get("X-Filename", "upload")
