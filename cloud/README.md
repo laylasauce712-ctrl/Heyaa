@@ -7,7 +7,7 @@ This is a local Docker Compose development stack for the first cloud control-pla
 - FastAPI control plane: authenticated job creation, private presigned uploads, status/events, cancellation, preview, explicit approval and approved-download URLs.
 - PostgreSQL: durable job state, event summaries, worker lease and render report.
 - MinIO: private S3-compatible local object storage for uploaded source media and final outputs.
-- Worker: one isolated render workspace per job, reusing the existing Heyaa renderer. It claims jobs with `FOR UPDATE SKIP LOCKED`, streams actual renderer progress into job events, heartbeats its lease, supports cancellation and promotes only reports with status `ready_for_human_review`.
+- Worker: runs as an unprivileged user in a read-only container with a bounded writable scratch mount; each job gets its own isolated render workspace, reusing the existing Heyaa renderer. It claims jobs with `FOR UPDATE SKIP LOCKED`, streams actual renderer progress into job events, heartbeats its lease, supports cancellation and promotes only reports with status `ready_for_human_review`.
 - AI restoration defaults off. A worker accepts AI restoration only when explicitly enabled and its default Vulkan device is hardware-backed.
 
 ## Local setup
