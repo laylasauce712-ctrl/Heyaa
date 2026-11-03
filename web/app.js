@@ -16,6 +16,7 @@ const els = {
   render: $("#render-button"), preview: $("#preview-button"),
 };
 let currentState = null;
+let settingsInitialized = false;
 let selectedLayout = "blur_fit";
 let busy = false;
 let expandedEvents = false;
@@ -185,9 +186,9 @@ async function refreshState({ quiet = true } = {}) {
     const source = fillMediaSelect(els.source, "video", state.media || [], oldSource);
     const music = fillMediaSelect(els.music, "music", state.media || [], oldMusic);
     const reference = fillMediaSelect(els.reference, "reference", state.media || [], oldReference);
-    if (!currentState._initialized) {
-      currentState._initialized = true;
+    if (!settingsInitialized) {
       applySettings(state.settings || {});
+      settingsInitialized = true;
     }
     if (!source && !els.source.value) els.sourceMeta.textContent = "No source file found · upload one or use a URL.";
     if (!music && !els.music.value) els.musicMeta.textContent = "No soundtrack found · upload one or use a URL.";
@@ -218,7 +219,6 @@ function renderRunState(state) {
     els.statePill.innerHTML = "<i></i> RENDERING";
     els.monitorTitle.textContent = "Pipeline is running";
     els.monitorDescription.textContent = "Follow each measured stage and renderer event below.";
-    els.monitorFooterText = undefined;
     $("#monitor-footer-text").textContent = `Process ${state.process_id || ""} · started ${new Date(state.started_at).toLocaleTimeString()}`;
   } else if (state.exit_code !== null && state.exit_code !== undefined) {
     const ok = state.exit_code === 0;
@@ -252,7 +252,7 @@ function renderRunState(state) {
 
 function stageLabel(stage) {
   const key = String(stage || "").replace(/^agent:/, "").replaceAll("_", " ");
-  return key.replace(/w/g, (letter) => letter.toUpperCase());
+  return key.split(" ").map((word) => word ? word[0].toUpperCase() + word.slice(1) : word).join(" ");
 }
 
 function statusLabel(status) {
@@ -415,7 +415,7 @@ async function startRender(preview = false) {
   try {
     await saveSettings();
     const request = renderRequest(preview);
-    if (els.ai.checked && !currentState?.ai_upscale?.available) {
+    if (!preview && els.ai.checked && !currentState?.ai_upscale?.available) {
       throw new Error("Real-ESRGAN assets are not installed. Turn off AI Restore or install the configured model first.");
     }
     $("#busy-copy").textContent = "Launching the existing Heyaa renderer.";
