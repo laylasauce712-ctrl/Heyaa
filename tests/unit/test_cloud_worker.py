@@ -15,6 +15,17 @@ class CloudWorkerTests(unittest.TestCase):
             "job-id", "source_preparation", "running", "Preparing selected sources."
         )
 
+    def test_agent_lifecycle_line_becomes_named_agent_event(self):
+        with patch("cloud.worker.record_event") as record:
+            _progress_from_line(
+                "job-id",
+                "[agent:render_critic] needs_review: Encoded true peak is above target.",
+            )
+        record.assert_called_once_with(
+            "job-id", "agent:render_critic", "needs_review",
+            "Encoded true peak is above target."
+        )
+
     def test_non_progress_line_is_ignored(self):
         with patch("cloud.worker.record_event") as record:
             _progress_from_line("job-id", "[sources] Downloading source video.")
