@@ -208,10 +208,9 @@ def _run_outputs(run_dir: Path) -> list[dict[str, Any]]:
             relative = path.resolve().relative_to(RUNS_ROOT.resolve())
         except (OSError, ValueError):
             continue
-        if path.name == "preview.mp4":
-            continue
+        is_preview = path.name == "preview.mp4"
         report_path = path.parent / "agent_report.json"
-        status = "ready_for_human_review"
+        status = "preview" if is_preview else "ready_for_human_review"
         if report_path.is_file():
             try:
                 report = json.loads(report_path.read_text(encoding="utf-8"))
@@ -224,7 +223,8 @@ def _run_outputs(run_dir: Path) -> list[dict[str, Any]]:
             "folder": path.parent.name,
             "size_label": _format_bytes(path.stat().st_size),
             "status": status,
-            "can_approve": status == "ready_for_human_review",
+            "is_preview": is_preview,
+            "can_approve": not is_preview and status == "ready_for_human_review",
         })
     return sorted(outputs, key=lambda x: x["path"])
 
