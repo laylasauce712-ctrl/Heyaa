@@ -12,5 +12,9 @@ RUN python -m pip install --upgrade pip \
 COPY src/ /opt/heyaa/src/
 COPY cloud/ /opt/heyaa/cloud/
 
+RUN groupadd --system --gid 10001 heyaa \
+    && useradd --system --uid 10001 --gid heyaa --create-home --home-dir /home/heyaa heyaa
+USER 10001:10001
+
 EXPOSE 8080
 CMD ["uvicorn", "cloud.api:app", "--host", "0.0.0.0", "--port", "8080"]
