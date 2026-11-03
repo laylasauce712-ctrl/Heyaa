@@ -144,5 +144,4 @@ switch any production analysis decision: FFmpeg remains authoritative for
 scene-cut timestamps, the current bass-onset/periodic-grid heuristic remains
 authoritative for beat timing, and the existing HOG/greedy tracker remains
 authoritative for subject observations. PySceneDetect, Beat This!, and Norfair
-only record shadow evidence. The Agent Room remains a later UI task; current
-scripts/watch_agents.py stays a terminal trace viewer.
+only record shadow evidence. The first local Studio UI now presents these recorded events in a simple graphical Agent Room; scripts/watch_agents.py remains the terminal trace viewer. The UI does not turn shadow backends into production controls.
