@@ -120,6 +120,16 @@ class ReleaseApprovalTests(unittest.TestCase):
             with self.assertRaisesRegex(ReleaseApprovalError, "under output/runs"):
                 approve_release(outside, confirm=True, output_root=root / "output")
 
+    def test_approval_refuses_preview_renders(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            run_dir = root / "output" / "runs" / "run-preview"
+            run_dir.mkdir(parents=True)
+            preview = run_dir / "preview.mp4"
+            preview.write_bytes(b"preview")
+            with self.assertRaisesRegex(ReleaseApprovalError, "Preview renders cannot"):
+                approve_release(preview, confirm=True, output_root=root / "output")
+
 
 if __name__ == "__main__":
     unittest.main()
