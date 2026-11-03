@@ -1742,8 +1742,8 @@ def load_source_usage_ledger(path, source_path):
     return ranges
 
 
-def measure_source_scene_features(path, scene_segments):
-    """Measure per-scene RMS loudness (astats) and low-resolution frame-difference motion."""
+def measure_source_scene_features(path, scene_segments, include_audio=True):
+    """Measure visual motion for every source, and RMS loudness when source audio exists."""
     measured = []
     for index, segment in enumerate(scene_segments):
         start = float(segment["start_seconds"])
@@ -1753,11 +1753,12 @@ def measure_source_scene_features(path, scene_segments):
         command = [
             "ffmpeg", "-hide_banner", "-nostats", "-loglevel", "info",
             "-ss", f"{start:.6f}", "-t", f"{duration:.6f}", "-i", path,
-            "-map", "0:v:0", "-map", "0:a:0?",
+            "-map", "0:v:0",
             "-vf", "fps=4,scale=160:-2:flags=fast_bilinear,tblend=all_mode=difference,signalstats,metadata=print:key=lavfi.signalstats.YAVG",
-            "-af", "astats=metadata=1:reset=0",
-            "-f", "null", "-",
         ]
+        if include_audio:
+            command.extend(["-map", "0:a:0?", "-af", "astats=metadata=1:reset=0"])
+        command.extend(["-f", "null", "-"])
         try:
             result = subprocess.run(
                 command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -3853,17 +3854,11 @@ def main(argv=None):
             flush=True,
         )
     source_audio_available = _source_has_audio(VIDEO)
-    if args.source_usage_ledger and not source_audio_available:
-        raise RuntimeError(
-            "Distinct-edit mode needs measurable source-scene features to avoid reusing footage, "
-            "but this source has no audio stream for the current source-feature analyzer. "
-            "No fallback/progression edit was generated."
-        )
     source_feature_error = None
     measured_segment_count = 0
     chapter_candidate_count = 0
     source_chapter_cache_hit = False
-    if source_audio_available:
+    if source_audio_available or args.source_usage_ledger:
         try:
             bounded_segments = long_source_mode
             if bounded_segments:
@@ -3878,9 +3873,11 @@ def main(argv=None):
                         raise RuntimeError("All source chapters are already used by earlier edits in this batch.")
                 measured_chapters, source_chapter_cache_hit = cached_analysis(
                     "source_chapter_features", [VIDEO],
-                    {"chapters": chapter_candidates, "fps": FPS, "feature_version": 1,
-                     "signals": ["source_audio_rms", "frame_difference_motion"]},
-                    lambda: measure_source_scene_features(VIDEO, chapter_candidates),
+                    {"chapters": chapter_candidates, "fps": FPS, "feature_version": 2,
+                     "signals": (["source_audio_rms"] if source_audio_available else []) + ["frame_difference_motion"]},
+                    lambda: measure_source_scene_features(
+                        VIDEO, chapter_candidates, include_audio=source_audio_available
+                    ),
                 )
                 chapter_candidate_count = len(measured_chapters)
                 activity_seed_report, _ = choose_source_chapter(
@@ -3950,10 +3947,13 @@ def main(argv=None):
             measured_segments, source_feature_cache_hit = cached_analysis(
                 "source_scene_features", [VIDEO],
                 {"scene_segments": scene_segments, "fps": FPS, "audio_weight": 0.6,
-                 "motion_weight": 0.4, "feature_version": 4 if bounded_segments else 3,
+                 "motion_weight": 0.4, "feature_version": 5 if bounded_segments else 4,
                  "scope_method": source_scope_for_features,
+                 "include_audio": source_audio_available,
                  "max_segment_seconds": 4.0 if bounded_segments else None},
-                lambda: measure_source_scene_features(VIDEO, scene_segments),
+                lambda: measure_source_scene_features(
+                    VIDEO, scene_segments, include_audio=source_audio_available
+                ),
             )
             measured_segment_count = len(measured_segments)
             if bounded_segments and SUBJECT_OBSERVATIONS:
