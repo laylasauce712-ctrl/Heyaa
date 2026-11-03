@@ -94,7 +94,7 @@ python3 scripts/approve_release.py \
   --confirm
 ```
 
-The approval command checks the Agent Report, Inspector, Export Storage, final EDL freeze and actual media streams/dimensions/FPS via `ffprobe`. It copies the selected render and evidence into:
+The approval command refuses `preview.mp4`, checks the Agent Report, Inspector, Export Storage, final EDL freeze and actual media streams/dimensions/FPS via `ffprobe`. It copies the selected full render and evidence into:
 
 ```text
 output/releases/<run-id>/primary/
