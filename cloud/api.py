@@ -8,13 +8,10 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-import mimetypes
+import logging
 import os
-import re
 from contextlib import asynccontextmanager
-from pathlib import PurePosixPath
 from typing import Any, Literal
-from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
 import boto3
@@ -25,26 +22,20 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from psycopg.rows import dict_row
 
-from src.heyaa.media_sources import (
-    TIKTOK_HOSTS,
-    YOUTUBE_HOSTS,
-    validate_tiktok_url,
-    validate_youtube_url,
+from cloud.contracts import (
+    CloudInputError,
+    object_key_belongs_to_owner,
+    validate_object_key_slot,
+    validate_platform_url,
+    validate_upload_metadata,
 )
 
 API_VERSION = "v1"
 UPLOAD_TTL_SECONDS = 900
 DOWNLOAD_TTL_SECONDS = 600
-MAX_VIDEO_BYTES = 2 * 1024 * 1024 * 1024
-MAX_MUSIC_BYTES = 512 * 1024 * 1024
 MAX_EVENTS = 250
 bearer = HTTPBearer(auto_error=False)
-
-SLOT_EXTENSIONS = {
-    "video": {".mp4": "video/mp4", ".mov": "video/quicktime", ".mkv": "video/x-matroska", ".webm": "video/webm", ".m4v": "video/x-m4v"},
-    "reference": {".mp4": "video/mp4", ".mov": "video/quicktime", ".mkv": "video/x-matroska", ".webm": "video/webm", ".m4v": "video/x-m4v"},
-    "music": {".mp3": "audio/mpeg", ".wav": "audio/wav", ".m4a": "audio/mp4", ".aac": "audio/aac", ".flac": "audio/flac", ".ogg": "audio/ogg", ".opus": "audio/opus"},
-}
+logger = logging.getLogger("heyaa.cloud.api")
 
 
 def database_connection():
@@ -176,39 +167,24 @@ if origins:
     )
 
 
+def _contract_http_error(exc: CloudInputError) -> HTTPException:
+    message = str(exc)
+    if "exceeds the" in message:
+        code = 413
+    elif "Unsupported" in message or "Content-Type" in message:
+        code = 415
+    else:
+        code = 422
+    return HTTPException(status_code=code, detail=message)
+
+
 def _validate_upload(request: UploadRequest) -> tuple[str, int]:
-    original = request.filename.replace("\\", "/")
-    filename = PurePosixPath(original).name
-    if filename != original or filename in {"", ".", ".."}:
-        raise HTTPException(status_code=422, detail="Filename must not contain a path.")
-    suffix = PurePosixPath(filename).suffix.lower()
-    expected_type = SLOT_EXTENSIONS[request.slot].get(suffix)
-    if not expected_type:
-        raise HTTPException(status_code=415, detail=f"Unsupported {request.slot} file extension.")
-    if request.content_type.split(";", 1)[0].strip().lower() != expected_type:
-        raise HTTPException(status_code=415, detail="Content-Type does not match the selected file extension.")
-    limit = MAX_MUSIC_BYTES if request.slot == "music" else MAX_VIDEO_BYTES
-    if request.size_bytes > limit:
-        raise HTTPException(status_code=413, detail=f"File exceeds the {limit // (1024 * 1024)} MiB {request.slot} limit.")
-    return suffix, limit
-
-
-def _validate_platform_url(url: str, slot: str) -> str:
-    parsed = urlparse(url)
-    if parsed.scheme != "https" or parsed.username or parsed.password:
-        raise HTTPException(status_code=422, detail=f"{slot} URL must be a public HTTPS YouTube or TikTok link.")
-    host = (parsed.hostname or "").lower()
     try:
-        if host in YOUTUBE_HOSTS:
-            return validate_youtube_url(url, slot)
-        if host in TIKTOK_HOSTS:
-            return validate_tiktok_url(url, slot)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    raise HTTPException(
-        status_code=422,
-        detail=f"{slot} URL host is not allowed. Upload a file or use a supported YouTube/TikTok post URL.",
-    )
+        return validate_upload_metadata(
+            request.slot, request.filename, request.content_type, request.size_bytes
+        )
+    except CloudInputError as exc:
+        raise _contract_http_error(exc) from exc
 
 
 def _validate_media(
@@ -218,17 +194,43 @@ def _validate_media(
     s3: Any,
 ) -> dict[str, str]:
     if media.url:
-        return {"kind": "url", "url": _validate_platform_url(media.url, slot)}
+        try:
+            return {"kind": "url", "url": validate_platform_url(media.url, slot)}
+        except CloudInputError as exc:
+            raise _contract_http_error(exc) from exc
+
     key = media.object_key or ""
-    expected_prefix = f"uploads/{owner_key}/"
-    if not key.startswith(expected_prefix) or ".." in PurePosixPath(key).parts:
+    if not object_key_belongs_to_owner(key, owner_key):
         raise HTTPException(status_code=403, detail=f"{slot} upload does not belong to this account.")
+    if not validate_object_key_slot(key, owner_key, slot):
+        raise HTTPException(status_code=415, detail=f"Uploaded object is not a supported {slot} file.")
     try:
         info = s3.head_object(Bucket=os.environ["HEYAA_STORAGE_BUCKET"], Key=key)
-    except Exception as exc:
-        raise HTTPException(status_code=404, detail=f"Uploaded {slot} file was not found or is not accessible.") from exc
-    limit = MAX_MUSIC_BYTES if slot == "music" else MAX_VIDEO_BYTES
-    if int(info.get("ContentLength") or 0) <= 0 or int(info.get("ContentLength") or 0) > limit:
+    except Exception:
+        logger.exception("Object storage HEAD failed for slot %s", slot)
+        raise HTTPException(status_code=404, detail=f"Uploaded {slot} file was not found or is not accessible.")
+    suffix = os.path.splitext(key)[1].lower()
+    expected_type = {
+        "video": {
+            ".mp4": "video/mp4", ".mov": "video/quicktime", ".mkv": "video/x-matroska",
+            ".webm": "video/webm", ".m4v": "video/x-m4v",
+        },
+        "reference": {
+            ".mp4": "video/mp4", ".mov": "video/quicktime", ".mkv": "video/x-matroska",
+            ".webm": "video/webm", ".m4v": "video/x-m4v",
+        },
+        "music": {
+            ".mp3": "audio/mpeg", ".wav": "audio/wav", ".m4a": "audio/mp4",
+            ".aac": "audio/aac", ".flac": "audio/flac", ".ogg": "audio/ogg",
+            ".opus": "audio/opus",
+        },
+    }[slot][suffix]
+    actual_type = str(info.get("ContentType") or "").split(";", 1)[0].strip().lower()
+    if actual_type != expected_type:
+        raise HTTPException(status_code=415, detail=f"Uploaded object Content-Type is not valid for {slot}.")
+    size = int(info.get("ContentLength") or 0)
+    limit = 512 * 1024 * 1024 if slot == "music" else 2 * 1024 * 1024 * 1024
+    if size <= 0 or size > limit:
         raise HTTPException(status_code=413, detail=f"Uploaded {slot} file is empty or exceeds its size limit.")
     return {"kind": "upload", "object_key": key}
 
@@ -266,8 +268,9 @@ def healthz():
         if missing:
             raise RuntimeError("Missing configuration: " + ", ".join(missing))
         return {"status": "ok", "component": "heyaa-cloud-api"}
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Cloud API is not ready: {exc}") from exc
+    except Exception:
+        logger.exception("Cloud API health check failed")
+        raise HTTPException(status_code=503, detail="Cloud API dependencies are not ready.")
 
 
 @app.post("/v1/uploads")
@@ -286,8 +289,9 @@ def create_upload(request: UploadRequest, owner_key: str = Depends(authenticate)
             ],
             ExpiresIn=UPLOAD_TTL_SECONDS,
         )
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Could not create private upload authorization: {exc}") from exc
+    except Exception:
+        logger.exception("Could not create private upload authorization")
+        raise HTTPException(status_code=503, detail="Could not create private upload authorization.")
     return {
         "object_key": key,
         "method": "POST",
@@ -331,8 +335,9 @@ def create_job(request: JobCreate, owner_key: str = Depends(authenticate)):
         return {"job_id": str(job_id), "status": "queued"}
     except HTTPException:
         raise
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Could not queue render job: {exc}") from exc
+    except Exception:
+        logger.exception("Could not queue render job")
+        raise HTTPException(status_code=503, detail="Could not queue render job.")
 
 
 @app.get("/v1/jobs")
@@ -403,6 +408,32 @@ def approve_job(job_id: UUID, owner_key: str = Depends(authenticate)):
     return {"job_id": str(row["job_id"]), "status": row["status"]}
 
 
+@app.get("/v1/jobs/{job_id}/preview")
+def preview_job(job_id: UUID, owner_key: str = Depends(authenticate)):
+    with database_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT status, output_key FROM heyaa_cloud_jobs
+            WHERE job_id = %s AND owner_key = %s
+            """,
+            (job_id, owner_key),
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    if row["status"] not in {"ready_for_review", "approved"} or not row.get("output_key"):
+        raise HTTPException(status_code=409, detail="The render is not ready for review.")
+    try:
+        url = storage_client().generate_presigned_url(
+            "get_object",
+            Params={"Bucket": os.environ["HEYAA_STORAGE_BUCKET"], "Key": row["output_key"]},
+            ExpiresIn=DOWNLOAD_TTL_SECONDS,
+        )
+    except Exception:
+        logger.exception("Could not authorize private preview")
+        raise HTTPException(status_code=503, detail="Could not authorize private preview.")
+    return {"url": url, "expires_in_seconds": DOWNLOAD_TTL_SECONDS}
+
+
 @app.get("/v1/jobs/{job_id}/download")
 def download_job(job_id: UUID, owner_key: str = Depends(authenticate)):
     with database_connection() as conn:
@@ -415,14 +446,15 @@ def download_job(job_id: UUID, owner_key: str = Depends(authenticate)):
         ).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Job not found.")
-    if row["status"] not in {"ready_for_review", "approved"} or not row.get("output_key"):
-        raise HTTPException(status_code=409, detail="The render is not ready for review or download.")
+    if row["status"] != "approved" or not row.get("output_key"):
+        raise HTTPException(status_code=409, detail="Approve the render after human review before downloading.")
     try:
         url = storage_client().generate_presigned_url(
             "get_object",
             Params={"Bucket": os.environ["HEYAA_STORAGE_BUCKET"], "Key": row["output_key"]},
             ExpiresIn=DOWNLOAD_TTL_SECONDS,
         )
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Could not authorize private download: {exc}") from exc
+    except Exception:
+        logger.exception("Could not authorize private download")
+        raise HTTPException(status_code=503, detail="Could not authorize private download.")
     return {"url": url, "expires_in_seconds": DOWNLOAD_TTL_SECONDS}
