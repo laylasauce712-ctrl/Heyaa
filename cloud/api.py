@@ -16,6 +16,7 @@ from uuid import UUID, uuid4
 
 import boto3
 import psycopg
+from botocore.config import Config
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -56,6 +57,7 @@ def storage_client():
         region_name=os.environ.get("HEYAA_STORAGE_REGION", "auto"),
         aws_access_key_id=os.environ["HEYAA_STORAGE_ACCESS_KEY"],
         aws_secret_access_key=os.environ["HEYAA_STORAGE_SECRET_KEY"],
+        config=Config(s3={"addressing_style": "path"}),
     )
 
 
