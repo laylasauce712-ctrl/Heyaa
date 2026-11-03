@@ -415,6 +415,12 @@ def run_renderer(job: dict[str, Any], worker_id: str, storage: Any) -> None:
 
 
 def main() -> int:
+    # The container root filesystem is read-only. Keep caches and scratch under
+    # the bounded writable /tmp mount instead of the unprivileged home path.
+    Path.home().mkdir(parents=True, exist_ok=True)
+    Path(os.environ.get("HEYAA_WORK_ROOT", "/tmp/heyaa-cloud-jobs")).mkdir(
+        parents=True, exist_ok=True
+    )
     worker_id = os.environ.get("HEYAA_WORKER_ID") or f"{socket.gethostname()}-{os.getpid()}"
     print(f"[cloud-worker] {worker_id} online; polling for jobs", flush=True)
     while True:
