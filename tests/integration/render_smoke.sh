@@ -41,8 +41,8 @@ cat > params.json <<'JSON'
 }
 JSON
 ffmpeg -hide_banner -loglevel error -y -f lavfi -i "testsrc2=size=640x360:rate=30:duration=45" -an -c:v libx264 -pix_fmt yuv420p input/test_video.mp4
-# Deliberately hot input: the final output limiter must keep the export below clipping.
-ffmpeg -hide_banner -loglevel error -y -f lavfi -i "sine=frequency=70:sample_rate=44100:duration=25" -af "volume=20dB" -c:a libmp3lame input/phonk.mp3
+# Deliberately hot multi-tone input: exercise bass boost, inter-sample peaks and AAC headroom.
+ffmpeg -hide_banner -loglevel error -y -f lavfi -i "aevalsrc=0.03*sin(2*PI*70*t)+0.03*sin(2*PI*997*t)+0.03*sin(2*PI*9970*t):s=44100:d=25" -af "volume=20dB" -c:a libmp3lame input/phonk.mp3
 # Exercise reference-audio extraction and a usable multi-shot pacing profile.
 # Three high-contrast shots guarantee at least two reference cut boundaries.
 ffmpeg -hide_banner -loglevel error -y \
