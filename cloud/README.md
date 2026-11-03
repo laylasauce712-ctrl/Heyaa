@@ -35,7 +35,7 @@ origin in both `HEYAA_ALLOWED_ORIGINS` and `cloud/minio-cors.xml`, and use the
 Windows firewall to restrict access. The current web UI is not deployed yet;
 these settings prepare the storage endpoint for the future browser client.
 
-The API uses one shared bearer token in this first private-beta slice. This is a single-tenant/developer credential, not a complete user-account system. Do not distribute it to browsers as a production client secret or expose this Compose stack to the internet.
+The responsive Studio is served at the API root. It asks for the bearer token each session and keeps it in page memory only (not localStorage or a cookie). The API uses one shared bearer token in this first private-beta slice. This is a single-tenant/developer credential, not a complete user-account system. Do not distribute it to other users or expose this Compose stack to the internet; production requires real account authentication/OIDC.
 
 ## API flow
 
@@ -57,6 +57,6 @@ The default local Compose stack sets `HEYAA_ENABLE_AI_UPSCALE=0`. Do not enable 
 
 - The API token is a single-tenant bootstrap credential; add real user authentication/OIDC before sharing with others.
 - No public hosting, domain, TLS, database service, or cloud object bucket is provisioned by this repository.
-- The existing local Studio UI has not yet been switched to this cloud API. The responsive phone UI and sign-in integration are the next phase.
+- The first responsive phone UI is served by the cloud API and supports upload/link submission, job status, Agent Room events, preview, explicit approval and approved downloads. It is still a private-beta client using a manually entered shared token; production sign-in/OIDC and multi-user identity are not implemented.
 - URL inputs are restricted to validated YouTube/TikTok posts. Arbitrary direct URLs are not accepted by the cloud API; any later direct URL feature must enforce a robust SSRF policy.
 - The API never auto-approves or publishes a render.
