@@ -79,6 +79,13 @@ def object_key_belongs_to_owner(object_key: str, owner_key: str) -> bool:
     return object_key.startswith(prefix) and ".." not in parts and len(parts) == 3
 
 
+def validate_object_key_slot(object_key: str, owner_key: str, slot: str) -> bool:
+    """Ensure a stored object is scoped to this owner and has a slot-compatible extension."""
+    if slot not in SLOT_EXTENSIONS or not object_key_belongs_to_owner(object_key, owner_key):
+        return False
+    return PurePosixPath(object_key).suffix.lower() in SLOT_EXTENSIONS[slot]
+
+
 def validate_platform_url(url: str, slot: str) -> str:
     parsed = urlparse(url)
     if parsed.scheme != "https" or parsed.username or parsed.password:
