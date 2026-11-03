@@ -17,10 +17,12 @@ try:
     from src.heyaa.media_sources import (
         parse_media_source_args, prepare_media_sources, validate_input_media_path,
     )
+    from src.heyaa.gpu import inspect_vulkan_hardware
 except ModuleNotFoundError:
     from heyaa.media_sources import (
         parse_media_source_args, prepare_media_sources, validate_input_media_path,
     )
+    from heyaa.gpu import inspect_vulkan_hardware
 
 try:
     from src.heyaa.edl.validate import validate_edl
@@ -374,6 +376,32 @@ def resolve_ai_upscaler():
             "Real-ESRGAN model files are missing: " + ", ".join(missing_model_files)
             + ". Re-run bash scripts/install_realesrgan_linux.sh or correct ai_upscale_model_dir."
         )
+
+    # Asset presence does not prove Vulkan can reach a real GPU. Refuse the
+    # llvmpipe/lavapipe CPU path by default instead of spending ten minutes
+    # processing one clip before timing out.
+    vulkan = inspect_vulkan_hardware()
+    allow_software = os.environ.get("HEYAA_ALLOW_SOFTWARE_VULKAN_UPSCALE") == "1"
+    if vulkan.get("status") != "hardware_available" and not allow_software:
+        detail = vulkan.get("reason") or vulkan.get("status") or "unknown Vulkan state"
+        devices = ", ".join(
+            str(item.get("device_name") or "unnamed device")
+            for item in vulkan.get("devices", [])
+        ) or "no Vulkan device identified"
+        raise RuntimeError(
+            "AI upscaling requires a hardware-backed Vulkan device. "
+            f"Detected: {detail}; devices: {devices}. "
+            "This environment is exposing CPU/software Vulkan (for example llvmpipe), "
+            "so the render was stopped before extracting frames. Use a GPU-enabled "
+            "local/cloud worker, or set HEYAA_ALLOW_SOFTWARE_VULKAN_UPSCALE=1 only "
+            "to knowingly override this performance protection."
+        )
+    if vulkan.get("status") != "hardware_available":
+        print(
+            "[warn] Software Vulkan upscaling explicitly allowed; performance may be very slow.",
+            flush=True,
+        )
+
     AI_UPSCALER_EXECUTABLE = str(executable)
     AI_UPSCALER_MODEL_DIR = str(model_dir.resolve())
     print(f"[upscale] Real-ESRGAN ready: {AI_UPSCALER_EXECUTABLE}; models={AI_UPSCALER_MODEL_DIR}; model={AI_UPSCALE_MODEL}; scale={AI_UPSCALE_SCALE}x")
@@ -3431,11 +3459,18 @@ def run_doctor():
     missing_model_files = [str(path) for path in required_model_files if not path.is_file()]
     binary_executable = binary_path.is_file() and os.access(binary_path, os.X_OK)
     model_files_exist = not missing_model_files
-    upscale_ok = (
-        binary_executable and models_path.is_dir() and model_files_exist
+    vulkan_probe = inspect_vulkan_hardware()
+    hardware_vulkan_available = vulkan_probe.get("status") == "hardware_available"
+    software_override = os.environ.get("HEYAA_ALLOW_SOFTWARE_VULKAN_UPSCALE") == "1"
+    upscale_assets_ok = binary_executable and models_path.is_dir() and model_files_exist
+    upscale_ok = upscale_assets_ok and (hardware_vulkan_available or software_override)
+    upscale_status = (
+        "ok" if upscale_assets_ok and hardware_vulkan_available
+        else "warning" if not ai_enabled or (upscale_assets_ok and software_override)
+        else "fail"
     )
     checks["vulkan_realesrgan"] = {
-        "status": "ok" if upscale_ok else ("fail" if ai_enabled else "warning"),
+        "status": upscale_status,
         "enabled_in_settings": ai_enabled,
         "binary_exists": binary_path.is_file(),
         "binary_executable": binary_executable,
@@ -3444,6 +3479,9 @@ def run_doctor():
         "selected_scale": model_scale,
         "model_files_exist": model_files_exist,
         "missing_model_files": missing_model_files,
+        "hardware_acceleration_available": hardware_vulkan_available,
+        "software_override_enabled": software_override,
+        "vulkan_probe": vulkan_probe,
     }
     free_bytes = shutil.disk_usage(".").free
     checks["disk"] = {

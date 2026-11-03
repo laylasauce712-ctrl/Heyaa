@@ -22,6 +22,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, quote, urlparse
 
+from src.heyaa.gpu import inspect_vulkan_hardware
+
 ROOT = Path(__file__).resolve().parents[2]
 WEB_ROOT = ROOT / "web"
 INPUT_ROOT = ROOT / "input"
@@ -168,15 +170,22 @@ def _ai_upscale_status(config: dict[str, Any]) -> dict[str, Any]:
         model_dir = ROOT / model_dir
     stem = f"{model_name}-x{scale}" if model_name == "realesr-animevideov3" else str(model_name)
     weights = [model_dir / f"{stem}.param", model_dir / f"{stem}.bin"]
-    available = binary.is_file() and os.access(binary, os.X_OK) and all(p.is_file() for p in weights)
+    assets_available = binary.is_file() and os.access(binary, os.X_OK) and all(p.is_file() for p in weights)
+    vulkan_probe = inspect_vulkan_hardware()
+    hardware_available = vulkan_probe.get("status") == "hardware_available"
+    software_override = os.environ.get("HEYAA_ALLOW_SOFTWARE_VULKAN_UPSCALE") == "1"
+    available = assets_available and (hardware_available or software_override)
     return {
         "enabled": video.get("ai_upscale_enabled") is True,
         "available": available,
         "binary_exists": binary.is_file(),
         "model_weights_exist": all(p.is_file() for p in weights),
+        "hardware_acceleration_available": hardware_available,
+        "software_override_enabled": software_override,
+        "vulkan_probe": vulkan_probe,
         "model": model_name,
         "scale": scale,
-        "note": "Asset preflight only; a real neural-upscale render still needs visual verification.",
+        "note": "Checks Real-ESRGAN assets and hardware-backed Vulkan availability; rendered frames still require visual verification.",
     }
 
 

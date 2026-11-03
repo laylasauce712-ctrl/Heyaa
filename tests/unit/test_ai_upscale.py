@@ -135,6 +135,33 @@ class AIUpscaleTests(unittest.TestCase):
             with self.assertRaisesRegex(FileNotFoundError, "model files are missing"):
                 renderer.resolve_ai_upscaler()
 
+    def test_enabled_upscale_fails_fast_on_software_only_vulkan(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            executable = root / "realesrgan-ncnn-vulkan"
+            executable.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
+            executable.chmod(0o755)
+            models = root / "models"
+            models.mkdir()
+            (models / "realesrgan-x4plus.param").write_text("param", encoding="utf-8")
+            (models / "realesrgan-x4plus.bin").write_bytes(b"weights")
+            renderer.AI_UPSCALE_ENABLED = True
+            renderer.AI_UPSCALE_BINARY = str(executable)
+            renderer.AI_UPSCALE_MODEL_DIR = str(models)
+            renderer.AI_UPSCALE_MODEL = "realesrgan-x4plus"
+            renderer.AI_UPSCALE_SCALE = 2
+
+            with patch(
+                "src.agent_director.inspect_vulkan_hardware",
+                return_value={
+                    "status": "software_only",
+                    "reason": "Only CPU Vulkan is available",
+                    "devices": [{"device_name": "llvmpipe"}],
+                },
+            ):
+                with self.assertRaisesRegex(RuntimeError, "hardware-backed Vulkan"):
+                    renderer.resolve_ai_upscaler()
+
     def test_frame_extraction_and_upscaler_output_are_count_checked(self):
         with tempfile.TemporaryDirectory() as temp:
             renderer.WORK = temp
@@ -200,6 +227,10 @@ class AIUpscaleTests(unittest.TestCase):
                 patch(
                     "src.agent_director.subprocess.run",
                     return_value=subprocess.CompletedProcess([], 0, "", ""),
+                ),
+                patch(
+                    "src.agent_director.inspect_vulkan_hardware",
+                    return_value={"status": "hardware_available", "devices": [{"device_name": "Test GPU"}]},
                 ),
             ):
                 with contextlib.redirect_stdout(io.StringIO()) as output:
