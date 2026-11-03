@@ -181,6 +181,8 @@ def approve_release(
         raise ReleaseApprovalError("The selected video must be an existing file under output/runs/.") from exc
     if source_video.suffix.lower() != ".mp4" or not source_video.is_file():
         raise ReleaseApprovalError("Only a verified MP4 render can be approved.")
+    if source_video.name.lower() == "preview.mp4":
+        raise ReleaseApprovalError("Preview renders cannot be promoted to releases; approve a full-resolution final export.")
     if len(relative.parts) < 2:
         raise ReleaseApprovalError("The selected MP4 must belong to a timestamped run directory.")
 
