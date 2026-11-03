@@ -240,7 +240,13 @@ function renderRunState(state) {
     els.statePill.innerHTML = "<i></i> IDLE";
     els.monitorTitle.textContent = "Ready when you are";
     els.monitorDescription.textContent = "Choose your media and start a render. Real pipeline events appear here.";
-    $("#monitor-footer-text").textContent = "Connected to local Heyaa process";
+    const tools = state.tools || {};
+    const toolSummary = [
+      tools.ffmpeg ? "FFmpeg ready" : "FFmpeg missing",
+      tools.ffprobe ? "ffprobe ready" : "ffprobe missing",
+      tools.opencv ? "OpenCV ready" : "OpenCV optional",
+    ].join(" · ");
+    $("#monitor-footer-text").textContent = toolSummary;
   }
   const events = state.events || [];
   const done = events.filter((event) => ["completed", "success", "ok"].includes(event.status)).length;
@@ -477,6 +483,9 @@ async function uploadFile(slot, file) {
     await refreshState();
     const select = slot === "source" ? els.source : slot === "music" ? els.music : els.reference;
     select.value = data.file.path;
+    const urlField = slot === "source" ? els.videoUrl : slot === "music" ? els.musicUrl : els.referenceUrl;
+    urlField.value = "";
+    select.disabled = false;
     updateMediaMeta();
     toast(`${file.name} added to input/.`, "success");
   } catch (error) {
