@@ -1778,27 +1778,33 @@ def measure_source_scene_features(path, scene_segments):
             r"lavfi\.signalstats\.YAVG\s*=\s*([0-9]+(?:\.[0-9]+)?)",
             output,
         )
-        if not loudness:
-            raise RuntimeError(f"FFmpeg astats returned no RMS loudness for source scene segment {index}.")
-        raw_rms = loudness[-1].lower()
-        try:
-            rms_db = float(raw_rms)
-            if not math.isfinite(rms_db):
+        audio_measurement_available = bool(loudness)
+        if loudness:
+            raw_rms = loudness[-1].lower()
+            try:
+                rms_db = float(raw_rms)
+                if not math.isfinite(rms_db):
+                    rms_db = -120.0
+            except ValueError:
                 rms_db = -120.0
-        except ValueError:
+        else:
+            # Silent/muted source videos are still valid when the user supplies a
+            # separate soundtrack; retain visual-motion evidence for clip ranking.
             rms_db = -120.0
         motion_values = [float(value) for value in motion if math.isfinite(float(value))]
         measured.append({
             **segment,
             "audio_loudness_db": max(-120.0, min(0.0, rms_db)),
+            "audio_measurement_available": audio_measurement_available,
             "motion_score": statistics.fmean(motion_values) if motion_values else 0.0,
+            "motion_measurement_available": bool(motion_values),
         })
     if not measured or not any(
-        isinstance(item.get("audio_loudness_db"), (int, float))
-        and math.isfinite(float(item["audio_loudness_db"]))
+        item.get("audio_measurement_available") is True
+        or item.get("motion_measurement_available") is True
         for item in measured
     ):
-        raise RuntimeError("No usable scene-level audio loudness measurements were produced.")
+        raise RuntimeError("No usable scene-level audio or visual-motion measurements were produced.")
     return measured
 
 
@@ -1841,6 +1847,11 @@ def rank_source_scene_segments(scene_segments):
         motion_values.append(motion_value if math.isfinite(motion_value) else 0.0)
     audio_ranks = _percentile_ranks(audio_values)
     motion_ranks = _percentile_ranks(motion_values)
+    audio_evidence_available = any(
+        segment.get("audio_measurement_available") is True
+        or ("audio_measurement_available" not in segment and "audio_loudness_db" in segment)
+        for segment in prepared
+    )
     subject_values = []
     for segment in prepared:
         try:
@@ -1853,12 +1864,18 @@ def rank_source_scene_segments(scene_segments):
         segment["audio_rank"] = round(audio_ranks[index], 4)
         segment["motion_rank"] = round(motion_ranks[index], 4)
         segment["subject_presence_score"] = round(subject_values[index], 4)
-        if subject_evidence_available:
+        if subject_evidence_available and audio_evidence_available:
             score = 0.55 * subject_values[index] + 0.27 * audio_ranks[index] + 0.18 * motion_ranks[index]
             segment["selection_score_method"] = "appearance_track_soft_lock_plus_audio_motion"
-        else:
+        elif subject_evidence_available:
+            score = 0.75 * subject_values[index] + 0.25 * motion_ranks[index]
+            segment["selection_score_method"] = "appearance_track_plus_visual_motion_only"
+        elif audio_evidence_available:
             score = 0.6 * audio_ranks[index] + 0.4 * motion_ranks[index]
             segment["selection_score_method"] = "audio_motion_only"
+        else:
+            score = motion_ranks[index]
+            segment["selection_score_method"] = "visual_motion_only"
         segment["selection_score"] = round(score, 4)
     return prepared
 
