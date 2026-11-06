@@ -54,9 +54,9 @@ When you specifically want the reference video's own audio as the soundtrack, pl
 bash scripts/export_reference_audio_batch.sh
 ```
 
-The script extracts the reference audio, prepares a temporary profile with three distinct 20-second edits, 1080 × 1920 at 60 FPS, at least 11 motion clips, mirror enabled, AI Restore enabled and the exact 2-second final freeze. It leaves tracked settings unchanged and checks Real-ESRGAN, model weights and hardware-backed Vulkan before rendering. Set `HEYAA_EDIT_COUNT=1` through `5` to choose another batch size; the default is three. Optional path overrides are `HEYAA_VIDEO_PATH`, `HEYAA_REFERENCE_PATH`, `HEYAA_REFERENCE_AUDIO_PATH` and `HEYAA_EXPORT_BASE_PROFILE`.
+The script extracts the reference audio and prepares a temporary profile with three distinct 20-second edits, 1080 × 1920 at 60 FPS, at least 11 motion clips, mirror enabled and the exact 2-second final freeze. **AI Restore is off by default**, so ordinary exports do not require Real-ESRGAN, Vulkan or a dedicated GPU. Heyaa uses its standard FFmpeg scaling path instead. Set `HEYAA_ENABLE_AI_UPSCALE=1` explicitly to request Real-ESRGAN; that optional mode checks for model weights and a hardware-backed Vulkan device before rendering. Set `HEYAA_EDIT_COUNT=1` through `5` to choose another batch size; the default is three. Optional path overrides are `HEYAA_VIDEO_PATH`, `HEYAA_REFERENCE_PATH`, `HEYAA_REFERENCE_AUDIO_PATH` and `HEYAA_EXPORT_BASE_PROFILE`.
 
-This is a local WSL/Linux render workflow, not a GitHub-hosted renderer. GitHub Actions checks code and script syntax; the real media, model weights and GPU remain on the machine performing the export. A machine without a compatible hardware-backed Vulkan device will stop at the AI Restore preflight rather than silently disable upscaling.
+This is a local WSL/Linux render workflow, not a GitHub-hosted renderer. GitHub Actions checks code and script syntax; the real media and exports remain on the render worker. For a phone-accessible service, deploy the existing cloud API, private media storage and worker as a hosted service; GitHub stores the source and checks changes but is not the long-running render server. The cloud worker can produce standard FFmpeg exports on CPU, with AI Restore reserved for a separately provisioned GPU worker when explicitly requested.
 
 ## What the Agent Room shows
 
