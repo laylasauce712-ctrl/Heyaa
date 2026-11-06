@@ -4540,6 +4540,7 @@ def main(argv=None):
         "onset_candidate_count": BEAT_GRID_ANALYSIS["onset_candidate_count"],
         "drop_beat_time_seconds": drop_beat_time,
         "drop_beat_strength_proxy": DROP_BEAT_STRENGTH if drop_beat_time is not None else None,
+        "drop_transition_evidence": DROP_BEAT_EVIDENCE,
         "drop_freeze_frames": drop_freeze_frames,
         "drop_freeze_duration_seconds": drop_freeze_duration,
     }
