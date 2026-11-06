@@ -67,6 +67,16 @@ The X11 repository provides the OpenCV Python bindings; the package is documente
 
 AI Restore is **off by default** so a fresh clone can render without separately installing the ignored Real-ESRGAN executable and model weights. Enable it in the Studio only after those assets and a usable hardware-backed Vulkan device are available. Installation notes: [optimization roadmap](docs/optimization-roadmap.md) and [multi-agent architecture](docs/multi-agent-architecture.md).
 
+### Distinct creative-profile batch
+
+Use source footage, a separate Phonk soundtrack, and an optional visual pacing reference. A four-edit batch assigns a different per-clip motion/look treatment to each export and reserves non-overlapping source intervals between edits:
+
+```bash
+python3 src/agent_director.py --video-url 'https://www.tiktok.com/@creator/video/1234567890123456789' --music-url 'https://www.youtube.com/watch?v=PHONK_TRACK_ID' --reference-url 'https://www.youtube.com/shorts/REFERENCE_ID' --edits 4
+```
+
+Profiles are Cinematic Impact, Aggressive Phonk, Smooth Motion and Hybrid Cinematic. Each changes actual per-clip zoom/pan animation and image grading; a fifth Phonk Pulse preset is also available for a five-edit batch. These are deterministic FFmpeg treatments, not generative scene synthesis. The source-disjoint rule means four complete 20-second outputs need roughly 80 seconds of usable source footage plus scene/gap headroom. If the source is too short, the batch stops rather than reusing earlier footage and records a partial manifest. To render one selected profile, add `--creative-profile cinematic-impact` (or another listed profile) with `--edits 1`.
+
 ### Local batch using the reference video's soundtrack
 
 When you specifically want the reference video's own audio as the soundtrack, place the source footage at `input/test_video.mp4` and the reference at `input/reference.mp4`, then run:

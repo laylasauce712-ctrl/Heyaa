@@ -36,8 +36,10 @@ The ordinary run creates one output under `output/runs/<run-id>/`.
 Choose the requested number from 1 through 5:
 
 ```bash
-python3 src/agent_director.py --edits 5
+python3 src/agent_director.py --edits 4
 ```
+
+A four-edit batch automatically assigns four different creative profiles: Cinematic Impact, Aggressive Phonk, Smooth Motion and Hybrid Cinematic. The profiles apply different per-clip zoom/pan animation and image grading. A fifth Phonk Pulse profile is available when requesting five edits. Each edit also reserves source intervals from earlier successful edits, so the batch does not reuse the same source footage. Four full 20-second outputs generally need about 80 seconds of usable source footage plus headroom; a shorter source produces a clearly marked partial batch rather than duplicated footage. To select one look for a single edit, use `--creative-profile cinematic-impact` with `--edits 1`.
 
 Each successfully rendered edit is stored separately:
 

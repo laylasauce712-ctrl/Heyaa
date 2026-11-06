@@ -3533,7 +3533,7 @@ def build_skull_overlay_graph(final_freeze_start):
 
 def main(argv=None):
     global VIDEO, MUSIC, REFERENCE, EDIT_DURATION, DURATION, FREEZE, SUBJECT_OBSERVATIONS, SOURCE_FPS
-    global OUTDIR, WORK, FINAL, VARIANT_INDEX, PREVIEW_MODE, RUN_DIR
+    global OUTDIR, WORK, FINAL, VARIANT_INDEX, PREVIEW_MODE, RUN_DIR, CREATIVE_PROFILE_ID
     args = parse_media_source_args(argv)
     ANALYSIS_CACHE_REPORT.clear()
     SCENE_SHADOW_REPORT.clear()
