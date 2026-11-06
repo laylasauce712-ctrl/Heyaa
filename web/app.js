@@ -13,6 +13,9 @@ const els = {
   progressFill: $("#progress-fill"), progressStage: $("#progress-stage"), progressCount: $("#progress-count"),
   events: $("#agent-events"), outputs: $("#output-list"), outputCount: $("#output-count"),
   sheetWrap: $("#contact-sheet-wrap"), aiStatus: $("#ai-status"),
+  agentLiveStatus: $("#agent-live-status"), agentLiveTitle: $("#agent-live-title"),
+  agentLiveCopy: $("#agent-live-copy"), agentFeedMode: $("#agent-feed-mode"),
+  agentTyping: $("#agent-typing"),
   render: $("#render-button"), preview: $("#preview-button"),
 };
 let currentState = null;
@@ -92,7 +95,21 @@ function updateMediaMeta() {
   const reference = findFile(els.reference.value);
   els.sourceMeta.textContent = source ? `${source.size_label} · local input` : "Choose a source file or paste a source URL below.";
   els.musicMeta.textContent = music ? `${music.size_label} · local soundtrack` : "Choose a soundtrack or paste a music URL below.";
-  els.referenceMeta.textContent = reference ? `${reference.size_label} · pacing reference` : "Optional · no selected local reference.";
+  els.referenceMeta.textContent = reference
+    ? reference.size_label + " · selected pacing reference (validated before render)"
+    : "Optional. When selected, usable cut pacing is required; reference audio stays separate.";
+}
+
+function updateAIStatus(status = {}) {
+  if (status.available) {
+    els.aiStatus.textContent = "Ready · " + (status.model || "Real-ESRGAN") + " " + (status.scale || 2) + "×";
+  } else if (!status.binary_exists) {
+    els.aiStatus.textContent = "Not installed · standard render available";
+  } else if (!status.model_weights_exist) {
+    els.aiStatus.textContent = "Model weights missing · standard render available";
+  } else {
+    els.aiStatus.textContent = "GPU unavailable · standard render available";
+  }
 }
 
 function applySettings(config) {
@@ -185,8 +202,9 @@ async function refreshState({ quiet = true } = {}) {
     if (!source && !els.source.value) els.sourceMeta.textContent = "No source file found · upload one or use a URL.";
     if (!music && !els.music.value) els.musicMeta.textContent = "No soundtrack found · upload one or use a URL.";
     updateMediaMeta();
+    updateAIStatus(state.ai_upscale || {});
     renderRunState(state);
-    renderAgentEvents(state.events || []);
+    renderAgentEvents(state.events || [], state);
     renderOutputs(state);
     els.render.disabled = state.running;
     els.preview.disabled = state.running;
@@ -211,16 +229,18 @@ function renderRunState(state) {
     els.statePill.innerHTML = "<i></i> RENDERING";
     els.monitorTitle.textContent = "Pipeline is running";
     els.monitorDescription.textContent = "Follow each measured stage and renderer event below.";
-    $("#monitor-footer-text").textContent = `Process ${state.process_id || ""} · started ${new Date(state.started_at).toLocaleTimeString()}`;
+    $("#monitor-footer-text").textContent = "Process " + (state.process_id || "") +
+      " · started " + new Date(state.started_at).toLocaleTimeString();
   } else if (state.exit_code !== null && state.exit_code !== undefined) {
     const ok = state.exit_code === 0;
-    els.statePill.className = `state-pill ${ok ? "state-success" : "state-error"}`;
-    els.statePill.innerHTML = `<i></i> ${ok ? "COMPLETED" : "CHECK RUN"}`;
+    els.statePill.className = "state-pill " + (ok ? "state-success" : "state-error");
+    els.statePill.innerHTML = "<i></i> " + (ok ? "COMPLETED" : "CHECK RUN");
     els.monitorTitle.textContent = ok ? "Render process finished" : "Render needs attention";
     els.monitorDescription.textContent = ok
       ? "Review the video below before approving it as a local release."
       : "Open the latest run events and report to see what blocked the render.";
-    $("#monitor-footer-text").textContent = ok ? "Human visual review is still required." : `Process exit code ${state.exit_code}`;
+    $("#monitor-footer-text").textContent = ok
+      ? "Human visual review is still required." : "Process exit code " + state.exit_code;
   } else if (state.latest_run) {
     els.statePill.className = "state-pill state-idle";
     els.statePill.innerHTML = "<i></i> READY";
@@ -240,17 +260,78 @@ function renderRunState(state) {
     ].join(" · ");
     $("#monitor-footer-text").textContent = toolSummary;
   }
+
   const events = state.events || [];
-  const done = events.filter((event) => ["completed", "success", "ok"].includes(event.status)).length;
-  const percent = state.running ? Math.min(92, Math.max(6, done * 7)) : (events.length ? 100 : 0);
-  els.progressFill.style.width = `${percent}%`;
-  els.progressStage.textContent = events.length ? (events[events.length - 1].stage || "PIPELINE EVENT").replaceAll("_", " ").toUpperCase() : "WAITING FOR RUN";
-  els.progressCount.textContent = `${events.length} EVENTS`;
+  const latest = events.length ? events[events.length - 1] : null;
+  const active = [...events].reverse().find((event) =>
+    String(event.status || "").toLowerCase() === "running");
+
+  // The renderer emits no reliable percentage today. Show an indeterminate sweep
+  // while the process is alive; do not manufacture progress from event counts.
+  els.progressFill.classList.toggle("is-running", Boolean(state.running));
+  els.progressFill.style.width = state.running ? "34%" :
+    (state.exit_code !== null && state.exit_code !== undefined ? "100%" : "0%");
+  els.progressStage.textContent = state.running
+    ? (active ? "ACTIVE · " + stageLabel(active.stage).toUpperCase() : "RENDER PROCESS ACTIVE")
+    : (state.exit_code === 0 ? "PROCESS COMPLETE" :
+      state.exit_code !== null && state.exit_code !== undefined ? "PROCESS STOPPED · CHECK REPORT" :
+      latest ? "LAST EVENT · " + stageLabel(latest.stage).toUpperCase() : "WAITING FOR RUN");
+  els.progressCount.textContent = events.length + " RECORDED EVENTS";
+
+  if (state.running) {
+    const conversation = active ? eventConversation(active) : null;
+    els.agentLiveStatus.dataset.mode = "running";
+    els.agentFeedMode.textContent = conversation
+      ? conversation.speaker.toUpperCase() + " · ACTIVE" : "RENDER PROCESS · ACTIVE";
+    els.agentLiveTitle.textContent = conversation
+      ? conversation.speaker + " is working" : "Renderer is working between events";
+    els.agentLiveCopy.textContent = active
+      ? (active.summary || "This stage has started; waiting for its result.")
+      : "The render process is still active. Its next recorded pipeline update will appear here.";
+    els.agentTyping.hidden = false;
+  } else {
+    els.agentTyping.hidden = true;
+    if (latest) {
+      const conversation = eventConversation(latest);
+      els.agentLiveStatus.dataset.mode =
+        latest.status === "blocked" || latest.status === "error" ? "error" : "idle";
+      els.agentFeedMode.textContent = "LATEST REPORT · " + statusLabel(latest.status);
+      els.agentLiveTitle.textContent = conversation.speaker;
+      els.agentLiveCopy.textContent = latest.summary || "The latest event has no summary.";
+    } else {
+      els.agentLiveStatus.dataset.mode = "idle";
+      els.agentFeedMode.textContent = "ENGINE STANDBY";
+      els.agentLiveTitle.textContent = "Agents standing by";
+      els.agentLiveCopy.textContent =
+        "When a render starts, the current task and recorded agent messages will appear here.";
+    }
+  }
 }
 
 function stageLabel(stage) {
   const key = String(stage || "").replace(/^agent:/, "").replaceAll("_", " ");
   return key.split(" ").map((word) => word ? word[0].toUpperCase() + word.slice(1) : word).join(" ");
+}
+
+function eventConversation(item) {
+  const details = item && item.details && typeof item.details === "object" ? item.details : {};
+  const agentEvent = details.agent_event && typeof details.agent_event === "object"
+    ? details.agent_event : null;
+  const agentName = details.speaker || (agentEvent && agentEvent.agent) || item.stage || "Pipeline";
+  const speaker = stageLabel(String(agentName).replace(/^agent:/, ""));
+  const data = agentEvent && agentEvent.data && typeof agentEvent.data === "object"
+    ? agentEvent.data : {};
+  const finding = Array.isArray(data.findings)
+    ? data.findings.find((value) => typeof value === "string" && value.trim()) : null;
+  const recommendation = Array.isArray(data.recommendations)
+    ? data.recommendations.find((value) => typeof value === "string" && value.trim()) : null;
+  return {
+    speaker: speaker,
+    recipient: typeof details.to === "string" ? details.to : "",
+    isAgent: Boolean(details.speaker || agentEvent),
+    finding: finding || "",
+    recommendation: recommendation || "",
+  };
 }
 
 function statusLabel(status) {
@@ -262,34 +343,71 @@ function statusLabel(status) {
   return map[status] || String(status || "INFO").toUpperCase();
 }
 
-function renderAgentEvents(events) {
+function renderAgentEvents(events, state = {}) {
   els.events.replaceChildren();
-  if (!events.length) {
+  if (!events.length && !state.running) {
     const empty = document.createElement("div");
     empty.className = "empty-events";
-    empty.innerHTML = '<span>✦</span><p>Your agents’ recorded activity will show here.</p>';
+    empty.textContent =
+      "Agent notes and pipeline updates will appear here as Heyaa records them. No simulated chat is shown.";
     els.events.append(empty);
     return;
   }
+
   const list = expandedEvents ? events : events.slice(-8);
   for (const item of list.slice().reverse()) {
+    const conversation = eventConversation(item);
+    const status = String(item.status || "info").replace(/[^a-z_]/g, "");
     const row = document.createElement("article");
-    row.className = "event-row";
-    const marker = document.createElement("span");
-    marker.className = `event-marker ${String(item.status || "info").replace(/[^a-z_]/g, "")}`;
+    row.className = "event-row " +
+      (conversation.isAgent ? "agent-message " : "pipeline-message ") + status;
+
+    const avatar = document.createElement("span");
+    avatar.className = "event-avatar";
+    const initials = conversation.speaker.split(/\\s+/).filter(Boolean)
+      .slice(0, 2).map((part) => part[0]).join("");
+    avatar.textContent = (initials || "HP").toUpperCase();
+
     const copy = document.createElement("div");
     copy.className = "event-copy";
+    const head = document.createElement("div");
+    head.className = "event-head";
     const title = document.createElement("strong");
-    title.textContent = stageLabel(item.stage);
+    title.textContent = conversation.speaker;
+    const route = document.createElement("span");
+    route.className = "event-route";
+    route.textContent = conversation.recipient
+      ? "→ " + conversation.recipient
+      : (conversation.isAgent ? "AGENT REPORT" : "PIPELINE");
+    head.append(title, route);
+
     const summary = document.createElement("p");
-    summary.textContent = item.summary || "";
+    summary.textContent = item.summary || "No summary was recorded.";
+    copy.append(head, summary);
+
+    if (conversation.finding) {
+      const finding = document.createElement("small");
+      finding.className = "event-detail";
+      finding.textContent = "Finding · " + conversation.finding;
+      copy.append(finding);
+    }
+    if (conversation.recommendation) {
+      const recommendation = document.createElement("small");
+      recommendation.className = "event-detail";
+      recommendation.textContent = "Next step · " + conversation.recommendation;
+      copy.append(recommendation);
+    }
+
+    const footer = document.createElement("div");
+    footer.className = "event-footer";
     const time = document.createElement("small");
     time.textContent = item.timestamp ? new Date(item.timestamp).toLocaleTimeString() : "";
-    copy.append(title, summary, time);
     const pill = document.createElement("span");
-    pill.className = `event-status ${String(item.status || "").replace(/[^a-z_]/g, "")}`;
+    pill.className = "event-status " + status;
     pill.textContent = statusLabel(item.status);
-    row.append(marker, copy, pill);
+    footer.append(time, pill);
+    copy.append(footer);
+    row.append(avatar, copy);
     els.events.append(row);
   }
   $("#show-more-events").textContent = expandedEvents ? "Show latest" : "View all";
@@ -432,7 +550,11 @@ async function startRender(preview = false) {
     }
     await saveSettings();
     if (!preview && els.ai.checked && !currentState?.ai_upscale?.available) {
-      throw new Error("Real-ESRGAN assets are not installed. Turn off AI Restore or install the configured model first.");
+      const status = currentState?.ai_upscale || {};
+      const reason = !status.binary_exists ? "the Real-ESRGAN executable is missing"
+        : !status.model_weights_exist ? "the configured model weights are missing"
+        : (status.vulkan_probe?.reason || "hardware-backed Vulkan is unavailable");
+      throw new Error("AI Restore is unavailable because " + reason + ". Turn it off to run the standard renderer.");
     }
     $("#busy-copy").textContent = "Launching the existing Heyaa renderer.";
     const result = await api("/api/render", {
