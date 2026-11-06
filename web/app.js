@@ -276,7 +276,7 @@ function renderRunState(state) {
     : (state.exit_code === 0 ? "PROCESS COMPLETE" :
       state.exit_code !== null && state.exit_code !== undefined ? "PROCESS STOPPED · CHECK REPORT" :
       latest ? "LAST EVENT · " + stageLabel(latest.stage).toUpperCase() : "WAITING FOR RUN");
-  els.progressCount.textContent = events.length + " RECORDED EVENTS";
+  els.progressCount.textContent = events.length + " RECENT EVENTS";
 
   if (state.running) {
     const conversation = active ? eventConversation(active) : null;
@@ -427,7 +427,7 @@ function renderAgentEvents(events, state = {}) {
     row.append(avatar, copy);
     els.events.append(row);
   }
-  $("#show-more-events").textContent = expandedEvents ? "Show latest" : "View all";
+  $("#show-more-events").textContent = expandedEvents ? "Show latest" : "View recent";
 }
 
 function renderOutputs(state) {
