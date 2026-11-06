@@ -5,7 +5,7 @@ const els = {
   videoUrl: $("#video-url"), musicUrl: $("#music-url"), referenceUrl: $("#reference-url"),
   edits: $("#edits-select"), clips: $("#clips-select"), duration: $("#duration-select"),
   speed: $("#speed-range"), speedValue: $("#speed-value"), layout: [...document.querySelectorAll("[data-layout]")],
-  ai: $("#ai-upscale"), subject: $("#subject-lock"), beat: $("#beat-sync"), skull: $("#ending-skull"),
+  ai: $("#ai-upscale"), subject: $("#subject-lock"), faceDetection: $("#face-detection"), beat: $("#beat-sync"), skull: $("#ending-skull"),
   referencePacing: $("#reference-pacing"), mirror: $("#mirror"), flash: $("#beat-flash"),
   bass: $("#bass-boost"), loop: $("#music-loop"), sfx: $("#impact-sfx"),
   settingsNote: $("#settings-save-note"), statePill: $("#run-state"),
@@ -122,7 +122,8 @@ function applySettings(config) {
   selectedLayout = edit.layout_mode || "blur_fit";
   els.layout.forEach((button) => button.classList.toggle("active", button.dataset.layout === selectedLayout));
   els.ai.checked = video.ai_upscale_enabled === true;
-  els.subject.checked = edit.subject_lock_enabled === true;
+  els.subject.checked = edit.subject_lock_enabled !== false;
+  els.faceDetection.checked = edit.face_detection_enabled !== false;
   els.beat.checked = audio.beat_sync === true;
   els.skull.checked = edit.ending_skull_enabled === true;
   els.referencePacing.checked = edit.reference_pacing === true;
@@ -151,6 +152,7 @@ function settingsPayload() {
       mirror_enabled: els.mirror.checked,
       reference_pacing: els.referencePacing.checked,
       subject_lock_enabled: els.subject.checked,
+      face_detection_enabled: els.faceDetection.checked,
       ending_skull_enabled: els.skull.checked,
       impact_sfx_enabled: els.sfx.checked,
     },
