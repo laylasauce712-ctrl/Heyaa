@@ -198,7 +198,7 @@ class AIUpscaleTests(unittest.TestCase):
              patch("src.agent_director.resolve_ai_upscaler", side_effect=FileNotFoundError("missing model")), \
              patch("src.agent_director.prepare_media_sources") as prepare_sources:
             with self.assertRaisesRegex(FileNotFoundError, "missing model"):
-                renderer.main(["--variants", "1"])
+                renderer.main(["--variants", "1", "--reference-path", ""])
         prepare_sources.assert_not_called()
 
 
