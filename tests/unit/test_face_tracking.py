@@ -25,6 +25,12 @@ class FaceCascadeLookupTests(unittest.TestCase):
             )
             self.assertIsNone(_find_face_cascade(fake_cv2))
 
+    def test_project_bundles_the_opencv_frontal_face_classifier(self):
+        cascade = Path(__file__).resolve().parents[2] / "src" / "heyaa" / "assets" / "haarcascade_frontalface_default.xml"
+        self.assertTrue(cascade.is_file())
+        self.assertGreater(cascade.stat().st_size, 100_000)
+        self.assertIn("Intel License Agreement", cascade.read_text(encoding="utf-8", errors="replace")[:2500])
+
 
 if __name__ == "__main__":
     unittest.main()
