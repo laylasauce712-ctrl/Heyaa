@@ -32,7 +32,7 @@
       <div>
         <p class="eyebrow"><span class="eyebrow-line"></span> PHONK / MONTAGEM WORKFLOW</p>
         <h1>Make the moment <em>hit.</em></h1>
-        <p class="hero-subtitle">Build vertical edits from your footage, your sound and your reference. One studio, one render engine.</p>
+        <p class="hero-subtitle">A local-first editing system for your footage, your Phonk soundtrack and the pacing reference you choose. One studio, one render engine.</p>
       </div>
       <div class="hero-format">
         <span class="format-icon">9:16</span>
@@ -78,18 +78,18 @@
             <div class="media-main">
               <label for="reference-select">VISUAL REFERENCE <span class="optional-label">OPTIONAL</span></label>
               <select id="reference-select"><option value="">No reference selected</option></select>
-              <small id="reference-meta">Cut pacing is measured; the reference frames are not copied.</small>
+              <small id="reference-meta">Optional. When selected, its cut pacing must be measurable; its footage and audio are never copied into the edit.</small>
             </div>
             <button class="upload-button" data-upload="reference" type="button"><span>+</span> Upload</button>
             <input type="file" id="upload-reference" accept="video/mp4,video/quicktime,video/x-matroska,video/webm,video/x-msvideo,.m4v" hidden>
           </article>
         </div>
         <details class="link-inputs">
-          <summary><span class="link-summary-icon">↗</span> Use media links instead</summary>
+          <summary><span class="link-summary-icon">↗</span> Use TikTok / YouTube / direct media links</summary>
           <div class="link-fields">
-            <label>SOURCE URL<input id="video-url" type="url" placeholder="YouTube, TikTok or direct HTTPS video"></label>
-            <label>MUSIC URL<input id="music-url" type="url" placeholder="Direct audio or supported video link"></label>
-            <label>REFERENCE URL<input id="reference-url" type="url" placeholder="Optional YouTube, TikTok or direct video link"></label>
+            <label>SOURCE URL<input id="video-url" type="url" placeholder="TikTok post/share, YouTube video or direct HTTPS video URL"></label>
+            <label>MUSIC URL<input id="music-url" type="url" placeholder="Direct HTTPS audio or supported video link"></label>
+            <label>REFERENCE URL<input id="reference-url" type="url" placeholder="Optional TikTok / YouTube pacing reference or direct video URL"></label>
             <p class="field-note">A link replaces the local file for that input. Downloads stay inside this project’s input/ folder.</p>
           </div>
         </details>
@@ -108,9 +108,19 @@
           </div>
         </div>
         <div class="progress-track"><span id="progress-fill"></span></div>
-        <div class="progress-caption"><span id="progress-stage">WAITING FOR RUN</span><span id="progress-count">0 EVENTS</span></div>
-        <div class="agent-list" id="agent-events" aria-live="polite">
-          <div class="empty-events"><span>✦</span><p>Your agents’ recorded activity will show here.</p></div>
+        <div class="progress-caption"><span id="progress-stage">WAITING FOR RUN</span><span id="progress-count">0 RECORDED EVENTS</span></div>
+        <div class="agent-live-status" id="agent-live-status" data-mode="idle" aria-live="polite">
+          <span class="agent-live-icon" aria-hidden="true"><i></i></span>
+          <div class="agent-live-message">
+            <small id="agent-feed-mode">ENGINE STANDBY</small>
+            <strong id="agent-live-title">Agents standing by</strong>
+            <p id="agent-live-copy">When a render starts, the current task and recorded agent messages will appear here.</p>
+          </div>
+          <div class="agent-typing" id="agent-typing" hidden aria-label="The render process is active"><span></span><span></span><span></span></div>
+        </div>
+        <div class="agent-feed-heading"><span>RECORDED AGENT COMMUNICATIONS</span><small>LIVE EVENT STREAM</small></div>
+        <div class="agent-list" id="agent-events" role="log" aria-label="Recorded agent and render events" aria-live="polite" aria-relevant="additions text">
+          <div class="empty-events">Agent notes and pipeline updates will appear here as Heyaa records them. No simulated chat is shown.</div>
         </div>
         <div class="monitor-footer"><span class="live-indicator"></span><span id="monitor-footer-text">Connected to local Heyaa process</span><button id="show-more-events" type="button">View latest</button></div>
       </section>
@@ -132,7 +142,7 @@
         <div class="setup-block">
           <label for="clips-select">MOTION CLIPS PER EDIT</label>
           <div class="select-wrap"><select id="clips-select">
-            <option value="">Auto · follow reference</option>
+            <option value="">Auto · follow reference when available</option>
             <option value="11">11 clips</option><option value="12">12 clips</option><option value="16">16 clips</option><option value="20">20 clips</option><option value="24">24 clips</option><option value="32">32 clips</option><option value="40">40 clips</option>
           </select></div>
           <small>Clip count is separate from how many edits you generate.</small>
