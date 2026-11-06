@@ -109,11 +109,21 @@ ffmpeg -nostdin -hide_banner -loglevel error -y \
 }
 mv -f "$TEMP_AUDIO" "$AUDIO_PATH"
 
-echo "[export] Checking Real-ESRGAN executable and model weights ..."
-if [[ ! -x "$ROOT/tools/realesrgan/realesrgan-ncnn-vulkan" \
-   || ! -s "$ROOT/tools/realesrgan/models/realesrgan-x4plus.param" \
-   || ! -s "$ROOT/tools/realesrgan/models/realesrgan-x4plus.bin" ]]; then
-  bash "$ROOT/scripts/install_realesrgan_linux.sh"
+AI_UPSCALE="${HEYAA_ENABLE_AI_UPSCALE:-0}"
+if [[ "$AI_UPSCALE" != "0" && "$AI_UPSCALE" != "1" ]]; then
+  echo "[export] ERROR: HEYAA_ENABLE_AI_UPSCALE must be 0 or 1." >&2
+  exit 1
+fi
+
+if [[ "$AI_UPSCALE" == "1" ]]; then
+  echo "[export] AI Restore explicitly enabled; checking Real-ESRGAN assets ..."
+  if [[ ! -x "$ROOT/tools/realesrgan/realesrgan-ncnn-vulkan" \
+     || ! -s "$ROOT/tools/realesrgan/models/realesrgan-x4plus.param" \
+     || ! -s "$ROOT/tools/realesrgan/models/realesrgan-x4plus.bin" ]]; then
+    bash "$ROOT/scripts/install_realesrgan_linux.sh"
+  fi
+else
+  echo "[export] AI Restore disabled (default); standard FFmpeg scaling will be used."
 fi
 
 mkdir -p "$ROOT/output"
@@ -137,7 +147,7 @@ audio = config.setdefault("audio_settings", {})
 
 video["resolution"] = "1080x1920"
 video["fps"] = 60
-video["ai_upscale_enabled"] = True
+video["ai_upscale_enabled"] = os.environ["HEYAA_ENABLE_AI_UPSCALE"] == "1"
 
 edit["duration_seconds"] = 20
 edit["min_clips"] = 11
@@ -156,7 +166,12 @@ PY
 
 export HEYAA_PARAMS_PATH="$PROFILE"
 
-echo "[export] Running dependency, model and hardware-Vulkan preflight ..."
+echo "[export] Running dependency preflight ..."
+if [[ "$AI_UPSCALE" == "1" ]]; then
+  echo "[export] AI Restore is ON; doctor must confirm hardware-backed Vulkan."
+else
+  echo "[export] AI Restore is OFF; no Vulkan GPU is required."
+fi
 "$PYTHON" "$ROOT/src/agent_director.py" doctor
 
 echo "[export] Starting $EDIT_COUNT distinct edit(s) ..."
