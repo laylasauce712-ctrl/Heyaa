@@ -2991,6 +2991,14 @@ def analyze_render_critique(path, duration):
     }
 
 
+def _finite_audio_peak(value):
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(float(value))
+    )
+
+
 def repair_encoded_audio_true_peak(path, duration, metrics, target_dbfs=-1.5, max_attempts=2):
     """Attenuate only the encoded audio when AAC true peak exceeds a safe ceiling.
 
@@ -3015,7 +3023,7 @@ def repair_encoded_audio_true_peak(path, duration, metrics, target_dbfs=-1.5, ma
     if current.get("audio_silent") is True:
         report["status"] = "skipped_silent_audio"
         return current, report
-    if not _finite_number(original_peak):
+    if not _finite_audio_peak(original_peak):
         report["status"] = "skipped_unmeasured_true_peak"
         return current, report
     if float(original_peak) <= float(target_dbfs):
@@ -3025,7 +3033,7 @@ def repair_encoded_audio_true_peak(path, duration, metrics, target_dbfs=-1.5, ma
     source_path = Path(path)
     for attempt in range(1, max_attempts + 1):
         peak = current.get("true_peak_dbfs")
-        if not _finite_number(peak):
+        if not _finite_audio_peak(peak):
             report["status"] = "measurement_unavailable_after_repair"
             break
         if float(peak) <= float(target_dbfs):
@@ -3073,7 +3081,7 @@ def repair_encoded_audio_true_peak(path, duration, metrics, target_dbfs=-1.5, ma
                 "attenuation_db": round(attenuation_db, 4),
                 "true_peak_before_dbfs": float(peak),
                 "true_peak_after_dbfs": new_peak,
-                "status": "measured" if _finite_number(new_peak) else "measurement_failed",
+                "status": "measured" if _finite_audio_peak(new_peak) else "measurement_failed",
             })
             current = updated
         except (OSError, RuntimeError, ValueError) as exc:
@@ -3087,9 +3095,9 @@ def repair_encoded_audio_true_peak(path, duration, metrics, target_dbfs=-1.5, ma
 
     final_peak = current.get("true_peak_dbfs")
     report["final_true_peak_dbfs"] = final_peak
-    if _finite_number(final_peak) and float(final_peak) <= float(target_dbfs):
+    if _finite_audio_peak(final_peak) and float(final_peak) <= float(target_dbfs):
         report["status"] = "target_met"
-    elif _finite_number(final_peak) and float(final_peak) < 0.0:
+    elif _finite_audio_peak(final_peak) and float(final_peak) < 0.0:
         report["status"] = "below_clipping_threshold_target_not_met"
     elif report["attempted"]:
         report["status"] = "repair_did_not_clear_clipping"
