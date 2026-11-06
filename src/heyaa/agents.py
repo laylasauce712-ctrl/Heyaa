@@ -196,29 +196,41 @@ def beat_sync_agent(analysis: dict[str, Any]) -> AgentResult:
     enabled = analysis.get("enabled") is True
     count = analysis.get("candidate_count", 0)
     fallback = analysis.get("fallback")
+    drop_transition = analysis.get("drop_transition_evidence")
+    if not isinstance(drop_transition, dict):
+        drop_transition = None
+    drop_summary = (
+        f"A sustained low-band transition candidate was measured at {drop_transition.get('timestamp_seconds')}s "
+        f"(confidence={drop_transition.get('confidence')}); this is not semantic music understanding."
+        if drop_transition else
+        "No sustained low-band drop-transition candidate passed the confidence threshold."
+    )
     if not enabled:
         return AgentResult("beat_sync_agent", "skipped", None, 0.0,
                            ("Beat sync is disabled in params.json.",), (),
-                           {"enabled": False, "candidate_count": 0})
+                           {"enabled": False, "candidate_count": 0,
+                            "drop_transition_evidence": drop_transition})
     if not isinstance(count, int) or isinstance(count, bool) or count < 0:
         return AgentResult("beat_sync_agent", "blocked", None, 0.0,
                            ("Beat candidate count is invalid.",), (), {"candidate_count": count})
+    evidence = {
+        "enabled": True, "candidate_count": count, "fallback": fallback,
+        "method": analysis.get("method", "unknown"),
+        "tempo_bpm": analysis.get("tempo_bpm"),
+        "loop_expanded": bool(analysis.get("loop_expanded", False)),
+        "source_candidate_count": analysis.get("source_candidate_count", count),
+        "drop_transition_evidence": drop_transition,
+    }
     if count < 3 or fallback == "even_pacing":
+        evidence["fallback"] = "even_pacing"
         return AgentResult("beat_sync_agent", "insufficient_evidence", None, 0.0,
-                           ("No stable beat sequence was available; even pacing fallback was used.",),
+                           ("No stable beat sequence was available; even pacing fallback was used.", drop_summary),
                            ("Keep fallback timing and expose low beat confidence; do not claim beat-accurate cuts.",),
-                           {"enabled": True, "candidate_count": count, "fallback": "even_pacing",
-                            "method": analysis.get("method", "unknown"),
-                        "loop_expanded": bool(analysis.get("loop_expanded", False)),
-                        "source_candidate_count": analysis.get("source_candidate_count", count)})
+                           evidence)
     return AgentResult("beat_sync_agent", "ok", None, 0.45,
-                       ("Bass-onset candidates were detected by a lightweight heuristic.",),
-                       ("Review beat alignment visually; candidates are not guaranteed downbeats.",),
-                       {"enabled": True, "candidate_count": count, "fallback": None,
-                        "method": analysis.get("method", "unknown"),
-                        "tempo_bpm": analysis.get("tempo_bpm"),
-                        "loop_expanded": bool(analysis.get("loop_expanded", False)),
-                        "source_candidate_count": analysis.get("source_candidate_count", count)})
+                       ("Bass-onset candidates were detected by the lightweight timing heuristic.", drop_summary),
+                       ("Review cut alignment visually; onsets are not guaranteed downbeats or semantic drops.",),
+                       evidence)
 
 
 def planner(context: dict[str, Any]) -> AgentResult:
