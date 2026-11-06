@@ -759,15 +759,32 @@ def render_critic(metrics: dict[str, Any]) -> AgentResult:
         warnings.append("Encoded audio true peak is above the -0.5 dBFS safety target; review the limiter ceiling.")
     if _finite_number(mean_db) and float(mean_db) <= -35.0:
         warnings.append("Average audio level is very low; check perceived loudness on a real device.")
+
+    visual_quality = metrics.get("visual_quality")
+    if isinstance(visual_quality, dict):
+        visual_status = visual_quality.get("status")
+        visual_warnings = visual_quality.get("warnings", [])
+        if isinstance(visual_warnings, list):
+            warnings.extend(str(item) for item in visual_warnings if isinstance(item, str))
+        if visual_status == "unavailable":
+            warnings.append("Sampled visual QA was unavailable; review the contact sheet manually.")
+        elif visual_status not in {"ok", "needs_review", "unavailable"}:
+            warnings.append("Sampled visual QA returned an unrecognized status; review the contact sheet.")
+    elif "visual_quality" in metrics:
+        warnings.append("Sampled visual QA payload was malformed; review the contact sheet manually.")
+        visual_quality = {"status": "malformed", "aesthetic_quality_assessed": False}
+
     status = "needs_review" if warnings else "ok"
     return AgentResult("render_critic", status, None, 0.85,
-                       tuple(warnings or ["No long black interval or obvious silence/clipping risk was found by these simple metrics."]),
-                       ("Listen to the complete export and inspect representative frames; this stage does not judge composition or style.",),
+                       tuple(warnings or ["No measured black-frame, audio, blur, darkness or unintended-still risk was flagged."]),
+                       ("Listen to the complete export and inspect representative frames; sampled metrics cannot judge aesthetics, semantic action or identity.",),
                        {"longest_black_interval_seconds": round(longest_black, 4),
                         "black_interval_count": len(checked_segments),
                         "mean_volume_db": mean_db, "max_volume_db": peak_db,
                         "true_peak_dbfs": true_peak_dbfs,
-                        "warnings": warnings, "semantic_visual_review": False})
+                        "visual_quality": visual_quality,
+                        "warnings": warnings, "semantic_visual_review": False,
+                        "aesthetic_quality_assessed": False})
 
 
 def director_agent(results: dict[str, AgentResult], *, reference_required: bool = False) -> AgentResult:
