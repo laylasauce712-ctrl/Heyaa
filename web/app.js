@@ -364,7 +364,7 @@ function renderAgentEvents(events, state = {}) {
 
     const avatar = document.createElement("span");
     avatar.className = "event-avatar";
-    const initials = conversation.speaker.split(/\\s+/).filter(Boolean)
+    const initials = conversation.speaker.split(/\s+).filter(Boolean)
       .slice(0, 2).map((part) => part[0]).join("");
     avatar.textContent = (initials || "HP").toUpperCase();
 
