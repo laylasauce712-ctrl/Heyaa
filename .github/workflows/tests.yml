@@ -3,7 +3,7 @@ name: Heyaa tests
 on:
   pull_request:
   push:
-    branches: [main, improve/phonk-renderer-v1, feat/edl-contract-m1a]
+    branches: [main, improve/phonk-renderer-v1, feat/edl-contract-m1a, fix/reliable-reference-audio-export]
 
 jobs:
   unit-tests:
