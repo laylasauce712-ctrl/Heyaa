@@ -11,6 +11,8 @@ class DefaultProfileClipMinimumTests(unittest.TestCase):
         self.assertGreaterEqual(edit["min_clips"], 11)
         self.assertLessEqual(edit["min_clips"], edit["max_clips"])
         self.assertLessEqual(edit["max_clips"], 40)
+        # GPU binaries and weights are ignored/local assets, not part of a fresh clone.
+        self.assertIs(profile["video_settings"]["ai_upscale_enabled"], False)
 
 
 if __name__ == "__main__":
