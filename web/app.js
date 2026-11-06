@@ -325,12 +325,23 @@ function eventConversation(item) {
     ? data.findings.find((value) => typeof value === "string" && value.trim()) : null;
   const recommendation = Array.isArray(data.recommendations)
     ? data.recommendations.find((value) => typeof value === "string" && value.trim()) : null;
+  const evidence = data.evidence || details.evidence || null;
+  let evidenceSummary = "";
+  if (evidence && typeof evidence === "object") {
+    try {
+      const rendered = JSON.stringify(evidence);
+      evidenceSummary = rendered.length > 280 ? rendered.slice(0, 277) + "…" : rendered;
+    } catch (_) {
+      evidenceSummary = "Evidence was recorded; see the run report for full details.";
+    }
+  }
   return {
     speaker: speaker,
     recipient: typeof details.to === "string" ? details.to : "",
     isAgent: Boolean(details.speaker || agentEvent),
     finding: finding || "",
     recommendation: recommendation || "",
+    evidence: evidenceSummary,
   };
 }
 
@@ -396,6 +407,12 @@ function renderAgentEvents(events, state = {}) {
       recommendation.className = "event-detail";
       recommendation.textContent = "Next step · " + conversation.recommendation;
       copy.append(recommendation);
+    }
+    if (conversation.evidence) {
+      const evidence = document.createElement("small");
+      evidence.className = "event-detail";
+      evidence.textContent = "Evidence · " + conversation.evidence;
+      copy.append(evidence);
     }
 
     const footer = document.createElement("div");
