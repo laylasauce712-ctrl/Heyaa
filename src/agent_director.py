@@ -3399,7 +3399,7 @@ def describe_subject_tracking_context(layout_mode, long_source_mode, analysis):
         span = analysis.get("track_span_seconds")
         quality = analysis.get("track_quality_proxy")
         summary = (
-            "OpenCV found an appearance-consistent person track "
+            "OpenCV found a recurring face-location or HOG person-appearance track "
             f"({span}s span; quality proxy={quality}). "
         )
         if layout_mode == "fill":
@@ -3415,7 +3415,7 @@ def describe_subject_tracking_context(layout_mode, long_source_mode, analysis):
         fallback = "Using scene-density context and a centered 9:16 crop fallback."
     else:
         fallback = "Using audio/motion scene context and blur-fit full-frame framing."
-    return f"Person tracking unavailable: {reason}. {fallback}"
+    return f"Face/person tracking unavailable: {reason}. {fallback}"
 
 
 def run_doctor():
@@ -3827,7 +3827,7 @@ def main(argv=None):
     if drop_beat_time is not None:
         boundaries_seconds, planned_drop_position = insert_drop_boundary(boundaries_seconds, drop_beat_time, min_gap=MIN_SHOT_SECONDS)
         print(
-            f"[edit] Drop-impact freeze: strongest bass-onset proxy at {drop_beat_time:.2f}s; "
+            f"[edit] Drop-impact freeze: sustained low-band transition candidate at {drop_beat_time:.2f}s; "
             f"freeze boundary={planned_drop_position:.2f}s for {drop_freeze_duration:.3f}s."
         )
     total_motion_frames = total_frames - freeze_frames - drop_freeze_frames
