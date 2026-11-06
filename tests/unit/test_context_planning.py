@@ -652,6 +652,58 @@ class ContextPlanningTests(unittest.TestCase):
                 fps=10, minimum_gap_frames=1,
             )
 
+
+    def test_encoded_audio_true_peak_repair_attenuates_audio_without_reencoding_video(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            final_path = Path(temporary) / "final_render.mp4"
+            final_path.write_bytes(b"original video and audio")
+            visual = {"status": "ok", "warnings": []}
+            initial = {
+                "true_peak_dbfs": 0.4, "mean_volume_db": -12.0,
+                "max_volume_db": 0.0, "audio_silent": False,
+                "black_segments": [], "duration_seconds": 20.0,
+                "measurement_errors": [], "visual_quality": visual,
+            }
+            corrected = {
+                "true_peak_dbfs": -1.8, "mean_volume_db": -14.0,
+                "max_volume_db": -2.0, "audio_silent": False,
+                "black_segments": [], "duration_seconds": 20.0,
+                "measurement_errors": [],
+            }
+            commands = []
+
+            def fake_run(command, **kwargs):
+                commands.append(command)
+                Path(command[-1]).write_bytes(b"audio corrected, video stream copied")
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            with patch.object(renderer.subprocess, "run", side_effect=fake_run), \
+                 patch.object(renderer, "analyze_render_critique", return_value=corrected):
+                measured, report = renderer.repair_encoded_audio_true_peak(
+                    str(final_path), 20.0, initial, target_dbfs=-1.5,
+                )
+
+            self.assertTrue(report["attempted"])
+            self.assertEqual(report["status"], "target_met")
+            self.assertAlmostEqual(report["final_true_peak_dbfs"], -1.8)
+            self.assertEqual(measured["visual_quality"], visual)
+            self.assertEqual(len(commands), 1)
+            command = commands[0]
+            self.assertEqual(command[command.index("-c:v") + 1], "copy")
+            self.assertIn("-af", command)
+            self.assertIn("volume=-2.1500dB", command)
+            self.assertEqual(final_path.read_bytes(), b"audio corrected, video stream copied")
+
+    def test_encoded_audio_true_peak_repair_does_not_touch_safe_or_unmeasured_audio(self):
+        for peak, expected_status in [(-2.0, "already_within_target"), (None, "skipped_unmeasured_true_peak")]:
+            metrics = {"true_peak_dbfs": peak, "audio_silent": False}
+            updated, report = renderer.repair_encoded_audio_true_peak(
+                "unused.mp4", 20.0, metrics,
+            )
+            self.assertEqual(report["status"], expected_status)
+            self.assertFalse(report["attempted"])
+            self.assertEqual(updated, metrics)
+
     def test_source_usage_ledger_subtracts_previous_edits_and_keeps_fragments(self):
         segments = [{
             "start_seconds": 0.0, "end_seconds": 10.0,

@@ -2991,6 +2991,111 @@ def analyze_render_critique(path, duration):
     }
 
 
+def repair_encoded_audio_true_peak(path, duration, metrics, target_dbfs=-1.5, max_attempts=2):
+    """Attenuate only the encoded audio when AAC true peak exceeds a safe ceiling.
+
+    Video packets are stream-copied. Each correction is calculated from the
+    measured encoded true peak, then the resulting MP4 is measured again.
+    """
+    if (not isinstance(target_dbfs, (int, float)) or isinstance(target_dbfs, bool)
+            or not math.isfinite(float(target_dbfs)) or float(target_dbfs) >= 0):
+        raise ValueError("target_dbfs must be a finite negative dBFS value.")
+    if isinstance(max_attempts, bool) or not isinstance(max_attempts, int) or not 1 <= max_attempts <= 3:
+        raise ValueError("max_attempts must be an integer from 1 to 3.")
+    current = dict(metrics or {})
+    original_peak = current.get("true_peak_dbfs")
+    report = {
+        "attempted": False,
+        "target_true_peak_dbfs": float(target_dbfs),
+        "original_true_peak_dbfs": original_peak,
+        "attempts": [],
+        "status": "not_needed",
+        "video_reencoded": False,
+    }
+    if current.get("audio_silent") is True:
+        report["status"] = "skipped_silent_audio"
+        return current, report
+    if not _finite_number(original_peak):
+        report["status"] = "skipped_unmeasured_true_peak"
+        return current, report
+    if float(original_peak) <= float(target_dbfs):
+        report["status"] = "already_within_target"
+        return current, report
+
+    source_path = Path(path)
+    for attempt in range(1, max_attempts + 1):
+        peak = current.get("true_peak_dbfs")
+        if not _finite_number(peak):
+            report["status"] = "measurement_unavailable_after_repair"
+            break
+        if float(peak) <= float(target_dbfs):
+            report["status"] = "target_met"
+            break
+
+        # Add 0.25 dB of guard margin for the AAC re-encode itself.
+        attenuation_db = float(target_dbfs) - float(peak) - 0.25
+        temp_path = source_path.with_name(
+            f"{source_path.stem}.audio-safe-{attempt}{source_path.suffix}"
+        )
+        try:
+            temp_path.unlink(missing_ok=True)
+            command = [
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                "-i", str(source_path),
+                "-map", "0:v:0", "-map", "0:a:0",
+                "-map_metadata", "0", "-map_chapters", "0",
+                "-c:v", "copy",
+                "-af", f"volume={attenuation_db:.4f}dB",
+                "-c:a", "aac", "-b:a", "192k",
+                "-movflags", "+faststart", str(temp_path),
+            ]
+            result = subprocess.run(
+                command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, check=False,
+            )
+            if result.returncode != 0 or not temp_path.is_file() or temp_path.stat().st_size <= 0:
+                detail = ((result.stderr or "") + "\n" + (result.stdout or "")).strip()
+                report["attempts"].append({
+                    "attempt": attempt, "attenuation_db": round(attenuation_db, 4),
+                    "status": "encode_failed", "detail": detail[-1200:],
+                })
+                report["status"] = "audio_repair_encode_failed"
+                temp_path.unlink(missing_ok=True)
+                break
+            os.replace(temp_path, source_path)
+            report["attempted"] = True
+            updated = analyze_render_critique(str(source_path), duration)
+            # The video stream is copied bit-for-bit; retain its already measured visual QA.
+            updated["visual_quality"] = current.get("visual_quality")
+            new_peak = updated.get("true_peak_dbfs")
+            report["attempts"].append({
+                "attempt": attempt,
+                "attenuation_db": round(attenuation_db, 4),
+                "true_peak_before_dbfs": float(peak),
+                "true_peak_after_dbfs": new_peak,
+                "status": "measured" if _finite_number(new_peak) else "measurement_failed",
+            })
+            current = updated
+        except (OSError, RuntimeError, ValueError) as exc:
+            temp_path.unlink(missing_ok=True)
+            report["attempts"].append({
+                "attempt": attempt, "attenuation_db": round(attenuation_db, 4),
+                "status": "repair_failed", "detail": str(exc)[:1200],
+            })
+            report["status"] = "audio_repair_failed"
+            break
+
+    final_peak = current.get("true_peak_dbfs")
+    report["final_true_peak_dbfs"] = final_peak
+    if _finite_number(final_peak) and float(final_peak) <= float(target_dbfs):
+        report["status"] = "target_met"
+    elif _finite_number(final_peak) and float(final_peak) < 0.0:
+        report["status"] = "below_clipping_threshold_target_not_met"
+    elif report["attempted"]:
+        report["status"] = "repair_did_not_clear_clipping"
+    return current, report
+
+
 
 def _run_variant_process(command, variant_index):
     """Run one variant in its own process group so Ctrl-C stops the whole render tree."""
@@ -4755,10 +4860,30 @@ def main(argv=None):
         final_video, actual, final_freeze_seconds=FREEZE,
         sample_fps=5.0, max_width=320,
     )
+    render_critique, audio_safety_repair = repair_encoded_audio_true_peak(
+        final_video, actual, render_critique, target_dbfs=-1.5, max_attempts=2,
+    )
+    if audio_safety_repair["attempted"]:
+        actual, video_codec, audio_codec, render_report = verify_output(final_video)
+        progress_event(
+            "audio_true_peak_safety", "completed" if audio_safety_repair["status"] == "target_met" else "needs_review",
+            (
+                f"Audio-only safety correction completed; encoded true peak is "
+                f"{audio_safety_repair.get('final_true_peak_dbfs')} dBFS. Video stream was copied, not re-rendered."
+            ),
+            audio_safety_repair,
+        )
+    elif audio_safety_repair["status"] not in {"not_needed", "already_within_target"}:
+        progress_event(
+            "audio_true_peak_safety", "needs_review",
+            "Automatic audio-only safety correction could not be completed; the original true-peak QA gate remains active.",
+            audio_safety_repair,
+        )
+    render_critique["audio_safety_repair"] = audio_safety_repair
 
     progress_event(
         "render_critique", "completed",
-        "Render Critic measured audio/black-frame risks and sampled blur, brightness and unintended still-frame risks.",
+        "Render Critic measured the encoded true peak after any audio-only safety correction and sampled visual risks.",
         {"black_segment_count": len(render_critique.get("black_segments", [])),
          "mean_volume_db": render_critique.get("mean_volume_db"),
          "max_volume_db": render_critique.get("max_volume_db"),
