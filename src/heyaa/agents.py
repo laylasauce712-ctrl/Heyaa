@@ -107,6 +107,8 @@ def settings_agent(config: dict[str, Any]) -> AgentResult:
         findings.append("edit_settings.source_chapter_seconds must be between 60 and 120 seconds.")
     if not isinstance(edit.get("subject_lock_enabled", True), bool):
         findings.append("edit_settings.subject_lock_enabled must be an explicit boolean.")
+    if not isinstance(edit.get("face_detection_enabled", True), bool):
+        findings.append("edit_settings.face_detection_enabled must be an explicit boolean.")
     source_gap = edit.get("source_min_gap_seconds", 0.05)
     if (not _finite_number(source_gap) or not 0.0 <= float(source_gap) <= 1.0):
         findings.append("edit_settings.source_min_gap_seconds must be between 0 and 1 second.")
