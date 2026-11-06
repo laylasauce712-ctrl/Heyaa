@@ -637,14 +637,13 @@ class ContextPlanningTests(unittest.TestCase):
         self.assertTrue(second)
         for current in second:
             for used in first:
-                self.assertGreaterEqual(
-                    current["source_start_f"],
-                    used["source_start_f"] + used["source_dur_f"] + 1,
+                current_after_used = (
+                    current["source_start_f"] >= used["source_start_f"] + used["source_dur_f"] + 1
                 )
-                self.assertGreaterEqual(
-                    used["source_start_f"],
-                    current["source_start_f"] + current["source_dur_f"] + 1,
+                used_after_current = (
+                    used["source_start_f"] >= current["source_start_f"] + current["source_dur_f"] + 1
                 )
+                self.assertTrue(current_after_used or used_after_current)
 
     def test_batch_progression_fallback_fails_clearly_when_unused_footage_is_short(self):
         with self.assertRaisesRegex(RuntimeError, "Only 1/2 motion clips fit"):
