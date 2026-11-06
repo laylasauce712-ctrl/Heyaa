@@ -32,9 +32,13 @@ except ModuleNotFoundError:
 try:
     from src.heyaa.agents import run_agent_team, export_storage_agent
     from src.heyaa.subject_tracking import detect_person_track, subject_observation_near
+    from src.heyaa.music_analysis import choose_drop_candidate
+    from src.heyaa.visual_qa import analyze_visual_quality
 except ModuleNotFoundError:
     from heyaa.agents import run_agent_team, export_storage_agent
     from heyaa.subject_tracking import detect_person_track, subject_observation_near
+    from heyaa.music_analysis import choose_drop_candidate
+    from heyaa.visual_qa import analyze_visual_quality
 
 VIDEO = "input/test_video.mp4"
 MUSIC = "input/phonk.mp3"
@@ -78,6 +82,7 @@ MIN_SHOT_SECONDS = 0.75
 MIN_SOURCE_GAP_SECONDS = 0.05
 SOURCE_CHAPTER_SECONDS = 90.0
 SUBJECT_LOCK_ENABLED = True
+FACE_DETECTION_ENABLED = True
 ENDING_SKULL_ENABLED = False
 ENDING_SKULL_SIZE_PX = 420
 ENDING_SKULL_POSITION_X = 0.5
@@ -90,6 +95,7 @@ CONFIG = None
 DROP_FREEZE_DURATION = 0.25
 DROP_BEAT_TIME = None
 DROP_BEAT_STRENGTH = None
+DROP_BEAT_EVIDENCE = None
 BEAT_GRID_ANALYSIS = {
     "method": "not_run",
     "confidence": None,
@@ -161,7 +167,7 @@ def load_settings():
     global DURATION, FPS, WIDTH, HEIGHT, CRF, PRESET, SPEED, FREEZE, EDIT_DURATION
     global BEAT_SYNC, BEAT_FLASH, BASS_BOOST, REFERENCE_PACING, MIRROR_ENABLED, LAYOUT_MODE
     global MIN_CLIPS, MAX_CLIPS, MIN_SHOT_SECONDS, MUSIC_LOOP, CODEC, CONFIG, DROP_FREEZE_DURATION, MIN_SOURCE_GAP_SECONDS
-    global SOURCE_CHAPTER_SECONDS, SUBJECT_LOCK_ENABLED
+    global SOURCE_CHAPTER_SECONDS, SUBJECT_LOCK_ENABLED, FACE_DETECTION_ENABLED
     global ENDING_SKULL_ENABLED, ENDING_SKULL_SIZE_PX, ENDING_SKULL_POSITION_X, ENDING_SKULL_POSITION_Y
     global ENDING_SKULL_POP_SECONDS, ENDING_IMPACT_SFX_ENABLED, PREVIEW_MODE
     global AI_UPSCALE_ENABLED, AI_UPSCALE_MODEL, AI_UPSCALE_SCALE
@@ -275,6 +281,10 @@ def load_settings():
     if not isinstance(subject_lock_enabled, bool):
         raise ValueError("edit_settings.subject_lock_enabled must be an explicit boolean.")
     SUBJECT_LOCK_ENABLED = subject_lock_enabled
+    face_detection_enabled = edit.get("face_detection_enabled", True)
+    if not isinstance(face_detection_enabled, bool):
+        raise ValueError("edit_settings.face_detection_enabled must be an explicit boolean.")
+    FACE_DETECTION_ENABLED = face_detection_enabled
     skull_enabled = edit.get("ending_skull_enabled", False)
     if not isinstance(skull_enabled, bool):
         raise ValueError("edit_settings.ending_skull_enabled must be an explicit boolean.")
@@ -1117,12 +1127,13 @@ def _record_beat_shadow(path, heuristic_beats, duration):
 
 
 def detect_music_beats(path, limit):
-    """Estimate beat candidates and retain the strongest onset as a drop proxy.
+    """Estimate a lightweight beat grid and score sustained low-band transitions.
 
-    This remains a lightweight heuristic, not a semantic drop/downbeat detector.
+    A drop is only proposed when onset timing coincides with a sustained energy
+    rise; this does not semantically understand music or guarantee a drop.
     """
-    global DROP_BEAT_TIME, DROP_BEAT_STRENGTH
-    DROP_BEAT_TIME, DROP_BEAT_STRENGTH = None, None
+    global DROP_BEAT_TIME, DROP_BEAT_STRENGTH, DROP_BEAT_EVIDENCE
+    DROP_BEAT_TIME, DROP_BEAT_STRENGTH, DROP_BEAT_EVIDENCE = None, None, None
     print("[analyze] Phonk beat/bass transients and tempo periodicity...")
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", path,
@@ -1222,14 +1233,21 @@ def detect_music_beats(path, limit):
             "onset_candidate_count": len(onset_beats),
         })
     if len(onset_beats) >= 3 and candidates:
-        strongest_value, strongest_time = max(candidates, key=lambda pair: pair[0])
-        DROP_BEAT_TIME = float(strongest_time)
-        spread = max(1e-12, peak_novelty - median_novelty)
-        DROP_BEAT_STRENGTH = max(0.0, min(1.0, (strongest_value - median_novelty) / spread))
-        print(
-            f"[analyze] Strongest bass-onset proxy at {DROP_BEAT_TIME:.2f}s "
-            f"(relative onset strength={DROP_BEAT_STRENGTH:.2f}; not a semantic drop detector)."
+        DROP_BEAT_EVIDENCE = choose_drop_candidate(
+            energies, candidates, hop_seconds=0.02,
+            pre_seconds=0.75, post_seconds=0.70,
+            minimum_rise_ratio=1.35, minimum_sustain_ratio=0.65,
+            minimum_score=0.62,
         )
+        if DROP_BEAT_EVIDENCE is not None:
+            DROP_BEAT_TIME = float(DROP_BEAT_EVIDENCE["timestamp_seconds"])
+            DROP_BEAT_STRENGTH = float(DROP_BEAT_EVIDENCE["confidence"])
+            print(
+                f"[analyze] Sustained low-band drop-transition candidate at {DROP_BEAT_TIME:.2f}s "
+                f"(confidence={DROP_BEAT_STRENGTH:.2f}; not semantic music understanding)."
+            )
+        else:
+            print("[analyze] No drop candidate passed the sustained low-band energy threshold.")
     if len(beats) < 3:
         BEAT_GRID_ANALYSIS["method"] = "even_pacing_fallback"
         print("[warn] Few clear bass onsets / grid points found; edit timing will use even pacing.")
@@ -2053,13 +2071,14 @@ def choose_source_chapter(scene_segments, scope_start, scope_end, chapter_second
 
 
 def analyze_subject_track(video_path, start_seconds, end_seconds, *, sample_interval_seconds=0.75, max_frame_side=480):
-    """Run the established HOG tracker and record optional Norfair association evidence."""
+    """Run face-location-first tracking with HOG fallback and optional association evidence."""
     track = detect_person_track(
         video_path,
         start_seconds,
         end_seconds,
         sample_interval_seconds=sample_interval_seconds,
         max_frame_side=max_frame_side,
+        face_detection_enabled=FACE_DETECTION_ENABLED,
     )
     shadow = track.pop("norfair_shadow", None)
     if not isinstance(shadow, dict):
@@ -2118,6 +2137,7 @@ def measure_candidate_chapter_tracks(video_path, chapter_candidates, max_candida
             track = detect_person_track(
                 video_path, float(candidate["start_seconds"]), float(candidate["end_seconds"]),
                 sample_interval_seconds=2.0, max_frame_side=360, norfair_shadow_enabled=False,
+                face_detection_enabled=FACE_DETECTION_ENABLED,
             )
         except (OSError, RuntimeError, ValueError, TypeError) as exc:
             track = {
@@ -2679,12 +2699,14 @@ def build_pre_render_review(edl, beat_count, drop_beat_time, drop_freeze_duratio
         {
             "turn": 1, "speaker": "Beat Sync Agent", "to": "Planner",
             "message": (
-                f"Found {beat_count} bass/onset candidates. "
-                + (f"The strongest-onset proxy is {drop_beat_time:.2f}s and a {internal_freeze_seconds:.3f}s internal hold is planned."
-                   if drop_freezes else "No internal drop hold was planned because no eligible drop proxy/boundary was available.")
-                + " The strongest onset is a proxy, not a verified musical drop."
+                f"Found {beat_count} beat/onset candidates. "
+                + (f"A sustained low-band transition candidate at {drop_beat_time:.2f}s passed the confidence threshold; "
+                   f"a {internal_freeze_seconds:.3f}s internal hold is planned."
+                   if drop_freezes else "No candidate passed the sustained low-band transition threshold; no internal drop hold was added.")
+                + " This is a measured audio-energy transition, not semantic drop understanding."
             ),
             "evidence": {"candidate_count": beat_count, "drop_beat_time_seconds": drop_beat_time,
+                        "drop_transition_evidence": DROP_BEAT_EVIDENCE,
                         "drop_freeze_duration_seconds": internal_freeze_seconds}
         },
         {
@@ -4591,15 +4613,23 @@ def main(argv=None):
         "visual_clarity": f"source pixel support ratio versus {WIDTH}x{HEIGHT} output (not a sharpness/subject-visibility model)",
         "hook_strength": "opening scene-change cadence proxy only; no semantic hook understanding",
         "motion_energy": "scene cuts per two seconds inside selected temporal context window",
-        "drop_impact": "relative strongest bass-onset novelty proxy; not a true musical drop classifier",
+        "drop_impact": "sustained low-band RMS increase around a measured onset; not semantic music understanding",
     }
     render_critique = analyze_render_critique(final_video, actual)
+    render_critique["visual_quality"] = analyze_visual_quality(
+        final_video, actual, final_freeze_seconds=FREEZE,
+        sample_fps=5.0, max_width=320,
+    )
 
-    progress_event("render_critique", "completed", "Render Critic has measured black intervals, sample peak and encoded true peak.",
-                   {"black_segment_count": len(render_critique.get("black_segments", [])),
-                    "mean_volume_db": render_critique.get("mean_volume_db"),
-                    "max_volume_db": render_critique.get("max_volume_db"),
-                    "true_peak_dbfs": render_critique.get("true_peak_dbfs")})
+    progress_event(
+        "render_critique", "completed",
+        "Render Critic measured audio/black-frame risks and sampled blur, brightness and unintended still-frame risks.",
+        {"black_segment_count": len(render_critique.get("black_segments", [])),
+         "mean_volume_db": render_critique.get("mean_volume_db"),
+         "max_volume_db": render_critique.get("max_volume_db"),
+         "true_peak_dbfs": render_critique.get("true_peak_dbfs"),
+         "visual_quality": render_critique["visual_quality"]},
+    )
 
     def print_agent_event(event):
         # Stream each structured agent result to the terminal and durable JSONL trace.
