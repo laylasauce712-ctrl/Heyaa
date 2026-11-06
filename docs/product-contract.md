@@ -13,7 +13,7 @@ This document records product decisions that new features and integrations must 
 
 Settings validation; source/media analysis; music beat and bass-onset analysis; reference analysis; source chapter selection; subject appearance tracking; source-range planning; framing/crop planning; hook and niche evidence; frame-based EDL validation; FFmpeg rendering; Render Critic; Inspector; Director; Export Storage; structured progress events and analysis cache.
 
-These are evidence-based Python modules today. Do not describe them as separate LLMs or invent agent dialogue. The Agent Room/UI is a future presentation layer over real events and reports.
+These are evidence-based Python modules today, not separate LLMs. The existing local Studio presents their recorded events and reports in a chat-style Agent Room; show only real speaker/recipient metadata, findings, recommendations and evidence. An active-process animation may indicate that the renderer is working between events, but do not invent agent dialogue or overall percentage progress.
 
 ## Media inputs
 
@@ -57,7 +57,7 @@ These are evidence-based Python modules today. Do not describe them as separate 
 
 - The first local Heyaa Studio UI is implemented in `web/` and served by `src/heyaa/local_app.py` using Python's standard library. It is a thin localhost control surface over the existing renderer, not a second app or backend.
 - The UI is bound to `127.0.0.1` only and has no external web-framework or CDN dependency. The WSL launcher is `bash scripts/start_heyaa_ui.sh`.
-- The visual language is a dark, cinematic creative studio: near-black canvas (#0B0D12), charcoal surfaces (#131722 / #1A2030), restrained violet primary accent (#8B5CF6), cool cyan telemetry (#38BDF8), neutral text hierarchy and clear warning/error states. Avoid neon overload, gradient-heavy cards and dashboard clutter.
+- The visual language is a futuristic, cinematic control room: near-black/navy canvas, glass-like charcoal panels, cyan telemetry, violet action accents and restrained lime success indicators. A subtle grid and soft ambient gradients may add depth, but preserve readable contrast, a simple hierarchy and clear warning/error states. Avoid neon overload and dashboard clutter.
 - The Studio exposes local media upload/selection, supported media URLs, user-selected edit count, automatic/explicit motion-clip count, duration/speed, Blur Fit/Fill, implemented quality/effect toggles, real Agent Room events, contact-sheet preview, recent renders and explicit local release approval.
 - The interface shows only supported Phonk/Montagem style choices (currently one style), fixed full-export codec/resolution/FPS, mandatory EDL and preview-specific limitations. Experimental shadow observers are not presented as production render controls.
 - Settings changed through the UI are written to ignored `params.local.json`; tracked `params.json` is never modified. Uploads are written under new unique names in `input/`, never over default media files.
