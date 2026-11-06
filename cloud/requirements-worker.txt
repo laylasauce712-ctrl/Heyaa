@@ -1,0 +1,4 @@
+psycopg[binary]>=3.2,<4
+boto3>=1.35,<2
+yt-dlp[default,curl-cffi]==2026.10.26
+curl-cffi==0.16.0

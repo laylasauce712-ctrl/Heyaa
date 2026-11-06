@@ -1,0 +1,144 @@
+name: Heyaa tests
+
+on:
+  pull_request:
+  push:
+    branches: [main, improve/phonk-renderer-v1, feat/edl-contract-m1a]
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install FFmpeg for render smoke test
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+      - name: Install cloud API and worker test dependencies
+        run: python -m pip install -r cloud/requirements-api.txt -r cloud/requirements-worker.txt
+      - name: Validate renderer syntax and settings JSON
+        run: |
+          python -m py_compile src/agent_director.py src/heyaa/agents.py src/heyaa/media_sources.py src/heyaa/local_app.py src/heyaa/release.py src/heyaa/gpu.py src/heyaa/backends/contracts.py src/heyaa/backends/registry.py src/heyaa/backends/pyscenedetect.py src/heyaa/backends/shadow_compare.py scripts/scene_backend_worker.py tests/unit/test_pyscenedetect_backend.py src/heyaa/backends/beat_this.py scripts/beat_backend_worker.py tests/unit/test_beat_this_backend.py src/heyaa/backends/norfair.py scripts/norfair_backend_worker.py tests/unit/test_norfair_backend.py tests/unit/test_local_studio.py cloud/api.py cloud/contracts.py cloud/worker.py tests/unit/test_cloud_contracts.py tests/unit/test_cloud_api.py tests/unit/test_cloud_worker.py tests/unit/test_gpu_probe.py
+          python -m json.tool params.json > /dev/null
+          node --check web/app.js
+          node --check cloud/static/app.js
+          cp cloud/.env.example cloud/.env
+          docker compose --env-file cloud/.env -f cloud/compose.yaml config --quiet
+          rm -f cloud/.env
+          bash -n scripts/start_heyaa_ui.sh
+          bash -n scripts/install_realesrgan_linux.sh
+          bash -n scripts/prepare_local_worktree.sh
+          bash -n scripts/install_scene_backend_linux.sh
+          bash -n scripts/install_beat_backend_linux.sh
+          bash -n scripts/install_norfair_backend_linux.sh
+      - name: Run dependency-free unit tests
+        run: python -m unittest discover -s tests/unit -v
+      - name: Install isolated PySceneDetect shadow observer
+        run: bash scripts/install_scene_backend_linux.sh
+      - name: Install isolated Beat This! CPU shadow observer
+        run: bash scripts/install_beat_backend_linux.sh
+      - name: Install isolated Norfair association observer
+        run: bash scripts/install_norfair_backend_linux.sh
+      - name: Run normal-profile render and local-data preservation regression
+        run: |
+          set -euo pipefail
+          mkdir -p input output
+          printf 'hey aa-source-canary\n' > input/.heyaa-source-canary
+          printf 'heyaa-render-canary\n' > output/.heyaa-render-canary
+          cp params.json "$RUNNER_TEMP/params-before-render-test.json"
+          HEYAA_CI_EXPECT_SCENE_SHADOW=1 HEYAA_CI_EXPECT_BEAT_SHADOW=1 bash tests/integration/render_smoke.sh
+          test "$(cat input/.heyaa-source-canary)" = "hey aa-source-canary"
+          test "$(cat output/.heyaa-render-canary)" = "heyaa-render-canary"
+          cmp params.json "$RUNNER_TEMP/params-before-render-test.json"
+          rm -f input/.heyaa-source-canary output/.heyaa-render-canary
+          # Remove only empty directories; never delete artifacts restored by the test.
+          rmdir input 2>/dev/null || true
+          rmdir output 2>/dev/null || true
+
+      - name: Verify isolated PySceneDetect worker
+        run: |
+          set -euo pipefail
+          ffmpeg -hide_banner -loglevel error -y \
+            -f lavfi -i "color=c=red:s=320x180:r=30:d=2" \
+            -f lavfi -i "color=c=blue:s=320x180:r=30:d=2" \
+            -filter_complex "[0:v][1:v]concat=n=2:v=1:a=0[outv]" \
+            -map "[outv]" -c:v libx264 -pix_fmt yuv420p "$RUNNER_TEMP/scene-fixture.mp4"
+          printf '%s\n' '{"media_path":"'"$RUNNER_TEMP"'/scene-fixture.mp4","windows":[{"start_seconds":0.0,"end_seconds":4.0}]}' \
+            | tools/scene-analysis/.venv/bin/python scripts/scene_backend_worker.py > "$RUNNER_TEMP/scene-shadow.json"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path(__import__("os").environ["RUNNER_TEMP"], "scene-shadow.json").read_text())
+          assert report["status"] == "ok", report
+          assert report["metadata"]["version"] == "0.7.2", report
+          assert report["metadata"]["cut_count"] >= 1, report
+          print("Isolated PySceneDetect worker passed its scene-boundary check.")
+          PY
+      - name: Verify isolated Beat This! inference worker
+        run: |
+          set -euo pipefail
+          ffmpeg -hide_banner -loglevel error -y \
+            -f lavfi -i "sine=frequency=440:sample_rate=22050:duration=12" \
+            -c:a pcm_s16le "$RUNNER_TEMP/beat-fixture.wav"
+          printf '%s\n' '{"media_path":"'"$RUNNER_TEMP"'/beat-fixture.wav","duration_seconds":12.0,"max_analysis_seconds":12.0,"checkpoint":"small0"}' \
+            | tools/beat-analysis/.venv/bin/python scripts/beat_backend_worker.py > "$RUNNER_TEMP/beat-shadow.json"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          report = json.loads(Path(os.environ["RUNNER_TEMP"], "beat-shadow.json").read_text())
+          assert report["status"] == "ok", report
+          assert report["backend_id"] == "beat-this.small0.1.1.0", report
+          assert report["metadata"]["checkpoint"] == "small0", report
+          assert report["metadata"]["device"] == "cpu", report
+          print(
+              "Isolated Beat This! inference completed:",
+              report["metadata"]["beat_count"], "beats and",
+              report["metadata"]["downbeat_count"], "downbeats."
+          )
+          PY
+      - name: Build cloud API container image
+        run: docker build --pull -f cloud/Dockerfile.api -t heyaa-cloud-api:ci .
+      - name: Build isolated render worker container image
+        run: docker build --pull -f cloud/Dockerfile.worker -t heyaa-cloud-worker:ci .
+      - name: Verify isolated Norfair HOG association worker
+        run: |
+          set -euo pipefail
+          python - <<'PY' > "$RUNNER_TEMP/norfair-frames.json"
+          import json
+          frames = []
+          for index in range(18):
+              a_x = 0.15 + (0.68 * index / 17)
+              b_x = 0.85 - (0.68 * index / 17)
+              frames.append({
+                  "timestamp_seconds": round(index * 0.75, 6),
+                  "detections": [
+                      {"x": a_x - 0.04, "y": 0.30, "width": 0.08, "height": 0.30,
+                       "confidence": 0.95, "appearance": [1.0, 0.0, 0.0, 0.0]},
+                      {"x": b_x - 0.04, "y": 0.30, "width": 0.08, "height": 0.30,
+                       "confidence": 0.95, "appearance": [0.0, 1.0, 0.0, 0.0]},
+                  ],
+              })
+          print(json.dumps({"frames": frames}, separators=(",", ":")))
+          PY
+          cat "$RUNNER_TEMP/norfair-frames.json" \
+            | tools/norfair-analysis/.venv/bin/python scripts/norfair_backend_worker.py \
+            > "$RUNNER_TEMP/norfair-tracks.json"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          report = json.loads(Path(os.environ["RUNNER_TEMP"], "norfair-tracks.json").read_text())
+          assert report["status"] == "ok", report
+          assert report["backend_id"] == "norfair.hog-association.2.3.0", report
+          assert report["metadata"]["version"] == "2.3.0", report
+          assert report["metadata"]["worker_runtime"]["is_venv"] is True, report
+          tracks = report["metadata"]["tracks"]
+          assert report["metadata"]["track_count"] == 2, tracks
+          assert all(track["observation_count"] >= 15 for track in tracks), tracks
+          assert len({item["track_id"] for item in report["items"]}) == 2, report
+          print("Isolated Norfair worker preserved two appearance-distinct crossing tracks.")
+          PY

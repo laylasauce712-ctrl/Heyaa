@@ -3,3 +3,15 @@ output/
 __pycache__/
 *.pyc
 .env
+
+tools/realesrgan/
+.venv/
+params.local.json
+.env.*
+!.env.example
+*.pem
+*.key
+tools/scene-analysis/.venv/
+tools/beat-analysis/.venv/
+tools/norfair-analysis/.venv/
+tools/norfair-analysis/.venv/

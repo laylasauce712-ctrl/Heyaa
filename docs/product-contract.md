@@ -1,0 +1,73 @@
+# Heyaa Product Contract
+
+This document records product decisions that new features and integrations must preserve.
+
+## Product shape
+
+- Heyaa remains one local-first product with one rendering engine, one central settings source and one local output root.
+- Do not import or embed a second complete video editor/rendering engine. External repositories are technical references for narrow capabilities and design patterns only.
+- Keep the existing frame-based EDL and the current agent orchestration architecture. Improvements must extend the existing stages rather than replace them.
+- The current Python/FFmpeg renderer remains the production path. Optional observers/backends must not silently change production output until their quality has been measured and approved.
+
+## Existing architecture to preserve
+
+Settings validation; source/media analysis; music beat and bass-onset analysis; reference analysis; source chapter selection; subject appearance tracking; source-range planning; framing/crop planning; hook and niche evidence; frame-based EDL validation; FFmpeg rendering; Render Critic; Inspector; Director; Export Storage; structured progress events and analysis cache.
+
+These are evidence-based Python modules today, not separate LLMs. The existing local Studio presents their recorded events and reports in a chat-style Agent Room; show only real speaker/recipient metadata, findings, recommendations and evidence. An active-process animation may indicate that the renderer is working between events, but do not invent agent dialogue or overall percentage progress.
+
+## Media inputs
+
+- The user chooses the source video, soundtrack and optional visual reference.
+- Accept supported local files and supported URLs through the existing input-validation/download layer.
+- Do not add self-filmed/licensed/third-party provenance categories, rights manifests or copyright-eligibility gates to the render pipeline. Source choice and rights decisions remain with the user.
+- Technical file validation (valid stream, duration, accessible path and supported format) remains required.
+
+## Reference contract
+
+- Reference is optional.
+- When no reference is selected, Heyaa may use its configured default pacing.
+- When a reference is selected, the pipeline must verify that it exists, is a valid video and produces a usable measured pacing profile.
+- A selected but missing, invalid or unusable reference must fail clearly before rendering. Never silently substitute default pacing and then report the run as reference-driven.
+- Reports must distinguish reference selected, reference available, reference analyzed and reference timing actually applied.
+- The current analysis is shot-cut timing/pacing only. Do not claim semantic understanding of people, story or effects unless a future implementation measures those capabilities.
+
+## User-selected edit count
+
+- The user chooses how many separate edits to generate for one source/batch. The CLI contract is `--edits 1..5`, with one render as the default.
+- Do not hard-code five outputs or generate extra edits by default.
+- Each requested edit must be a distinct edit plan, not merely a relabelled source-time curve or the same render copied to another filename.
+- A shared source-usage ledger reserves every motion-clip source interval from a completed edit. Later edits must exclude those intervals plus the configured source gap before analysis/planning.
+- If there is not enough remaining material to plan another complete edit, stop the batch and report the number completed. Never fall back to source progression or recycle earlier intervals in distinct-edit mode.
+- Keep legacy `--variants` as a separate comparison/debug path only; it is not the product's distinct-edit feature and must not count as additional edits.
+- Keep the phonk/montagem look and selected source/music/reference consistent while varying the actual edit decisions enough to make each output meaningfully distinct.
+- If the media cannot support the requested number of meaningfully different outputs, report the limitation honestly rather than manufacturing duplicates.
+- A user-selected edit count is different from the number of motion clips inside one EDL. Keep those controls separate.
+
+## Output and review
+
+- All local artifacts live under one project-level output root.
+- Target directory contract: `output/runs/` for working runs and reports, `output/releases/` for user-approved final exports, and `output/archive/` for retained older releases.
+- Keep technical QA distinct from human approval. A technically valid render is ready for the user to review; it is not automatically approved for publishing.
+- The local CLI approval action is `python3 scripts/approve_release.py <run-mp4> --confirm`. It rechecks the report, Inspector/Export Storage results, EDL final freeze, dimensions, FPS and audio via ffprobe, then atomically copies the artifact and evidence into `output/releases/<run-id>/<primary-or-edit_NN>/`.
+- Approval never overwrites an existing release and never removes the source run artifact. A future local UI must call the same approval contract; it must not bypass it.
+- `output/archive/` is reserved for a later explicit archive/retention workflow; it is not currently auto-populated.
+- Preserve the latest-known-good output when a new render fails.
+
+## Visual product direction
+
+- The first local Heyaa Studio UI is implemented in `web/` and served by `src/heyaa/local_app.py` using Python's standard library. It is a thin localhost control surface over the existing renderer, not a second app or backend.
+- The UI is bound to `127.0.0.1` only and has no external web-framework or CDN dependency. The WSL launcher is `bash scripts/start_heyaa_ui.sh`.
+- The visual language is a futuristic, cinematic control room: near-black/navy canvas, glass-like charcoal panels, cyan telemetry, violet action accents and restrained lime success indicators. A subtle grid and soft ambient gradients may add depth, but preserve readable contrast, a simple hierarchy and clear warning/error states. Avoid neon overload and dashboard clutter.
+- The Studio exposes local media upload/selection, supported media URLs, user-selected edit count, automatic/explicit motion-clip count, duration/speed, Blur Fit/Fill, implemented quality/effect toggles, real Agent Room events, contact-sheet preview, recent renders and explicit local release approval.
+- The interface shows only supported Phonk/Montagem style choices (currently one style), fixed full-export codec/resolution/FPS, mandatory EDL and preview-specific limitations. Experimental shadow observers are not presented as production render controls.
+- Settings changed through the UI are written to ignored `params.local.json`; tracked `params.json` is never modified. Uploads are written under new unique names in `input/`, never over default media files.
+- Use one restrained line-SVG icon treatment and a consistent icon family; do not mix unrelated icon packs.
+- No PowerShell. Development and launch instructions use WSL Ubuntu and Bash. The PC performs rendering; the phone receives finished exports.
+
+## Quality and proof
+
+- Synthetic CI proves structural behavior, not visual editing quality.
+- Before claiming a quality feature is production-ready, test it on real source footage, soundtrack and (when selected) a real reference.
+- Verify the final video by both visual inspection and listening. Verify Real-ESRGAN from actual execution evidence, not only a config flag or installed binary.
+- Preserve the 1080x1920 vertical profile, configured frame rate, exact 2.0-second final freeze and current approved visual/audio controls unless the user explicitly changes them.
+- No code, branch, merge, settings or release changes should bypass review of the exact scope and evidence.

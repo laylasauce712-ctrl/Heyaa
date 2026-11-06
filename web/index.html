@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b0d12">
+  <title>Heyaa Studio</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script defer src="/assets/app.js"></script>
+</head>
+<body>
+  <div class="ambient ambient-one"></div>
+  <div class="ambient ambient-two"></div>
+  <main class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Heyaa Studio home">
+        <span class="brand-mark">
+          <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M7 7v18M25 7v18M7 16h18M7 7l9 9 9-9M7 25l9-9 9 9"/></svg>
+        </span>
+        <span class="brand-copy"><strong>HEYAA</strong><small>CREATIVE STUDIO</small></span>
+      </a>
+      <div class="topbar-center"><span class="live-dot"></span><span>LOCAL ENGINE</span><span class="topbar-separator"></span><span id="settings-file-label">params.json</span></div>
+      <div class="topbar-actions">
+        <button class="icon-button" id="refresh-button" type="button" title="Refresh status" aria-label="Refresh status">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.6 9A7 7 0 0 1 18 6l2 1M4 17l2-1a7 7 0 0 0 12.4-3"/></svg>
+        </button>
+        <span class="local-pill"><span></span> PRIVATE · THIS PC</span>
+      </div>
+    </header>
+
+    <section class="hero">
+      <div>
+        <p class="eyebrow"><span class="eyebrow-line"></span> PHONK / MONTAGEM WORKFLOW</p>
+        <h1>Make the moment <em>hit.</em></h1>
+        <p class="hero-subtitle">A local-first editing system for your footage, your Phonk soundtrack and the pacing reference you choose. One studio, one render engine.</p>
+      </div>
+      <div class="hero-format">
+        <span class="format-icon">9:16</span>
+        <div><strong>VERTICAL EXPORT</strong><small>1080 × 1920 · 60 FPS</small></div>
+      </div>
+    </section>
+
+    <div class="main-grid">
+      <section class="panel creator-panel">
+        <div class="panel-heading">
+          <div><span class="step-index">01</span><h2>Media inputs</h2></div>
+          <span class="subtle-tag">YOUR CREATIVE</span>
+        </div>
+        <div class="media-stack">
+          <article class="media-row">
+            <div class="media-icon video-icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="13" height="14" rx="2"/><path d="m16 10 5-3v10l-5-3z"/></svg>
+            </div>
+            <div class="media-main">
+              <label for="source-select">SOURCE VIDEO <span class="required-star">*</span></label>
+              <select id="source-select"><option value="">Loading input files…</option></select>
+              <small id="source-meta">Upload footage or choose a file from input/.</small>
+            </div>
+            <button class="upload-button" data-upload="source" type="button"><span>+</span> Upload</button>
+            <input type="file" id="upload-source" accept="video/mp4,video/quicktime,video/x-matroska,video/webm,video/x-msvideo,.m4v" hidden>
+          </article>
+          <article class="media-row">
+            <div class="media-icon audio-icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+            </div>
+            <div class="media-main">
+              <label for="music-select">PHONK SOUNDTRACK <span class="required-star">*</span></label>
+              <select id="music-select"><option value="">Loading audio files…</option></select>
+              <small id="music-meta">Your soundtrack stays separate from the reference.</small>
+            </div>
+            <button class="upload-button" data-upload="music" type="button"><span>+</span> Upload</button>
+            <input type="file" id="upload-music" accept="audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg,.opus" hidden>
+          </article>
+          <article class="media-row optional-row">
+            <div class="media-icon reference-icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4z"/><path d="m4 15 5-5 4 4 2-2 5 5M9 9h.01"/></svg>
+            </div>
+            <div class="media-main">
+              <label for="reference-select">VISUAL REFERENCE <span class="optional-label">OPTIONAL</span></label>
+              <select id="reference-select"><option value="">No reference selected</option></select>
+              <small id="reference-meta">Optional. When selected, its cut pacing must be measurable; its footage and audio are never copied into the edit.</small>
+            </div>
+            <button class="upload-button" data-upload="reference" type="button"><span>+</span> Upload</button>
+            <input type="file" id="upload-reference" accept="video/mp4,video/quicktime,video/x-matroska,video/webm,video/x-msvideo,.m4v" hidden>
+          </article>
+        </div>
+        <details class="link-inputs">
+          <summary><span class="link-summary-icon">↗</span> Use TikTok / YouTube / direct media links</summary>
+          <div class="link-fields">
+            <label>SOURCE URL<input id="video-url" type="url" placeholder="TikTok post/share, YouTube video or direct HTTPS video URL"></label>
+            <label>MUSIC URL<input id="music-url" type="url" placeholder="Direct HTTPS audio or supported video link"></label>
+            <label>REFERENCE URL<input id="reference-url" type="url" placeholder="Optional TikTok / YouTube pacing reference or direct video URL"></label>
+            <p class="field-note">A link replaces the local file for that input. Downloads stay inside this project’s input/ folder.</p>
+          </div>
+        </details>
+      </section>
+
+      <section class="panel monitor-panel">
+        <div class="panel-heading">
+          <div><span class="step-index">02</span><h2>Agent room</h2></div>
+          <span id="run-state" class="state-pill state-idle"><i></i> IDLE</span>
+        </div>
+        <div class="monitor-summary">
+          <div class="monitor-orb"><span class="orb-core"></span><span class="orb-ring ring-a"></span><span class="orb-ring ring-b"></span></div>
+          <div class="monitor-copy">
+            <strong id="monitor-title">Ready when you are</strong>
+            <p id="monitor-description">Choose your media and start a render. Real pipeline events appear here.</p>
+          </div>
+        </div>
+        <div class="progress-track"><span id="progress-fill"></span></div>
+        <div class="progress-caption"><span id="progress-stage">WAITING FOR RUN</span><span id="progress-count">0 RECORDED EVENTS</span></div>
+        <div class="agent-live-status" id="agent-live-status" data-mode="idle" aria-live="polite">
+          <span class="agent-live-icon" aria-hidden="true"><i></i></span>
+          <div class="agent-live-message">
+            <small id="agent-feed-mode">ENGINE STANDBY</small>
+            <strong id="agent-live-title">Agents standing by</strong>
+            <p id="agent-live-copy">When a render starts, the current task and recorded agent messages will appear here.</p>
+          </div>
+          <div class="agent-typing" id="agent-typing" hidden aria-label="The render process is active"><span></span><span></span><span></span></div>
+        </div>
+        <div class="agent-feed-heading"><span>RECORDED AGENT COMMUNICATIONS</span><small>LIVE EVENT STREAM</small></div>
+        <div class="agent-list" id="agent-events" role="log" aria-label="Recorded agent and render events" aria-live="polite" aria-relevant="additions text">
+          <div class="empty-events">Agent notes and pipeline updates will appear here as Heyaa records them. No simulated chat is shown.</div>
+        </div>
+        <div class="monitor-footer"><span class="live-indicator"></span><span id="monitor-footer-text">Connected to local Heyaa process</span><button id="show-more-events" type="button">View latest</button></div>
+      </section>
+    </div>
+
+    <section class="panel setup-panel">
+      <div class="panel-heading">
+        <div><span class="step-index">03</span><h2>Edit setup</h2></div>
+        <span class="subtle-tag">SIMPLE CONTROLS · ADVANCED OPTIONS BELOW</span>
+      </div>
+      <div class="setup-grid">
+        <div class="setup-block">
+          <label for="edits-select">HOW MANY DISTINCT EDITS?</label>
+          <div class="select-wrap"><select id="edits-select">
+            <option value="1">1 edit</option><option value="2">2 edits</option><option value="3">3 edits</option><option value="4">4 edits</option><option value="5">5 edits</option>
+          </select></div>
+          <small>Each edit reserves its used source intervals before the next one is planned.</small>
+        </div>
+        <div class="setup-block">
+          <label for="clips-select">MOTION CLIPS PER EDIT</label>
+          <div class="select-wrap"><select id="clips-select">
+            <option value="">Auto · follow reference when available</option>
+            <option value="11">11 clips</option><option value="12">12 clips</option><option value="16">16 clips</option><option value="20">20 clips</option><option value="24">24 clips</option><option value="32">32 clips</option><option value="40">40 clips</option>
+          </select></div>
+          <small>Clip count is separate from how many edits you generate.</small>
+        </div>
+        <div class="setup-block">
+          <label for="duration-select">EDIT DURATION</label>
+          <div class="select-wrap"><select id="duration-select">
+            <option value="15">15 seconds</option><option value="20">20 seconds</option><option value="30">30 seconds</option><option value="45">45 seconds</option><option value="60">60 seconds</option>
+          </select></div>
+          <small>Final freeze stays exactly 2 seconds.</small>
+        </div>
+        <div class="setup-block speed-block">
+          <div class="range-label"><label for="speed-range">PLAYBACK SPEED</label><strong id="speed-value">1.10×</strong></div>
+          <input id="speed-range" type="range" min="1" max="1.35" step="0.01" value="1.1">
+          <div class="range-ends"><span>1.00×</span><span>1.35×</span></div>
+        </div>
+      </div>
+
+      <div class="layout-row">
+        <div><label class="group-label">VERTICAL FRAMING</label><small>Choose how the source fills a 9:16 canvas.</small></div>
+        <div class="segmented" role="group" aria-label="Vertical framing">
+          <button type="button" class="segment active" data-layout="blur_fit"><span class="segment-preview blur-preview"></span><span><strong>Blur Fit</strong><small>Full source frame</small></span></button>
+          <button type="button" class="segment" data-layout="fill"><span class="segment-preview fill-preview"></span><span><strong>Fill</strong><small>Smart crop</small></span></button>
+        </div>
+      </div>
+
+      <div class="quality-row">
+        <div class="quality-heading"><div><label class="group-label">QUALITY & STYLE</label><small>Only implemented controls are shown here.</small></div></div>
+        <div class="toggle-grid">
+          <label class="toggle-card"><input id="ai-upscale" type="checkbox"><span class="switch"></span><span class="toggle-copy"><strong>AI Restore</strong><small id="ai-status">Real-ESRGAN</small></span></label>
+          <label class="toggle-card"><input id="subject-lock" type="checkbox"><span class="switch"></span><span class="toggle-copy"><strong>Subject Lock</strong><small>HOG appearance tracking</small></span></label>
+          <label class="toggle-card"><input id="beat-sync" type="checkbox"><span class="switch"></span><span class="toggle-copy"><strong>Beat Sync</strong><small>Beat-grid timing</small></span></label>
+          <label class="toggle-card"><input id="ending-skull" type="checkbox"><span class="switch"></span><span class="toggle-copy"><strong>Skull Ending</strong><small>Final freeze overlay</small></span></label>
+        </div>
+      </div>
+
+      <details class="advanced-panel">
+        <summary><span>Advanced edit options</span><small>Fine-tune effects without cluttering the main setup.</small><span class="chevron">⌄</span></summary>
+        <div class="advanced-grid">
+          <label class="toggle-line"><span><strong>Reference pacing</strong><small>Use measured reference cut intervals</small></span><input id="reference-pacing" type="checkbox"></label>
+          <label class="toggle-line"><span><strong>Mirror</strong><small>Horizontal flip of the foreground layer</small></span><input id="mirror" type="checkbox"></label>
+          <label class="toggle-line"><span><strong>Beat flash</strong><small>Short flashes on measured beat points</small></span><input id="beat-flash" type="checkbox"></label>
+          <label class="toggle-line"><span><strong>Bass boost</strong><small>Boost low frequencies in the selected track</small></span><input id="bass-boost" type="checkbox"></label>
+          <label class="toggle-line"><span><strong>Music loop</strong><small>Crossfade short tracks to edit duration</small></span><input id="music-loop" type="checkbox"></label>
+          <label class="toggle-line"><span><strong>Impact SFX</strong><small>Procedural sub-bass hit at final freeze</small></span><input id="impact-sfx" type="checkbox"></label>
+        </div>
+        <p class="advanced-note">Style is currently Phonk / Montagem only. Export codec, vertical resolution and EDL are fixed by the supported renderer.</p>
+      </details>
+
+      <div class="setup-actions">
+        <div class="saved-note"><span class="save-check">✓</span><span id="settings-save-note">Settings are saved locally for this project only.</span></div>
+        <div class="action-buttons">
+          <button class="button-secondary" id="preview-button" type="button"><span>▷</span> Quick preview</button>
+          <button class="button-primary" id="render-button" type="button"><span class="button-spark">✦</span> Start render <span class="button-arrow">→</span></button>
+        </div>
+      </div>
+      <p class="small-print">Preview renders at 540×960 / 30 FPS with AI restore disabled. It cannot be approved as a release.</p>
+    </section>
+
+    <section class="panel outputs-panel">
+      <div class="panel-heading">
+        <div><span class="step-index">04</span><h2>Recent outputs</h2></div>
+        <span class="subtle-tag" id="output-count">NO EXPORTS YET</span>
+      </div>
+      <div class="outputs-content">
+        <div class="contact-sheet-wrap" id="contact-sheet-wrap">
+          <div class="contact-placeholder"><span>▧</span><strong>Render preview</strong><small>Your contact sheet appears here after a run.</small></div>
+        </div>
+        <div class="output-list" id="output-list">
+          <div class="empty-outputs">No completed renders yet. Your latest exports will appear here.</div>
+        </div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <span>HEYAA · ONE ENGINE · LOCAL FIRST</span>
+      <span>Technical QA ≠ human approval · TikTok upload stays manual</span>
+    </footer>
+  </main>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <div id="busy-overlay" class="busy-overlay" hidden><div class="busy-card"><div class="spinner"></div><strong id="busy-title">Working…</strong><p id="busy-copy">Please keep this page open.</p></div></div>
+</body>
+</html>

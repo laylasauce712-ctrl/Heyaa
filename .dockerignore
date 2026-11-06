@@ -1,0 +1,16 @@
+.git
+.github
+.venv
+**/.venv
+__pycache__
+**/__pycache__
+*.py[cod]
+input
+output
+tools
+params.local.json
+**/params.local.json
+.env
+**/.env
+.env.*
+**/.env.*

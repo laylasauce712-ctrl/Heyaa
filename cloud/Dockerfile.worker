@@ -1,0 +1,33 @@
+FROM python:3.12-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    HEYAA_ENABLE_AI_UPSCALE=0
+
+WORKDIR /opt/heyaa
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       ffmpeg curl unzip ca-certificates libvulkan1 vulkan-tools libgomp1 libomp5 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY cloud/requirements-worker.txt /opt/heyaa/cloud/requirements-worker.txt
+RUN python -m pip install --upgrade pip \
+    && python -m pip install -r cloud/requirements-worker.txt
+
+COPY src/ /opt/heyaa/src/
+COPY scripts/install_realesrgan_linux.sh /opt/heyaa/scripts/install_realesrgan_linux.sh
+COPY params.json /opt/heyaa/params.json
+COPY cloud/ /opt/heyaa/cloud/
+
+RUN bash scripts/install_realesrgan_linux.sh tools/realesrgan \
+    && groupadd --system --gid 10001 heyaa \
+    && useradd --system --uid 10001 --gid heyaa --create-home --home-dir /home/heyaa heyaa
+
+USER 10001:10001
+ENV HOME=/tmp/heyaa-home \
+    HEYAA_WORK_ROOT=/tmp/heyaa-cloud-jobs
+
+# Vulkan ICD and GPU device access must be provided by the selected worker host.
+# CPU-only Vulkan (llvmpipe/lavapipe) is rejected by the renderer preflight.
+CMD ["python", "-m", "cloud.worker"]

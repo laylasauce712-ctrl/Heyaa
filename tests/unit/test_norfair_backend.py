@@ -4,7 +4,6 @@ import unittest
 from unittest.mock import patch
 
 from src.heyaa.backends import (
-    BackendResult,
     NormalizedBox,
     SubjectDetection,
     SubjectFrame,
@@ -24,7 +23,6 @@ class FakeDetection:
 class FakeTracker:
     def __init__(self, **kwargs):
         self.last = None
-        self.kwargs = kwargs
 
     def update(self, detections=None):
         if detections:
@@ -66,8 +64,10 @@ class NorfairAssociatorTests(unittest.TestCase):
         version.assert_not_called()
 
     def test_missing_norfair_distribution_is_unavailable(self):
-        with (
-            patch.object(norfair_module.metadata, "version", side_effect=norfair_module.metadata.PackageNotFoundError("norfair")),
+        with patch.object(
+            norfair_module.metadata,
+            "version",
+            side_effect=norfair_module.metadata.PackageNotFoundError("norfair"),
         ):
             result = self.backend.associate(self.frames)
         self.assertEqual(result.status, "unavailable")
@@ -104,9 +104,13 @@ class NorfairAssociatorTests(unittest.TestCase):
         fake_norfair = types.ModuleType("norfair")
         fake_norfair.Detection = FakeDetection
         fake_norfair.Tracker = FakeTracker
+        fake_numpy = types.ModuleType("numpy")
+        fake_numpy.float32 = float
+        fake_numpy.asarray = lambda values, dtype=None: values
+        fake_numpy.linalg = types.SimpleNamespace(norm=lambda values: 0.0)
         with (
             patch.object(norfair_module.metadata, "version", return_value="2.3.0"),
-            patch.dict(sys.modules, {"norfair": fake_norfair}),
+            patch.dict(sys.modules, {"norfair": fake_norfair, "numpy": fake_numpy}),
         ):
             result = self.backend.associate(self.frames)
         self.assertEqual(result.status, "ok")
@@ -119,6 +123,13 @@ class NorfairAssociatorTests(unittest.TestCase):
 
 
 class SubjectDetectionContractTests(unittest.TestCase):
+    def test_subject_detection_rejects_nonfinite_appearance(self):
+        with self.assertRaises(ValueError):
+            SubjectDetection(
+                0.0, NormalizedBox(0.1, 0.1, 0.2, 0.3),
+                appearance=(float("nan"),),
+            )
+
     def test_subject_detection_requires_bounded_box_and_finite_appearance(self):
         with self.assertRaises(ValueError):
             SubjectDetection(0.0, NormalizedBox(0.1, 0.1, 0.2, 0.3), appearance=(float("nan"),))

@@ -1,0 +1,4 @@
+# Installed only in tools/beat-analysis/.venv after CPU-only PyTorch.
+# Upstream code and published model weights are MIT licensed.
+beat-this==1.1.0
+soundfile>=0.12,<1  # upstream Beat This! audio-reader fallback
