@@ -114,6 +114,7 @@ if [[ "$AI_UPSCALE" != "0" && "$AI_UPSCALE" != "1" ]]; then
   echo "[export] ERROR: HEYAA_ENABLE_AI_UPSCALE must be 0 or 1." >&2
   exit 1
 fi
+export HEYAA_ENABLE_AI_UPSCALE="$AI_UPSCALE"
 
 if [[ "$AI_UPSCALE" == "1" ]]; then
   echo "[export] AI Restore explicitly enabled; checking Real-ESRGAN assets ..."
