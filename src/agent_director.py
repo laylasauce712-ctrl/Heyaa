@@ -40,6 +40,11 @@ except ModuleNotFoundError:
     from heyaa.music_analysis import choose_drop_candidate
     from heyaa.visual_qa import analyze_visual_quality
 
+try:
+    from src.heyaa.creative_profiles import build_motion_filter, get_creative_profile, profile_for_edit
+except ModuleNotFoundError:
+    from heyaa.creative_profiles import build_motion_filter, get_creative_profile, profile_for_edit
+
 VIDEO = "input/test_video.mp4"
 MUSIC = "input/phonk.mp3"
 REFERENCE = "input/reference.mp4"
@@ -47,6 +52,7 @@ OUTDIR = "output"
 WORK = "output/work"
 FINAL = "output/final_phonk_20s.mp4"
 VARIANT_INDEX = None
+CREATIVE_PROFILE_ID = "hybrid-cinematic"
 REFERENCE_CUT_TIMESTAMPS_USED = False
 REFERENCE_BOUNDARY_METHOD = "not_run"
 REFERENCE_PACING_USED = False
@@ -2552,6 +2558,9 @@ def make_clip(index, item, source_duration):
     )
     crop_filter = f"crop={WIDTH}:{HEIGHT},"
     dynamic_crop = None
+    motion_filter = build_motion_filter(
+        CREATIVE_PROFILE_ID, index, output_frames, FPS, WIDTH, HEIGHT
+    )
     if LAYOUT_MODE == "fill" and SUBJECT_OBSERVATIONS:
         dynamic_crop = build_dynamic_crop_path(
             SUBJECT_OBSERVATIONS, start, input_duration,
@@ -2590,7 +2599,8 @@ def make_clip(index, item, source_duration):
             f"{crop_filter}"
             f"{'hflip,' if MIRROR_ENABLED else ''}"
             "eq=contrast=1.16:saturation=1.30:gamma=1.02,"
-            "unsharp=5:5:0.72:3:3:0.0,setsar=1,"
+            "unsharp=5:5:0.72:3:3:0.0,"
+            f"{motion_filter},setsar=1,"
             f"fps={FPS},setpts=PTS/{SPEED},fps={FPS},tpad=stop_mode=clone:stop={output_frames},trim=end_frame={output_frames},setpts=PTS-STARTPTS[v]"
         )
     else:
@@ -2602,7 +2612,7 @@ def make_clip(index, item, source_duration):
             f"{mirror},"
             "eq=contrast=1.16:saturation=1.30:gamma=1.02,"
             "unsharp=5:5:0.72:3:3:0.0[front];"
-            "[back][front]overlay=(W-w)/2:(H-h)/2,setsar=1,"
+            f"[back][front]overlay=(W-w)/2:(H-h)/2,{motion_filter},setsar=1,"
             f"fps={FPS},setpts=PTS/{SPEED},fps={FPS},tpad=stop_mode=clone:stop={output_frames},trim=end_frame={output_frames},setpts=PTS-STARTPTS[v]"
         )
 
@@ -3213,6 +3223,7 @@ def _run_edit_batch(args):
         final_path = edit_dir / "final_phonk_20s.mp4"
         report_path = edit_dir / "agent_report.json"
         edl_path = edit_dir / "edit_decision_list.json"
+        creative_profile_id = profile_for_edit(index)
         command = [
             sys.executable, str(Path(__file__).resolve()),
             "--edits", "1", "--edit-index", str(index),
@@ -3220,6 +3231,7 @@ def _run_edit_batch(args):
             "--video-path", args.video_path,
             "--music-path", args.music_path,
             "--reference-path", args.reference_path,
+            "--creative-profile", creative_profile_id,
         ]
         if args.require_reference:
             command.append("--require-reference")
@@ -3237,7 +3249,8 @@ def _run_edit_batch(args):
                     command.extend([flag, value])
         progress_event(
             "edit_start", "running", f"Rendering distinct edit {index}/{args.edits}.",
-            {"edit_index": index, "source_usage_intervals_before": len(ledger["used_ranges"]),
+            {"edit_index": index, "creative_profile": creative_profile_id,
+             "source_usage_intervals_before": len(ledger["used_ranges"]),
              "output_path": str(final_path)},
         )
         print(f"\n[edits] Rendering distinct edit {index}/{args.edits}.", flush=True)
@@ -3273,6 +3286,7 @@ def _run_edit_batch(args):
             )
         item = {
             "index": index,
+            "creative_profile": creative_profile_id,
             "status": "ok" if success else "failed",
             "video": str(final_path) if success else None,
             "agent_report": str(report_path) if report_path.is_file() else None,
@@ -3303,6 +3317,7 @@ def _run_edit_batch(args):
         "status": "complete" if completed_count == args.edits else ("partial" if completed_count else "failed"),
         "distinctness_policy": "Source intervals from each completed EDL are reserved before the next edit; previously used intervals plus the configured gap are excluded.",
         "motion_clip_count": args.clip_count,
+        "creative_profile_order": [profile_for_edit(i) for i in range(1, args.edits + 1)],
         "source_usage_ledger": str(ledger_path),
         "edits": results,
     }
@@ -3570,6 +3585,8 @@ def main(argv=None):
         RUN_DIR = Path(os.environ.get("HEYAA_RUN_DIR", str(Path("output") / "runs" / _new_run_id())))
         os.environ["HEYAA_RUN_DIR"] = str(RUN_DIR)
     VARIANT_INDEX = args.variant_index
+    CREATIVE_PROFILE_ID = args.creative_profile or "hybrid-cinematic"
+    creative_profile_data = get_creative_profile(CREATIVE_PROFILE_ID)
     if VARIANT_INDEX is None and args.edit_index is None and args.edits > 1:
         OUTDIR = str(RUN_DIR)
         WORK = str(RUN_DIR / "work")
@@ -3618,6 +3635,11 @@ def main(argv=None):
                    {"resolution": f"{WIDTH}x{HEIGHT}", "fps": FPS,
                     "duration_seconds": DURATION, "freeze_seconds": FREEZE,
                     "min_clips": MIN_CLIPS, "max_clips": MAX_CLIPS})
+    progress_event(
+        "creative_profile", "completed",
+        f"Creative profile selected: {creative_profile_data['label']}.",
+        {"profile_id": CREATIVE_PROFILE_ID, **creative_profile_data},
+    )
     if args.require_reference and not REFERENCE_PACING:
         progress_event(
             "reference_preflight", "blocked",
@@ -4663,6 +4685,12 @@ def main(argv=None):
         "min_shot_seconds": MIN_SHOT_SECONDS,
         "reference_median_cut_interval_seconds": ref_interval,
         "comparison_clip_count_options": list(args.clip_count_options) if args.clip_count_options else None,
+    }
+    agent_report["creative_profile"] = {
+        "id": CREATIVE_PROFILE_ID,
+        **creative_profile_data,
+        "batch_edit_index": args.edit_index,
+        "distinct_source_intervals_required": args.source_usage_ledger is not None,
     }
     agent_report["source_usage"] = {
         "distinct_edit_batch": args.source_usage_ledger is not None,
