@@ -44,6 +44,27 @@ Supported links are single TikTok posts/share links, single YouTube videos, and 
 - Fill framing, mirroring off, skull overlay off
 - Optional beat sync, flash, bass processing, subject/framing proxy and impact SFX
 
+### Lightweight automatic analysis
+
+- **Beat and drop timing:** FFmpeg extracts a low-frequency RMS envelope. A lightweight periodic grid guides beat timing. An internal drop-impact hold is added only when a detected onset coincides with a sustained low-frequency energy rise; otherwise it is skipped. This is an audio-energy proxy, not semantic music understanding.
+- **Face-location tracking:** when OpenCV and its frontal-face Haar cascade are available, Heyaa tracks face location to guide the 9:16 crop. It does not identify the person. If a face track cannot be maintained, the existing HOG person detector is used; if that also fails, the renderer falls back to centered framing. The setting is `edit_settings.face_detection_enabled` (enabled by default).
+- **Visual quality checks:** the Render Critic samples low-resolution frames for blur, very dark sequences and long unintended still frames. The intentional final 2-second freeze is excluded. These are risk flags, not an aesthetic-quality score or an automatic guarantee that an edit is publish-ready.
+- All three additions use CPU-friendly FFmpeg/Python/OpenCV operations. No GPU, PyTorch, model download or network service is required for standard rendering.
+
+#### Termux / Android setup
+
+OpenCV is supplied by Termux's X11 repository; do not try to build it with pip on Android. Run:
+
+```bash
+pkg update
+pkg install x11-repo
+pkg update
+pkg install python ffmpeg opencv-python
+python -c "import cv2; print('OpenCV', cv2.__version__); print(cv2.data.haarcascades)"
+```
+
+The X11 repository provides the OpenCV Python bindings; the package is documented in the [Termux package recipes](https://github.com/termux/termux-packages/tree/master/x11-packages/opencv). If OpenCV is unavailable, FFmpeg rendering and other checks still work; face tracking falls back to HOG/center crop.
+
 AI Restore is **off by default** so a fresh clone can render without separately installing the ignored Real-ESRGAN executable and model weights. Enable it in the Studio only after those assets and a usable hardware-backed Vulkan device are available. Installation notes: [optimization roadmap](docs/optimization-roadmap.md) and [multi-agent architecture](docs/multi-agent-architecture.md).
 
 ### Local batch using the reference video's soundtrack
