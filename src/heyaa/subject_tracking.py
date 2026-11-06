@@ -1,8 +1,8 @@
-"""Optional OpenCV HOG person-track proxy for choosing and framing a source context.
+"""Optional CPU OpenCV face-location tracker with HOG person fallback.
 
-This is not face recognition or semantic identity verification. It provides a
-low-confidence, clothing/position appearance track when OpenCV is installed;
-otherwise the renderer falls back to its scene-cut-density context heuristic.
+Detections guide source selection and 9:16 framing only. Face location is not
+face recognition, biometric identification or proof of persistent identity.
+Without OpenCV/cascade assets the renderer uses its existing context fallback.
 """
 from __future__ import annotations
 
@@ -116,7 +116,7 @@ def _run_norfair_shadow(
     frames: list[dict[str, Any]],
     custom_observations: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
-    """Associate existing HOG boxes in an isolated Norfair process."""
+    """Associate existing face/person boxes in an isolated Norfair process."""
     worker_python = _norfair_worker_python()
     if worker_python is None or not frames:
         return None
