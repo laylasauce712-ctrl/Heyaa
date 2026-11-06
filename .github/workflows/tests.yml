@@ -67,7 +67,7 @@ jobs:
             -f lavfi -i "color=c=blue:s=320x180:r=30:d=2" \
             -filter_complex "[0:v][1:v]concat=n=2:v=1:a=0[outv]" \
             -map "[outv]" -c:v libx264 -pix_fmt yuv420p "$RUNNER_TEMP/scene-fixture.mp4"
-          printf '%s\\n' '{"media_path":"'"$RUNNER_TEMP"'/scene-fixture.mp4","windows":[{"start_seconds":0.0,"end_seconds":4.0}]}' \
+          printf '%s\n' '{"media_path":"'"$RUNNER_TEMP"'/scene-fixture.mp4","windows":[{"start_seconds":0.0,"end_seconds":4.0}]}' \
             | tools/scene-analysis/.venv/bin/python scripts/scene_backend_worker.py > "$RUNNER_TEMP/scene-shadow.json"
           python - <<'PY'
           import json
@@ -84,7 +84,7 @@ jobs:
           ffmpeg -hide_banner -loglevel error -y \
             -f lavfi -i "sine=frequency=440:sample_rate=22050:duration=12" \
             -c:a pcm_s16le "$RUNNER_TEMP/beat-fixture.wav"
-          printf '%s\\n' '{"media_path":"'"$RUNNER_TEMP"'/beat-fixture.wav","duration_seconds":12.0,"max_analysis_seconds":12.0,"checkpoint":"small0"}' \
+          printf '%s\n' '{"media_path":"'"$RUNNER_TEMP"'/beat-fixture.wav","duration_seconds":12.0,"max_analysis_seconds":12.0,"checkpoint":"small0"}' \
             | tools/beat-analysis/.venv/bin/python scripts/beat_backend_worker.py > "$RUNNER_TEMP/beat-shadow.json"
           python - <<'PY'
           import json
