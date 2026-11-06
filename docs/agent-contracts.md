@@ -59,7 +59,7 @@ No stage may report a measurement it did not receive or compute. A status of `ne
 **Must not:** describe activity ranking as semantic action recognition or story understanding.
 
 ### 6. Character Lock Agent — `character_lock_agent(data)`
-**Responsibility:** Report HOG/appearance observations, association quality and whether presence evidence could constrain source selection.
+**Responsibility:** Report face-location or HOG/appearance observations, association quality and whether presence evidence could constrain source selection. Face detections may guide framing; they are not biometric identity or re-identification.
 
 **Must distinguish:** hard subject-presence constraint, soft appearance preference, chapter-only context and unavailable tracking.
 
@@ -106,7 +106,7 @@ No stage may report a measurement it did not receive or compute. A status of `ne
 **Must not:** label a technical pass as visual approval.
 
 ### 13. Render Critic — `render_critic(metrics)`
-**Responsibility:** Evaluate measured technical risks such as black intervals, silence/low loudness, peak level and measurement completeness.
+**Responsibility:** Evaluate measured technical risks such as black intervals, silence/low loudness, peak level and sampled visual risks (blur, very dark frames and unintended still intervals), including measurement completeness.
 
 **Outcomes:** reject or block on required missing/failed evidence; use `needs_review` for measured warnings.
 
