@@ -278,6 +278,9 @@ def _find_face_cascade(cv2) -> Path | None:
     configured = os.environ.get("HEYAA_FACE_CASCADE")
     if configured:
         candidates.append(Path(configured).expanduser())
+    # Ship one known cascade with Heyaa so Termux/WSL do not depend on
+    # distribution-specific OpenCV data-directory packaging.
+    candidates.append(Path(__file__).resolve().parent / "assets" / "haarcascade_frontalface_default.xml")
     data = getattr(cv2, "data", None)
     haar_root = getattr(data, "haarcascades", None)
     if isinstance(haar_root, str) and haar_root:
