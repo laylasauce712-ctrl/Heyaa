@@ -31,7 +31,7 @@ A render needs:
 2. One Phonk soundtrack (local audio or one supported URL).
 3. An optional visual pacing reference.
 
-A reference guides measured cut timing only. Its video frames and audio are not used as the final footage or soundtrack. When a reference is selected, its cut pacing must be measurable; Heyaa blocks the render rather than silently pretending it applied an unusable reference.
+A reference guides measured cut timing only. Its video frames and audio are not used as the final footage or soundtrack by the standard renderer. When a reference is selected, its cut pacing must be measurable; Heyaa blocks the render rather than silently pretending it applied an unusable reference.
 
 Supported links are single TikTok posts/share links, single YouTube videos, and direct HTTPS media URLs. Platform access can be restricted; Heyaa does not use browser cookies or bypass logins. Only download and reuse media you own or are authorized to use. Details: [Media links](docs/media-links.md).
 
@@ -45,6 +45,18 @@ Supported links are single TikTok posts/share links, single YouTube videos, and 
 - Optional beat sync, flash, bass processing, subject/framing proxy and impact SFX
 
 AI Restore is **off by default** so a fresh clone can render without separately installing the ignored Real-ESRGAN executable and model weights. Enable it in the Studio only after those assets and a usable hardware-backed Vulkan device are available. Installation notes: [optimization roadmap](docs/optimization-roadmap.md) and [multi-agent architecture](docs/multi-agent-architecture.md).
+
+### Local batch using the reference video's soundtrack
+
+When you specifically want the reference video's own audio as the soundtrack, place the source footage at `input/test_video.mp4` and the reference at `input/reference.mp4`, then run:
+
+```bash
+bash scripts/export_reference_audio_batch.sh
+```
+
+The script extracts the reference audio, prepares a temporary profile with three distinct 20-second edits, 1080 × 1920 at 60 FPS, at least 11 motion clips, mirror enabled, AI Restore enabled and the exact 2-second final freeze. It leaves tracked settings unchanged and checks Real-ESRGAN, model weights and hardware-backed Vulkan before rendering. Set `HEYAA_EDIT_COUNT=1` through `5` to choose another batch size; the default is three. Optional path overrides are `HEYAA_VIDEO_PATH`, `HEYAA_REFERENCE_PATH`, `HEYAA_REFERENCE_AUDIO_PATH` and `HEYAA_EXPORT_BASE_PROFILE`.
+
+This is a local WSL/Linux render workflow, not a GitHub-hosted renderer. GitHub Actions checks code and script syntax; the real media, model weights and GPU remain on the machine performing the export. A machine without a compatible hardware-backed Vulkan device will stop at the AI Restore preflight rather than silently disable upscaling.
 
 ## What the Agent Room shows
 
@@ -81,4 +93,4 @@ The smoke render uses synthetic fixtures. Passing it does not establish real-foo
 
 ## Repository workflow
 
-The consolidated integration branch is `feat/continuation-11-clip-minimum`; its review target is [PR #11](https://github.com/laylasauce712-ctrl/Heyaa/pull/11). Keep the PR in draft until the local real-footage export has been inspected and accepted. Do not commit local media, generated outputs, model weights, environment files or credentials.
+The consolidated renderer and Studio integration was merged into `main` in [PR #11](https://github.com/laylasauce712-ctrl/Heyaa/pull/11). Reusable code and automated checks belong in GitHub; input media, generated exports, local settings, model weights and credentials stay on the local machine and must not be committed.
