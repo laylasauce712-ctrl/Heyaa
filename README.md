@@ -63,7 +63,7 @@ pkg install python ffmpeg opencv-python
 python -c "import cv2; print('OpenCV', cv2.__version__); print(cv2.data.haarcascades)"
 ```
 
-The X11 repository provides the OpenCV Python bindings; the package is documented in the [Termux package recipes](https://github.com/termux/termux-packages/tree/master/x11-packages/opencv). If OpenCV is unavailable, FFmpeg rendering and other checks still work; face tracking falls back to HOG/center crop.
+The X11 repository provides the OpenCV Python bindings; the package is documented in the [Termux package recipes](https://github.com/termux/termux-packages/tree/master/x11-packages/opencv). The frontal-face Haar XML is bundled in Heyaa, so no separate model download is required. If OpenCV is unavailable, FFmpeg rendering and other checks still work; face tracking falls back to HOG/center crop.
 
 AI Restore is **off by default** so a fresh clone can render without separately installing the ignored Real-ESRGAN executable and model weights. Enable it in the Studio only after those assets and a usable hardware-backed Vulkan device are available. Installation notes: [optimization roadmap](docs/optimization-roadmap.md) and [multi-agent architecture](docs/multi-agent-architecture.md).
 
