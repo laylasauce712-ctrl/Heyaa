@@ -130,6 +130,10 @@ class SubjectDetectionContractTests(unittest.TestCase):
                 appearance=(float("nan"),),
             )
 
+    def test_subject_detection_requires_bounded_box_and_finite_appearance(self):
+        with self.assertRaises(ValueError):
+            SubjectDetection(0.0, NormalizedBox(0.1, 0.1, 0.2, 0.3), appearance=(float("nan"),))
+
     def test_subject_frame_accepts_only_subject_detections(self):
         with self.assertRaises(ValueError):
             SubjectFrame(0.0, detections=({"x": 1},))

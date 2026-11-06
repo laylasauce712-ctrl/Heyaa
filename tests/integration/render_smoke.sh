@@ -36,7 +36,7 @@ cat > params.json <<'JSON'
 {
   "style": "phonk_montagem",
   "video_settings": {"resolution": "1080x1920", "fps": 60, "codec": "libx264", "crf": 18, "preset": "veryfast", "ai_upscale_enabled": false},
-  "edit_settings": {"duration_seconds": 20, "speed": 1.1, "freeze_duration": 2.0, "drop_freeze_duration": 0.25, "edl_mode": "on", "min_clips": 8, "max_clips": 40, "min_shot_seconds": 0.35, "reference_pacing": true, "mirror_enabled": true, "layout_mode": "blur_fit", "source_min_gap_seconds": 0.05, "source_chapter_seconds": 90, "subject_lock_enabled": true, "ending_skull_enabled": true, "skull_size_px": 520, "skull_position_x": 0.5, "skull_position_y": 0.5, "skull_pop_seconds": 0.18, "impact_sfx_enabled": false},
+  "edit_settings": {"duration_seconds": 20, "speed": 1.1, "freeze_duration": 2.0, "drop_freeze_duration": 0.25, "edl_mode": "on", "min_clips": 11, "max_clips": 40, "min_shot_seconds": 0.35, "reference_pacing": true, "mirror_enabled": true, "layout_mode": "blur_fit", "source_min_gap_seconds": 0.05, "source_chapter_seconds": 90, "subject_lock_enabled": true, "ending_skull_enabled": true, "skull_size_px": 520, "skull_position_x": 0.5, "skull_position_y": 0.5, "skull_pop_seconds": 0.18, "impact_sfx_enabled": false},
   "audio_settings": {"beat_sync": true, "beat_flash": true, "bass_boost": true, "music_loop": true}
 }
 JSON
@@ -206,6 +206,8 @@ assert cursor == edl["total_frames"] == 1200, (cursor, edl["total_frames"])
 assert edl["video"][-1]["type"] == "freeze"
 assert edl["video"][-1]["dur_f"] == round(2.0 * edl["fps_num"] / edl["fps_den"])
 assert edl["fps_num"] == 60
+motion_clips = [item for item in edl["video"] if item.get("type") != "freeze"]
+assert len(motion_clips) >= 11, (len(motion_clips), edl["video"])
 assert len(report["events"]) >= 14
 print("Full-profile render test passed: 20 seconds at 1080x1920/60 FPS (1200 decoded frames), continuous EDL, exact 2-second freeze, audio, full decode, Render Critic, Director decision and atomic export.")
 PY

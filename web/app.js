@@ -512,8 +512,10 @@ function bindUploads() {
       $(`#upload-${slot}`).click();
     });
   });
-  [["source", "video"], ["music", "music"], ["reference", "reference"]].forEach(([control, slot]) => {
-    $(`#upload-${control}`).addEventListener("change", (event) => {
+  ["source", "music", "reference"].forEach((slot) => {
+    $(`#upload-${slot}`).addEventListener("change", (event) => {
+      // Keep the UI slot consistent through upload and selection. The backend
+      // maps "source" to its internal "video" media kind.
       uploadFile(slot, event.target.files?.[0]);
       event.target.value = "";
     });
