@@ -34,11 +34,11 @@ class CreativeProfileTests(unittest.TestCase):
             self.skipTest("FFmpeg is not installed")
         for index, profile_id in enumerate(CREATIVE_PROFILE_ORDER):
             with self.subTest(profile=profile_id):
-                filter_chain = build_motion_filter(profile_id, index, 60, 60, 270, 480)
+                filter_chain = build_motion_filter(profile_id, index, 24, 24, 270, 480)
                 result = subprocess.run(
                     ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
-                     "testsrc2=size=270x480:rate=24:duration=1", "-vf", f"fps=60,{filter_chain}",
-                     "-frames:v", "60", "-f", "null", "-"],
+                     "testsrc2=size=270x480:rate=24:duration=1", "-vf", filter_chain,
+                     "-frames:v", "24", "-f", "null", "-"],
                     check=False, capture_output=True, text=True, timeout=30,
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)

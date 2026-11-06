@@ -616,6 +616,43 @@ class ContextPlanningTests(unittest.TestCase):
         self.assertEqual(updated[0], 0.0)
         self.assertEqual(updated[-1], 8.0)
 
+
+    def test_batch_progression_fallback_spans_scene_boundaries_but_never_reuses_source(self):
+        available = [{"start_seconds": 0.0, "end_seconds": 12.0, "selection_score": 0.0}]
+        first = renderer.plan_progression_disjoint_source_ranges([20, 30, 20], available, fps=10, minimum_gap_frames=1)
+        self.assertEqual(len(first), 3)
+        self.assertEqual([item["source_start_f"] for item in first], [0, 21, 52])
+        self.assertTrue(all(item["allocation_mode"] == "unused_contiguous_progression" for item in first))
+
+        ledger = [
+            {"start_seconds": item["source_start_f"] / 10,
+             "end_seconds": (item["source_start_f"] + item["source_dur_f"]) / 10}
+            for item in first
+        ]
+        remaining = renderer.exclude_used_source_ranges(
+            [{"start_seconds": 0.0, "end_seconds": 20.0}],
+            ledger, minimum_gap_seconds=0.1,
+        )
+        second = renderer.plan_progression_disjoint_source_ranges([20, 30], remaining, fps=10, minimum_gap_frames=1)
+        self.assertTrue(second)
+        for current in second:
+            for used in first:
+                self.assertGreaterEqual(
+                    current["source_start_f"],
+                    used["source_start_f"] + used["source_dur_f"] + 1,
+                )
+                self.assertGreaterEqual(
+                    used["source_start_f"],
+                    current["source_start_f"] + current["source_dur_f"] + 1,
+                )
+
+    def test_batch_progression_fallback_fails_clearly_when_unused_footage_is_short(self):
+        with self.assertRaisesRegex(RuntimeError, "Only 1/2 motion clips fit"):
+            renderer.plan_progression_disjoint_source_ranges(
+                [40, 40], [{"start_seconds": 0.0, "end_seconds": 5.0}],
+                fps=10, minimum_gap_frames=1,
+            )
+
     def test_source_usage_ledger_subtracts_previous_edits_and_keeps_fragments(self):
         segments = [{
             "start_seconds": 0.0, "end_seconds": 10.0,

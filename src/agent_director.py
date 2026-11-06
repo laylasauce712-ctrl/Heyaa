@@ -2328,6 +2328,82 @@ def plan_ranked_disjoint_source_ranges(source_durations_frames, scene_segments, 
     return assignments
 
 
+
+
+def plan_progression_disjoint_source_ranges(source_durations_frames, available_segments, fps, minimum_gap_frames):
+    """Place ordered EDL clips in unused contiguous source intervals without scene-boundary constraints.
+
+    This is a batch-only safety fallback: clips may span measured scene cuts, but each
+    source interval is still disjoint and remains inside one ledger-cleared interval.
+    """
+    if isinstance(fps, bool) or not isinstance(fps, (int, float)) or not math.isfinite(float(fps)) or fps <= 0:
+        raise ValueError("fps must be a positive finite number.")
+    if (isinstance(minimum_gap_frames, bool) or not isinstance(minimum_gap_frames, int)
+            or minimum_gap_frames < 0):
+        raise ValueError("minimum_gap_frames must be a non-negative integer.")
+    durations = []
+    for value in source_durations_frames:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError("Each source clip duration must be a positive integer frame count.")
+        durations.append(value)
+    if not durations:
+        return []
+    normalized = []
+    for index, segment in enumerate(available_segments or []):
+        if not isinstance(segment, dict):
+            raise ValueError("Available source intervals must be objects.")
+        start, end = segment.get("start_seconds"), segment.get("end_seconds")
+        if (not isinstance(start, (int, float)) or isinstance(start, bool) or
+                not isinstance(end, (int, float)) or isinstance(end, bool) or
+                not math.isfinite(float(start)) or not math.isfinite(float(end)) or
+                float(start) < 0 or float(end) <= float(start)):
+            raise ValueError(f"Available source interval {index} has invalid boundaries.")
+        start_frame = math.ceil(float(start) * float(fps) - 1e-8)
+        end_frame = math.floor(float(end) * float(fps) + 1e-8)
+        if end_frame > start_frame:
+            normalized.append({
+                "start_frame": start_frame, "end_frame": end_frame,
+                "scene_segment_index": int(segment.get("scene_segment_index", index)),
+                "selection_score": float(segment.get("selection_score", 0.0) or 0.0),
+            })
+    normalized.sort(key=lambda item: item["start_frame"])
+    for left, right in zip(normalized, normalized[1:]):
+        if right["start_frame"] < left["end_frame"]:
+            raise RuntimeError("Available source intervals overlap; refusing an ambiguous batch plan.")
+
+    assignments = []
+    clip_index = 0
+    for segment in normalized:
+        cursor = segment["start_frame"]
+        while clip_index < len(durations):
+            duration = durations[clip_index]
+            if cursor + duration > segment["end_frame"]:
+                break
+            assignments.append({
+                "source_start_f": cursor,
+                "source_dur_f": duration,
+                "scene_segment_index": segment["scene_segment_index"],
+                "selection_score": segment["selection_score"],
+                "forced_shift_frames": 0,
+                "allocation_mode": "unused_contiguous_progression",
+            })
+            cursor += duration + minimum_gap_frames
+            clip_index += 1
+        if clip_index == len(durations):
+            break
+    if clip_index != len(durations):
+        required_frames = sum(durations) + minimum_gap_frames * max(0, len(durations) - 1)
+        available_frames = sum(item["end_frame"] - item["start_frame"] for item in normalized)
+        raise RuntimeError(
+            f"Only {clip_index}/{len(durations)} motion clips fit in unused contiguous footage "
+            f"({available_frames / float(fps):.2f}s available; "
+            f"{required_frames / float(fps):.2f}s required including internal gaps)."
+        )
+    for left, right in zip(assignments, assignments[1:]):
+        if right["source_start_f"] < left["source_start_f"] + left["source_dur_f"] + minimum_gap_frames:
+            raise RuntimeError("Contiguous progression plan violates source non-overlap/gap constraints.")
+    return assignments
+
 def plan_subject_locked_source_ranges(source_durations_frames, scene_segments, fps,
                                       minimum_gap_frames, minimum_presence_score=0.35):
     """Constrain clip allocation to intervals with repeated track evidence when it can fit."""
@@ -3866,6 +3942,21 @@ def main(argv=None):
     source_scope = choose_source_selection_scope(
         source_duration, EDIT_DURATION, context_start, context_end
     )
+    if args.source_usage_ledger:
+        # A distinct-edit batch must be allowed to use the entire short source;
+        # restricting it to one context window can make later unique edits impossible.
+        source_scope = {
+            "start_seconds": 0.0,
+            "end_seconds": source_duration,
+            "method": "full_source_distinct_edit_batch",
+            "threshold_seconds": source_scope["threshold_seconds"],
+        }
+        context_start, context_end = 0.0, source_duration
+        context = {
+            **context, "start_seconds": 0.0, "end_seconds": source_duration,
+            "window_seconds": source_duration, "scene_cuts": len(scenes),
+            "method": "full_source_distinct_edit_batch", "same_person_tracking": False,
+        }
     source_scope_start = source_scope["start_seconds"]
     source_scope_end = source_scope["end_seconds"]
     source_scope_duration = source_scope_end - source_scope_start
@@ -3954,6 +4045,7 @@ def main(argv=None):
     source_feature_error = None
     measured_segment_count = 0
     chapter_candidate_count = 0
+    source_selection_fallback = None
     source_chapter_cache_hit = False
     if source_audio_available or args.source_usage_ledger:
         try:
@@ -4071,9 +4163,27 @@ def main(argv=None):
                 planned_source_ranges = hard_locked_ranges
                 subject_lock_mode = "subject_presence_constrained"
             else:
-                planned_source_ranges = plan_ranked_disjoint_source_ranges(
-                    clip_source_durations, measured_segments, FPS, source_gap_frames
-                )
+                try:
+                    planned_source_ranges = plan_ranked_disjoint_source_ranges(
+                        clip_source_durations, measured_segments, FPS, source_gap_frames
+                    )
+                except RuntimeError as ranking_error:
+                    if not args.source_usage_ledger:
+                        raise
+                    batch_available = exclude_used_source_ranges(
+                        [{"start_seconds": source_scope_start, "end_seconds": source_scope_end,
+                          "selection_score": 0.0}],
+                        source_usage_ranges, MIN_SOURCE_GAP_SECONDS,
+                    )
+                    planned_source_ranges = plan_progression_disjoint_source_ranges(
+                        clip_source_durations, batch_available, FPS, source_gap_frames
+                    )
+                    source_selection_fallback = str(ranking_error)
+                    print(
+                        "[source] Scene-bounded ranking could not fit all shots; "
+                        "using ledger-cleared contiguous progression across the full source. "
+                        "No previously exported source intervals will be reused.", flush=True,
+                    )
                 if bounded_segments:
                     subject_lock_mode = "soft_appearance_preference" if preference_applied else "chapter_context_only"
             if bounded_segments:
@@ -4124,7 +4234,9 @@ def main(argv=None):
                 key = assignment["scene_segment_index"]
                 used_segment_counts[key] = used_segment_counts.get(key, 0) + 1
             source_selection_report = {
-                "method": "subject_presence_constrained_disjoint_scene_segments" if subject_lock_mode == "subject_presence_constrained" else "ranked_disjoint_scene_segments", "source_audio_available": True,
+                "method": ("disjoint_contiguous_progression_fallback" if source_selection_fallback else
+                            "subject_presence_constrained_disjoint_scene_segments" if subject_lock_mode == "subject_presence_constrained" else
+                            "ranked_disjoint_scene_segments"), "source_audio_available": True,
                 "measured_scene_segment_count": measured_segment_count,
                 "chapter_candidates_measured": chapter_candidate_count if bounded_segments else None,
                 "selected_chapter_segment_count": len(measured_segments) if bounded_segments else None,
@@ -4137,7 +4249,7 @@ def main(argv=None):
                 "subject_lock_mode": subject_lock_mode,
                 "hard_presence_lock_applied": subject_lock_mode == "subject_presence_constrained",
                 "source_chapter": dict(source_chapter_report), "character_lock": dict(character_lock_report),
-                "fallback_reason": None,
+                "fallback_reason": source_selection_fallback,
             }
             print(
                 f"[source] Ranked {measured_segment_count} detailed scene segments"
