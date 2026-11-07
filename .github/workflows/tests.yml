@@ -32,6 +32,7 @@ jobs:
           bash -n scripts/export_reference_audio_batch.sh
           bash -n scripts/install_realesrgan_linux.sh
           bash -n scripts/prepare_local_worktree.sh
+          bash -n scripts/export_reference_audio_batch.sh
           bash -n scripts/install_scene_backend_linux.sh
           bash -n scripts/install_beat_backend_linux.sh
           bash -n scripts/install_norfair_backend_linux.sh
