@@ -4,6 +4,13 @@
 
 The project is kept in one repository and one renderer. The local Studio is a control surface for that renderer, not a second editing engine.
 
+## Release status and boundaries
+
+Heyaa's local renderer and Studio are the primary developer workflow. The Docker Compose cloud stack is a private-beta development foundation, not a hosted public service. It does not yet include end-user sign-in/OIDC, production multi-user identity, rate limits, per-user quotas, retention policies, or provisioned public hosting. Do not expose the cloud stack directly to the internet; see [cloud deployment limitations](cloud/README.md).
+
+This repository currently has no project license. Until the owner adds one, do not assume permission to copy, modify, redistribute, or publish derivative versions of the project. Third-party asset notices are documented separately.
+
+
 ## Start the local Studio
 
 Requirements:
@@ -31,7 +38,7 @@ A render needs:
 2. One Phonk soundtrack (local audio or one supported URL).
 3. An optional visual pacing reference.
 
-A reference guides measured cut timing only. Its video frames and audio are not used as the final footage or soundtrack. When a reference is selected, its cut pacing must be measurable; Heyaa blocks the render rather than silently pretending it applied an unusable reference.
+A reference guides measured cut timing only. Its video frames and audio are not used as the final footage or soundtrack by the standard renderer. When a reference is selected, its cut pacing must be measurable; Heyaa blocks the render rather than silently pretending it applied an unusable reference.
 
 Supported links are single TikTok posts/share links, single YouTube videos, and direct HTTPS media URLs. Platform access can be restricted; Heyaa does not use browser cookies or bypass logins. Only download and reuse media you own or are authorized to use. Details: [Media links](docs/media-links.md).
 
@@ -44,7 +51,50 @@ Supported links are single TikTok posts/share links, single YouTube videos, and 
 - Fill framing, mirroring off, skull overlay off
 - Optional beat sync, flash, bass processing, subject/framing proxy and impact SFX
 
+### Lightweight automatic analysis
+
+- **Beat and drop timing:** FFmpeg extracts a low-frequency RMS envelope. A lightweight periodic grid guides beat timing. An internal drop-impact hold is added only when a detected onset coincides with a sustained low-frequency energy rise; otherwise it is skipped. This is an audio-energy proxy, not semantic music understanding.
+- **Face-location tracking:** when OpenCV and its frontal-face Haar cascade are available, Heyaa tracks face location to guide the 9:16 crop. It does not identify the person. If a face track cannot be maintained, the existing HOG person detector is used; if that also fails, the renderer falls back to centered framing. The setting is `edit_settings.face_detection_enabled` (enabled by default).
+- **Visual quality checks:** the Render Critic samples low-resolution frames for blur, very dark sequences and long unintended still frames. The intentional final 2-second freeze is excluded. These are risk flags, not an aesthetic-quality score or an automatic guarantee that an edit is publish-ready.
+- All three additions use CPU-friendly FFmpeg/Python/OpenCV operations. No GPU, PyTorch, model download or network service is required for standard rendering.
+
+#### Termux / Android setup
+
+OpenCV is supplied by Termux's X11 repository; do not try to build it with pip on Android. Run:
+
+```bash
+pkg update
+pkg install x11-repo
+pkg update
+pkg install python ffmpeg opencv-python
+python -c "import cv2; print('OpenCV', cv2.__version__); print(cv2.data.haarcascades)"
+```
+
+The X11 repository provides the OpenCV Python bindings; the package is documented in the [Termux package recipes](https://github.com/termux/termux-packages/tree/master/x11-packages/opencv). The frontal-face Haar XML is bundled in Heyaa, so no separate model download is required. If OpenCV is unavailable, FFmpeg rendering and other checks still work; face tracking falls back to HOG/center crop.
+
 AI Restore is **off by default** so a fresh clone can render without separately installing the ignored Real-ESRGAN executable and model weights. Enable it in the Studio only after those assets and a usable hardware-backed Vulkan device are available. Installation notes: [optimization roadmap](docs/optimization-roadmap.md) and [multi-agent architecture](docs/multi-agent-architecture.md).
+
+### Distinct creative-profile batch
+
+Use source footage, a separate Phonk soundtrack, and an optional visual pacing reference. A four-edit batch assigns a different per-clip motion/look treatment to each export and reserves non-overlapping source intervals between edits:
+
+```bash
+python3 src/agent_director.py --video-url 'https://www.tiktok.com/@creator/video/1234567890123456789' --music-url 'https://www.youtube.com/watch?v=PHONK_TRACK_ID' --reference-url 'https://www.youtube.com/shorts/REFERENCE_ID' --edits 4
+```
+
+Profiles are Cinematic Impact, Aggressive Phonk, Smooth Motion and Hybrid Cinematic. Each changes actual per-clip zoom/pan animation and image grading; a fifth Phonk Pulse preset is also available for a five-edit batch. These are deterministic FFmpeg treatments, not generative scene synthesis. The source-disjoint rule means four complete 20-second outputs need roughly 80 seconds of usable source footage plus scene/gap headroom. If the source is too short, the batch stops rather than reusing earlier footage and records a partial manifest. To render one selected profile, add `--creative-profile cinematic-impact` (or another listed profile) with `--edits 1`.
+
+### Local batch using the reference video's soundtrack
+
+When you specifically want the reference video's own audio as the soundtrack, place the source footage at `input/test_video.mp4` and the reference at `input/reference.mp4`, then run:
+
+```bash
+bash scripts/export_reference_audio_batch.sh
+```
+
+The script extracts the reference audio and prepares a temporary profile with three distinct 20-second edits, 1080 × 1920 at 60 FPS, at least 11 motion clips, mirror enabled and the exact 2-second final freeze. **AI Restore is off by default**, so ordinary exports do not require Real-ESRGAN, Vulkan or a dedicated GPU. Heyaa uses its standard FFmpeg scaling path instead. Set `HEYAA_ENABLE_AI_UPSCALE=1` explicitly to request Real-ESRGAN; that optional mode checks for model weights and a hardware-backed Vulkan device before rendering. Set `HEYAA_EDIT_COUNT=1` through `5` to choose another batch size; the default is three. Optional path overrides are `HEYAA_VIDEO_PATH`, `HEYAA_REFERENCE_PATH`, `HEYAA_REFERENCE_AUDIO_PATH` and `HEYAA_EXPORT_BASE_PROFILE`.
+
+This is a local WSL/Linux render workflow, not a GitHub-hosted renderer. GitHub Actions checks code and script syntax; the real media and exports remain on the render worker. For a phone-accessible service, deploy the existing cloud API, private media storage and worker as a hosted service; GitHub stores the source and checks changes but is not the long-running render server. The cloud worker can produce standard FFmpeg exports on CPU, with AI Restore reserved for a separately provisioned GPU worker when explicitly requested.
 
 ## What the Agent Room shows
 
@@ -81,4 +131,4 @@ The smoke render uses synthetic fixtures. Passing it does not establish real-foo
 
 ## Repository workflow
 
-The consolidated integration branch is `feat/continuation-11-clip-minimum`; its review target is [PR #11](https://github.com/laylasauce712-ctrl/Heyaa/pull/11). Keep the PR in draft until the local real-footage export has been inspected and accepted. Do not commit local media, generated outputs, model weights, environment files or credentials.
+The consolidated renderer and Studio integration was merged into `main` in [PR #11](https://github.com/laylasauce712-ctrl/Heyaa/pull/11). Reusable code and automated checks belong in GitHub; input media, generated exports, local settings, model weights and credentials stay on the local machine and must not be committed.

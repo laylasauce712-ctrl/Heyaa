@@ -28,7 +28,8 @@ class LocalStudioSettingsTests(unittest.TestCase):
                     "min_shot_seconds": 0.35, "reference_pacing": True, "mirror_enabled": True,
                     "layout_mode": "blur_fit", "freeze_duration": 2, "drop_freeze_duration": 0.25,
                     "source_min_gap_seconds": 0.05, "source_chapter_seconds": 90,
-                    "subject_lock_enabled": True, "edl_mode": "on", "ending_skull_enabled": True,
+                    "subject_lock_enabled": True, "face_detection_enabled": True,
+                    "edl_mode": "on", "ending_skull_enabled": True,
                     "skull_size_px": 520, "skull_position_x": 0.5, "skull_position_y": 0.5,
                     "skull_pop_seconds": 0.18, "impact_sfx_enabled": True,
                 },
@@ -43,7 +44,7 @@ class LocalStudioSettingsTests(unittest.TestCase):
                 patch.object(local_app, "LOCAL_SETTINGS", local),
             ):
                 result = local_app._save_profile({
-                    "edit_settings": {"speed": 1.2, "layout_mode": "fill"},
+                    "edit_settings": {"speed": 1.2, "layout_mode": "fill", "face_detection_enabled": False},
                     "audio_settings": {"beat_flash": False},
                     "video_settings": {"ai_upscale_enabled": False},
                 })
@@ -53,6 +54,7 @@ class LocalStudioSettingsTests(unittest.TestCase):
             saved = json.loads(local.read_text(encoding="utf-8"))
             self.assertEqual(saved["edit_settings"]["speed"], 1.2)
             self.assertEqual(saved["edit_settings"]["layout_mode"], "fill")
+            self.assertFalse(saved["edit_settings"]["face_detection_enabled"])
             self.assertFalse(saved["audio_settings"]["beat_flash"])
             self.assertFalse(saved["video_settings"]["ai_upscale_enabled"])
             self.assertEqual(result["settings_file"], "params.local.json")

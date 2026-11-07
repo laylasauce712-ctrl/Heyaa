@@ -32,9 +32,18 @@ except ModuleNotFoundError:
 try:
     from src.heyaa.agents import run_agent_team, export_storage_agent
     from src.heyaa.subject_tracking import detect_person_track, subject_observation_near
+    from src.heyaa.music_analysis import choose_drop_candidate
+    from src.heyaa.visual_qa import analyze_visual_quality
 except ModuleNotFoundError:
     from heyaa.agents import run_agent_team, export_storage_agent
     from heyaa.subject_tracking import detect_person_track, subject_observation_near
+    from heyaa.music_analysis import choose_drop_candidate
+    from heyaa.visual_qa import analyze_visual_quality
+
+try:
+    from src.heyaa.creative_profiles import build_motion_filter, get_creative_profile, profile_for_edit
+except ModuleNotFoundError:
+    from heyaa.creative_profiles import build_motion_filter, get_creative_profile, profile_for_edit
 
 VIDEO = "input/test_video.mp4"
 MUSIC = "input/phonk.mp3"
@@ -43,6 +52,7 @@ OUTDIR = "output"
 WORK = "output/work"
 FINAL = "output/final_phonk_20s.mp4"
 VARIANT_INDEX = None
+CREATIVE_PROFILE_ID = "hybrid-cinematic"
 REFERENCE_CUT_TIMESTAMPS_USED = False
 REFERENCE_BOUNDARY_METHOD = "not_run"
 REFERENCE_PACING_USED = False
@@ -78,6 +88,7 @@ MIN_SHOT_SECONDS = 0.75
 MIN_SOURCE_GAP_SECONDS = 0.05
 SOURCE_CHAPTER_SECONDS = 90.0
 SUBJECT_LOCK_ENABLED = True
+FACE_DETECTION_ENABLED = True
 ENDING_SKULL_ENABLED = False
 ENDING_SKULL_SIZE_PX = 420
 ENDING_SKULL_POSITION_X = 0.5
@@ -90,6 +101,7 @@ CONFIG = None
 DROP_FREEZE_DURATION = 0.25
 DROP_BEAT_TIME = None
 DROP_BEAT_STRENGTH = None
+DROP_BEAT_EVIDENCE = None
 BEAT_GRID_ANALYSIS = {
     "method": "not_run",
     "confidence": None,
@@ -161,7 +173,7 @@ def load_settings():
     global DURATION, FPS, WIDTH, HEIGHT, CRF, PRESET, SPEED, FREEZE, EDIT_DURATION
     global BEAT_SYNC, BEAT_FLASH, BASS_BOOST, REFERENCE_PACING, MIRROR_ENABLED, LAYOUT_MODE
     global MIN_CLIPS, MAX_CLIPS, MIN_SHOT_SECONDS, MUSIC_LOOP, CODEC, CONFIG, DROP_FREEZE_DURATION, MIN_SOURCE_GAP_SECONDS
-    global SOURCE_CHAPTER_SECONDS, SUBJECT_LOCK_ENABLED
+    global SOURCE_CHAPTER_SECONDS, SUBJECT_LOCK_ENABLED, FACE_DETECTION_ENABLED
     global ENDING_SKULL_ENABLED, ENDING_SKULL_SIZE_PX, ENDING_SKULL_POSITION_X, ENDING_SKULL_POSITION_Y
     global ENDING_SKULL_POP_SECONDS, ENDING_IMPACT_SFX_ENABLED, PREVIEW_MODE
     global AI_UPSCALE_ENABLED, AI_UPSCALE_MODEL, AI_UPSCALE_SCALE
@@ -275,6 +287,10 @@ def load_settings():
     if not isinstance(subject_lock_enabled, bool):
         raise ValueError("edit_settings.subject_lock_enabled must be an explicit boolean.")
     SUBJECT_LOCK_ENABLED = subject_lock_enabled
+    face_detection_enabled = edit.get("face_detection_enabled", True)
+    if not isinstance(face_detection_enabled, bool):
+        raise ValueError("edit_settings.face_detection_enabled must be an explicit boolean.")
+    FACE_DETECTION_ENABLED = face_detection_enabled
     skull_enabled = edit.get("ending_skull_enabled", False)
     if not isinstance(skull_enabled, bool):
         raise ValueError("edit_settings.ending_skull_enabled must be an explicit boolean.")
@@ -1117,12 +1133,13 @@ def _record_beat_shadow(path, heuristic_beats, duration):
 
 
 def detect_music_beats(path, limit):
-    """Estimate beat candidates and retain the strongest onset as a drop proxy.
+    """Estimate a lightweight beat grid and score sustained low-band transitions.
 
-    This remains a lightweight heuristic, not a semantic drop/downbeat detector.
+    A drop is only proposed when onset timing coincides with a sustained energy
+    rise; this does not semantically understand music or guarantee a drop.
     """
-    global DROP_BEAT_TIME, DROP_BEAT_STRENGTH
-    DROP_BEAT_TIME, DROP_BEAT_STRENGTH = None, None
+    global DROP_BEAT_TIME, DROP_BEAT_STRENGTH, DROP_BEAT_EVIDENCE
+    DROP_BEAT_TIME, DROP_BEAT_STRENGTH, DROP_BEAT_EVIDENCE = None, None, None
     print("[analyze] Phonk beat/bass transients and tempo periodicity...")
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", path,
@@ -1222,14 +1239,21 @@ def detect_music_beats(path, limit):
             "onset_candidate_count": len(onset_beats),
         })
     if len(onset_beats) >= 3 and candidates:
-        strongest_value, strongest_time = max(candidates, key=lambda pair: pair[0])
-        DROP_BEAT_TIME = float(strongest_time)
-        spread = max(1e-12, peak_novelty - median_novelty)
-        DROP_BEAT_STRENGTH = max(0.0, min(1.0, (strongest_value - median_novelty) / spread))
-        print(
-            f"[analyze] Strongest bass-onset proxy at {DROP_BEAT_TIME:.2f}s "
-            f"(relative onset strength={DROP_BEAT_STRENGTH:.2f}; not a semantic drop detector)."
+        DROP_BEAT_EVIDENCE = choose_drop_candidate(
+            energies, candidates, hop_seconds=0.02,
+            pre_seconds=0.75, post_seconds=0.70,
+            minimum_rise_ratio=1.35, minimum_sustain_ratio=0.65,
+            minimum_score=0.62,
         )
+        if DROP_BEAT_EVIDENCE is not None:
+            DROP_BEAT_TIME = float(DROP_BEAT_EVIDENCE["timestamp_seconds"])
+            DROP_BEAT_STRENGTH = float(DROP_BEAT_EVIDENCE["confidence"])
+            print(
+                f"[analyze] Sustained low-band drop-transition candidate at {DROP_BEAT_TIME:.2f}s "
+                f"(confidence={DROP_BEAT_STRENGTH:.2f}; not semantic music understanding)."
+            )
+        else:
+            print("[analyze] No drop candidate passed the sustained low-band energy threshold.")
     if len(beats) < 3:
         BEAT_GRID_ANALYSIS["method"] = "even_pacing_fallback"
         print("[warn] Few clear bass onsets / grid points found; edit timing will use even pacing.")
@@ -2053,13 +2077,14 @@ def choose_source_chapter(scene_segments, scope_start, scope_end, chapter_second
 
 
 def analyze_subject_track(video_path, start_seconds, end_seconds, *, sample_interval_seconds=0.75, max_frame_side=480):
-    """Run the established HOG tracker and record optional Norfair association evidence."""
+    """Run face-location-first tracking with HOG fallback and optional association evidence."""
     track = detect_person_track(
         video_path,
         start_seconds,
         end_seconds,
         sample_interval_seconds=sample_interval_seconds,
         max_frame_side=max_frame_side,
+        face_detection_enabled=FACE_DETECTION_ENABLED,
     )
     shadow = track.pop("norfair_shadow", None)
     if not isinstance(shadow, dict):
@@ -2118,6 +2143,7 @@ def measure_candidate_chapter_tracks(video_path, chapter_candidates, max_candida
             track = detect_person_track(
                 video_path, float(candidate["start_seconds"]), float(candidate["end_seconds"]),
                 sample_interval_seconds=2.0, max_frame_side=360, norfair_shadow_enabled=False,
+                face_detection_enabled=FACE_DETECTION_ENABLED,
             )
         except (OSError, RuntimeError, ValueError, TypeError) as exc:
             track = {
@@ -2301,6 +2327,82 @@ def plan_ranked_disjoint_source_ranges(source_durations_frames, scene_segments, 
             raise RuntimeError("Ranked source-segment plan violates non-overlap/source-gap constraints.")
     return assignments
 
+
+
+
+def plan_progression_disjoint_source_ranges(source_durations_frames, available_segments, fps, minimum_gap_frames):
+    """Place ordered EDL clips in unused contiguous source intervals without scene-boundary constraints.
+
+    This is a batch-only safety fallback: clips may span measured scene cuts, but each
+    source interval is still disjoint and remains inside one ledger-cleared interval.
+    """
+    if isinstance(fps, bool) or not isinstance(fps, (int, float)) or not math.isfinite(float(fps)) or fps <= 0:
+        raise ValueError("fps must be a positive finite number.")
+    if (isinstance(minimum_gap_frames, bool) or not isinstance(minimum_gap_frames, int)
+            or minimum_gap_frames < 0):
+        raise ValueError("minimum_gap_frames must be a non-negative integer.")
+    durations = []
+    for value in source_durations_frames:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError("Each source clip duration must be a positive integer frame count.")
+        durations.append(value)
+    if not durations:
+        return []
+    normalized = []
+    for index, segment in enumerate(available_segments or []):
+        if not isinstance(segment, dict):
+            raise ValueError("Available source intervals must be objects.")
+        start, end = segment.get("start_seconds"), segment.get("end_seconds")
+        if (not isinstance(start, (int, float)) or isinstance(start, bool) or
+                not isinstance(end, (int, float)) or isinstance(end, bool) or
+                not math.isfinite(float(start)) or not math.isfinite(float(end)) or
+                float(start) < 0 or float(end) <= float(start)):
+            raise ValueError(f"Available source interval {index} has invalid boundaries.")
+        start_frame = math.ceil(float(start) * float(fps) - 1e-8)
+        end_frame = math.floor(float(end) * float(fps) + 1e-8)
+        if end_frame > start_frame:
+            normalized.append({
+                "start_frame": start_frame, "end_frame": end_frame,
+                "scene_segment_index": int(segment.get("scene_segment_index", index)),
+                "selection_score": float(segment.get("selection_score", 0.0) or 0.0),
+            })
+    normalized.sort(key=lambda item: item["start_frame"])
+    for left, right in zip(normalized, normalized[1:]):
+        if right["start_frame"] < left["end_frame"]:
+            raise RuntimeError("Available source intervals overlap; refusing an ambiguous batch plan.")
+
+    assignments = []
+    clip_index = 0
+    for segment in normalized:
+        cursor = segment["start_frame"]
+        while clip_index < len(durations):
+            duration = durations[clip_index]
+            if cursor + duration > segment["end_frame"]:
+                break
+            assignments.append({
+                "source_start_f": cursor,
+                "source_dur_f": duration,
+                "scene_segment_index": segment["scene_segment_index"],
+                "selection_score": segment["selection_score"],
+                "forced_shift_frames": 0,
+                "allocation_mode": "unused_contiguous_progression",
+            })
+            cursor += duration + minimum_gap_frames
+            clip_index += 1
+        if clip_index == len(durations):
+            break
+    if clip_index != len(durations):
+        required_frames = sum(durations) + minimum_gap_frames * max(0, len(durations) - 1)
+        available_frames = sum(item["end_frame"] - item["start_frame"] for item in normalized)
+        raise RuntimeError(
+            f"Only {clip_index}/{len(durations)} motion clips fit in unused contiguous footage "
+            f"({available_frames / float(fps):.2f}s available; "
+            f"{required_frames / float(fps):.2f}s required including internal gaps)."
+        )
+    for left, right in zip(assignments, assignments[1:]):
+        if right["source_start_f"] < left["source_start_f"] + left["source_dur_f"] + minimum_gap_frames:
+            raise RuntimeError("Contiguous progression plan violates source non-overlap/gap constraints.")
+    return assignments
 
 def plan_subject_locked_source_ranges(source_durations_frames, scene_segments, fps,
                                       minimum_gap_frames, minimum_presence_score=0.35):
@@ -2532,6 +2634,9 @@ def make_clip(index, item, source_duration):
     )
     crop_filter = f"crop={WIDTH}:{HEIGHT},"
     dynamic_crop = None
+    motion_filter = build_motion_filter(
+        CREATIVE_PROFILE_ID, index, output_frames, FPS, WIDTH, HEIGHT
+    )
     if LAYOUT_MODE == "fill" and SUBJECT_OBSERVATIONS:
         dynamic_crop = build_dynamic_crop_path(
             SUBJECT_OBSERVATIONS, start, input_duration,
@@ -2570,8 +2675,9 @@ def make_clip(index, item, source_duration):
             f"{crop_filter}"
             f"{'hflip,' if MIRROR_ENABLED else ''}"
             "eq=contrast=1.16:saturation=1.30:gamma=1.02,"
-            "unsharp=5:5:0.72:3:3:0.0,setsar=1,"
-            f"fps={FPS},setpts=PTS/{SPEED},fps={FPS},tpad=stop_mode=clone:stop={output_frames},trim=end_frame={output_frames},setpts=PTS-STARTPTS[v]"
+            "unsharp=5:5:0.72:3:3:0.0,"
+            f"fps={FPS},{motion_filter},setsar=1,"
+            f"setpts=PTS/{SPEED},fps={FPS},tpad=stop_mode=clone:stop={output_frames},trim=end_frame={output_frames},setpts=PTS-STARTPTS[v]"
         )
     else:
         vf = (
@@ -2582,8 +2688,8 @@ def make_clip(index, item, source_duration):
             f"{mirror},"
             "eq=contrast=1.16:saturation=1.30:gamma=1.02,"
             "unsharp=5:5:0.72:3:3:0.0[front];"
-            "[back][front]overlay=(W-w)/2:(H-h)/2,setsar=1,"
-            f"fps={FPS},setpts=PTS/{SPEED},fps={FPS},tpad=stop_mode=clone:stop={output_frames},trim=end_frame={output_frames},setpts=PTS-STARTPTS[v]"
+            f"[back][front]overlay=(W-w)/2:(H-h)/2,fps={FPS},{motion_filter},setsar=1,"
+            f"setpts=PTS/{SPEED},fps={FPS},tpad=stop_mode=clone:stop={output_frames},trim=end_frame={output_frames},setpts=PTS-STARTPTS[v]"
         )
 
     # AI mode upscales the selected source frames losslessly before the normal
@@ -2679,12 +2785,14 @@ def build_pre_render_review(edl, beat_count, drop_beat_time, drop_freeze_duratio
         {
             "turn": 1, "speaker": "Beat Sync Agent", "to": "Planner",
             "message": (
-                f"Found {beat_count} bass/onset candidates. "
-                + (f"The strongest-onset proxy is {drop_beat_time:.2f}s and a {internal_freeze_seconds:.3f}s internal hold is planned."
-                   if drop_freezes else "No internal drop hold was planned because no eligible drop proxy/boundary was available.")
-                + " The strongest onset is a proxy, not a verified musical drop."
+                f"Found {beat_count} beat/onset candidates. "
+                + (f"A sustained low-band transition candidate at {drop_beat_time:.2f}s passed the confidence threshold; "
+                   f"a {internal_freeze_seconds:.3f}s internal hold is planned."
+                   if drop_freezes else "No candidate passed the sustained low-band transition threshold; no internal drop hold was added.")
+                + " This is a measured audio-energy transition, not semantic drop understanding."
             ),
             "evidence": {"candidate_count": beat_count, "drop_beat_time_seconds": drop_beat_time,
+                        "drop_transition_evidence": DROP_BEAT_EVIDENCE,
                         "drop_freeze_duration_seconds": internal_freeze_seconds}
         },
         {
@@ -2881,6 +2989,119 @@ def analyze_render_critique(path, duration):
         "blackdetect_pixel_threshold": 0.05,
         "method": "ffmpeg-blackdetect-and-volumedetect",
     }
+
+
+def _finite_audio_peak(value):
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(float(value))
+    )
+
+
+def repair_encoded_audio_true_peak(path, duration, metrics, target_dbfs=-1.5, max_attempts=2):
+    """Attenuate only the encoded audio when AAC true peak exceeds a safe ceiling.
+
+    Video packets are stream-copied. Each correction is calculated from the
+    measured encoded true peak, then the resulting MP4 is measured again.
+    """
+    if (not isinstance(target_dbfs, (int, float)) or isinstance(target_dbfs, bool)
+            or not math.isfinite(float(target_dbfs)) or float(target_dbfs) >= 0):
+        raise ValueError("target_dbfs must be a finite negative dBFS value.")
+    if isinstance(max_attempts, bool) or not isinstance(max_attempts, int) or not 1 <= max_attempts <= 3:
+        raise ValueError("max_attempts must be an integer from 1 to 3.")
+    current = dict(metrics or {})
+    original_peak = current.get("true_peak_dbfs")
+    report = {
+        "attempted": False,
+        "target_true_peak_dbfs": float(target_dbfs),
+        "original_true_peak_dbfs": original_peak,
+        "attempts": [],
+        "status": "not_needed",
+        "video_reencoded": False,
+    }
+    if current.get("audio_silent") is True:
+        report["status"] = "skipped_silent_audio"
+        return current, report
+    if not _finite_audio_peak(original_peak):
+        report["status"] = "skipped_unmeasured_true_peak"
+        return current, report
+    if float(original_peak) <= float(target_dbfs):
+        report["status"] = "already_within_target"
+        return current, report
+
+    source_path = Path(path)
+    for attempt in range(1, max_attempts + 1):
+        peak = current.get("true_peak_dbfs")
+        if not _finite_audio_peak(peak):
+            report["status"] = "measurement_unavailable_after_repair"
+            break
+        if float(peak) <= float(target_dbfs):
+            report["status"] = "target_met"
+            break
+
+        # Add 0.25 dB of guard margin for the AAC re-encode itself.
+        attenuation_db = float(target_dbfs) - float(peak) - 0.25
+        temp_path = source_path.with_name(
+            f"{source_path.stem}.audio-safe-{attempt}{source_path.suffix}"
+        )
+        try:
+            temp_path.unlink(missing_ok=True)
+            command = [
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                "-i", str(source_path),
+                "-map", "0:v:0", "-map", "0:a:0",
+                "-map_metadata", "0", "-map_chapters", "0",
+                "-c:v", "copy",
+                "-af", f"volume={attenuation_db:.4f}dB",
+                "-c:a", "aac", "-b:a", "192k",
+                "-movflags", "+faststart", str(temp_path),
+            ]
+            result = subprocess.run(
+                command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, check=False,
+            )
+            if result.returncode != 0 or not temp_path.is_file() or temp_path.stat().st_size <= 0:
+                detail = ((result.stderr or "") + "\n" + (result.stdout or "")).strip()
+                report["attempts"].append({
+                    "attempt": attempt, "attenuation_db": round(attenuation_db, 4),
+                    "status": "encode_failed", "detail": detail[-1200:],
+                })
+                report["status"] = "audio_repair_encode_failed"
+                temp_path.unlink(missing_ok=True)
+                break
+            os.replace(temp_path, source_path)
+            report["attempted"] = True
+            updated = analyze_render_critique(str(source_path), duration)
+            # The video stream is copied bit-for-bit; retain its already measured visual QA.
+            updated["visual_quality"] = current.get("visual_quality")
+            new_peak = updated.get("true_peak_dbfs")
+            report["attempts"].append({
+                "attempt": attempt,
+                "attenuation_db": round(attenuation_db, 4),
+                "true_peak_before_dbfs": float(peak),
+                "true_peak_after_dbfs": new_peak,
+                "status": "measured" if _finite_audio_peak(new_peak) else "measurement_failed",
+            })
+            current = updated
+        except (OSError, RuntimeError, ValueError) as exc:
+            temp_path.unlink(missing_ok=True)
+            report["attempts"].append({
+                "attempt": attempt, "attenuation_db": round(attenuation_db, 4),
+                "status": "repair_failed", "detail": str(exc)[:1200],
+            })
+            report["status"] = "audio_repair_failed"
+            break
+
+    final_peak = current.get("true_peak_dbfs")
+    report["final_true_peak_dbfs"] = final_peak
+    if _finite_audio_peak(final_peak) and float(final_peak) <= float(target_dbfs):
+        report["status"] = "target_met"
+    elif _finite_audio_peak(final_peak) and float(final_peak) < 0.0:
+        report["status"] = "below_clipping_threshold_target_not_met"
+    elif report["attempted"]:
+        report["status"] = "repair_did_not_clear_clipping"
+    return current, report
 
 
 
@@ -3191,6 +3412,7 @@ def _run_edit_batch(args):
         final_path = edit_dir / "final_phonk_20s.mp4"
         report_path = edit_dir / "agent_report.json"
         edl_path = edit_dir / "edit_decision_list.json"
+        creative_profile_id = profile_for_edit(index)
         command = [
             sys.executable, str(Path(__file__).resolve()),
             "--edits", "1", "--edit-index", str(index),
@@ -3198,6 +3420,7 @@ def _run_edit_batch(args):
             "--video-path", args.video_path,
             "--music-path", args.music_path,
             "--reference-path", args.reference_path,
+            "--creative-profile", creative_profile_id,
         ]
         if args.require_reference:
             command.append("--require-reference")
@@ -3215,7 +3438,8 @@ def _run_edit_batch(args):
                     command.extend([flag, value])
         progress_event(
             "edit_start", "running", f"Rendering distinct edit {index}/{args.edits}.",
-            {"edit_index": index, "source_usage_intervals_before": len(ledger["used_ranges"]),
+            {"edit_index": index, "creative_profile": creative_profile_id,
+             "source_usage_intervals_before": len(ledger["used_ranges"]),
              "output_path": str(final_path)},
         )
         print(f"\n[edits] Rendering distinct edit {index}/{args.edits}.", flush=True)
@@ -3251,6 +3475,7 @@ def _run_edit_batch(args):
             )
         item = {
             "index": index,
+            "creative_profile": creative_profile_id,
             "status": "ok" if success else "failed",
             "video": str(final_path) if success else None,
             "agent_report": str(report_path) if report_path.is_file() else None,
@@ -3281,6 +3506,7 @@ def _run_edit_batch(args):
         "status": "complete" if completed_count == args.edits else ("partial" if completed_count else "failed"),
         "distinctness_policy": "Source intervals from each completed EDL are reserved before the next edit; previously used intervals plus the configured gap are excluded.",
         "motion_clip_count": args.clip_count,
+        "creative_profile_order": [profile_for_edit(i) for i in range(1, args.edits + 1)],
         "source_usage_ledger": str(ledger_path),
         "edits": results,
     }
@@ -3377,7 +3603,7 @@ def describe_subject_tracking_context(layout_mode, long_source_mode, analysis):
         span = analysis.get("track_span_seconds")
         quality = analysis.get("track_quality_proxy")
         summary = (
-            "OpenCV found an appearance-consistent person track "
+            "OpenCV found a recurring face-location or HOG person-appearance track "
             f"({span}s span; quality proxy={quality}). "
         )
         if layout_mode == "fill":
@@ -3393,7 +3619,7 @@ def describe_subject_tracking_context(layout_mode, long_source_mode, analysis):
         fallback = "Using scene-density context and a centered 9:16 crop fallback."
     else:
         fallback = "Using audio/motion scene context and blur-fit full-frame framing."
-    return f"Person tracking unavailable: {reason}. {fallback}"
+    return f"Face/person tracking unavailable: {reason}. {fallback}"
 
 
 def run_doctor():
@@ -3511,7 +3737,7 @@ def build_skull_overlay_graph(final_freeze_start):
 
 def main(argv=None):
     global VIDEO, MUSIC, REFERENCE, EDIT_DURATION, DURATION, FREEZE, SUBJECT_OBSERVATIONS, SOURCE_FPS
-    global OUTDIR, WORK, FINAL, VARIANT_INDEX, PREVIEW_MODE, RUN_DIR
+    global OUTDIR, WORK, FINAL, VARIANT_INDEX, PREVIEW_MODE, RUN_DIR, CREATIVE_PROFILE_ID
     args = parse_media_source_args(argv)
     ANALYSIS_CACHE_REPORT.clear()
     SCENE_SHADOW_REPORT.clear()
@@ -3548,6 +3774,8 @@ def main(argv=None):
         RUN_DIR = Path(os.environ.get("HEYAA_RUN_DIR", str(Path("output") / "runs" / _new_run_id())))
         os.environ["HEYAA_RUN_DIR"] = str(RUN_DIR)
     VARIANT_INDEX = args.variant_index
+    CREATIVE_PROFILE_ID = args.creative_profile or "hybrid-cinematic"
+    creative_profile_data = get_creative_profile(CREATIVE_PROFILE_ID)
     if VARIANT_INDEX is None and args.edit_index is None and args.edits > 1:
         OUTDIR = str(RUN_DIR)
         WORK = str(RUN_DIR / "work")
@@ -3596,6 +3824,11 @@ def main(argv=None):
                    {"resolution": f"{WIDTH}x{HEIGHT}", "fps": FPS,
                     "duration_seconds": DURATION, "freeze_seconds": FREEZE,
                     "min_clips": MIN_CLIPS, "max_clips": MAX_CLIPS})
+    progress_event(
+        "creative_profile", "completed",
+        f"Creative profile selected: {creative_profile_data['label']}.",
+        {"profile_id": CREATIVE_PROFILE_ID, **creative_profile_data},
+    )
     if args.require_reference and not REFERENCE_PACING:
         progress_event(
             "reference_preflight", "blocked",
@@ -3805,7 +4038,7 @@ def main(argv=None):
     if drop_beat_time is not None:
         boundaries_seconds, planned_drop_position = insert_drop_boundary(boundaries_seconds, drop_beat_time, min_gap=MIN_SHOT_SECONDS)
         print(
-            f"[edit] Drop-impact freeze: strongest bass-onset proxy at {drop_beat_time:.2f}s; "
+            f"[edit] Drop-impact freeze: sustained low-band transition candidate at {drop_beat_time:.2f}s; "
             f"freeze boundary={planned_drop_position:.2f}s for {drop_freeze_duration:.3f}s."
         )
     total_motion_frames = total_frames - freeze_frames - drop_freeze_frames
@@ -3822,6 +4055,21 @@ def main(argv=None):
     source_scope = choose_source_selection_scope(
         source_duration, EDIT_DURATION, context_start, context_end
     )
+    if args.source_usage_ledger:
+        # A distinct-edit batch must be allowed to use the entire short source;
+        # restricting it to one context window can make later unique edits impossible.
+        source_scope = {
+            "start_seconds": 0.0,
+            "end_seconds": source_duration,
+            "method": "full_source_distinct_edit_batch",
+            "threshold_seconds": source_scope["threshold_seconds"],
+        }
+        context_start, context_end = 0.0, source_duration
+        context = {
+            **context, "start_seconds": 0.0, "end_seconds": source_duration,
+            "window_seconds": source_duration, "scene_cuts": len(scenes),
+            "method": "full_source_distinct_edit_batch", "same_person_tracking": False,
+        }
     source_scope_start = source_scope["start_seconds"]
     source_scope_end = source_scope["end_seconds"]
     source_scope_duration = source_scope_end - source_scope_start
@@ -3910,6 +4158,7 @@ def main(argv=None):
     source_feature_error = None
     measured_segment_count = 0
     chapter_candidate_count = 0
+    source_selection_fallback = None
     source_chapter_cache_hit = False
     if source_audio_available or args.source_usage_ledger:
         try:
@@ -4027,9 +4276,27 @@ def main(argv=None):
                 planned_source_ranges = hard_locked_ranges
                 subject_lock_mode = "subject_presence_constrained"
             else:
-                planned_source_ranges = plan_ranked_disjoint_source_ranges(
-                    clip_source_durations, measured_segments, FPS, source_gap_frames
-                )
+                try:
+                    planned_source_ranges = plan_ranked_disjoint_source_ranges(
+                        clip_source_durations, measured_segments, FPS, source_gap_frames
+                    )
+                except RuntimeError as ranking_error:
+                    if not args.source_usage_ledger:
+                        raise
+                    batch_available = exclude_used_source_ranges(
+                        [{"start_seconds": source_scope_start, "end_seconds": source_scope_end,
+                          "selection_score": 0.0}],
+                        source_usage_ranges, MIN_SOURCE_GAP_SECONDS,
+                    )
+                    planned_source_ranges = plan_progression_disjoint_source_ranges(
+                        clip_source_durations, batch_available, FPS, source_gap_frames
+                    )
+                    source_selection_fallback = str(ranking_error)
+                    print(
+                        "[source] Scene-bounded ranking could not fit all shots; "
+                        "using ledger-cleared contiguous progression across the full source. "
+                        "No previously exported source intervals will be reused.", flush=True,
+                    )
                 if bounded_segments:
                     subject_lock_mode = "soft_appearance_preference" if preference_applied else "chapter_context_only"
             if bounded_segments:
@@ -4080,7 +4347,9 @@ def main(argv=None):
                 key = assignment["scene_segment_index"]
                 used_segment_counts[key] = used_segment_counts.get(key, 0) + 1
             source_selection_report = {
-                "method": "subject_presence_constrained_disjoint_scene_segments" if subject_lock_mode == "subject_presence_constrained" else "ranked_disjoint_scene_segments", "source_audio_available": True,
+                "method": ("disjoint_contiguous_progression_fallback" if source_selection_fallback else
+                            "subject_presence_constrained_disjoint_scene_segments" if subject_lock_mode == "subject_presence_constrained" else
+                            "ranked_disjoint_scene_segments"), "source_audio_available": True,
                 "measured_scene_segment_count": measured_segment_count,
                 "chapter_candidates_measured": chapter_candidate_count if bounded_segments else None,
                 "selected_chapter_segment_count": len(measured_segments) if bounded_segments else None,
@@ -4093,7 +4362,7 @@ def main(argv=None):
                 "subject_lock_mode": subject_lock_mode,
                 "hard_presence_lock_applied": subject_lock_mode == "subject_presence_constrained",
                 "source_chapter": dict(source_chapter_report), "character_lock": dict(character_lock_report),
-                "fallback_reason": None,
+                "fallback_reason": source_selection_fallback,
             }
             print(
                 f"[source] Ranked {measured_segment_count} detailed scene segments"
@@ -4518,6 +4787,7 @@ def main(argv=None):
         "onset_candidate_count": BEAT_GRID_ANALYSIS["onset_candidate_count"],
         "drop_beat_time_seconds": drop_beat_time,
         "drop_beat_strength_proxy": DROP_BEAT_STRENGTH if drop_beat_time is not None else None,
+        "drop_transition_evidence": DROP_BEAT_EVIDENCE,
         "drop_freeze_frames": drop_freeze_frames,
         "drop_freeze_duration_seconds": drop_freeze_duration,
     }
@@ -4591,15 +4861,43 @@ def main(argv=None):
         "visual_clarity": f"source pixel support ratio versus {WIDTH}x{HEIGHT} output (not a sharpness/subject-visibility model)",
         "hook_strength": "opening scene-change cadence proxy only; no semantic hook understanding",
         "motion_energy": "scene cuts per two seconds inside selected temporal context window",
-        "drop_impact": "relative strongest bass-onset novelty proxy; not a true musical drop classifier",
+        "drop_impact": "sustained low-band RMS increase around a measured onset; not semantic music understanding",
     }
     render_critique = analyze_render_critique(final_video, actual)
+    render_critique["visual_quality"] = analyze_visual_quality(
+        final_video, actual, final_freeze_seconds=FREEZE,
+        sample_fps=5.0, max_width=320,
+    )
+    render_critique, audio_safety_repair = repair_encoded_audio_true_peak(
+        final_video, actual, render_critique, target_dbfs=-1.5, max_attempts=2,
+    )
+    if audio_safety_repair["attempted"]:
+        actual, video_codec, audio_codec, render_report = verify_output(final_video)
+        progress_event(
+            "audio_true_peak_safety", "completed" if audio_safety_repair["status"] == "target_met" else "needs_review",
+            (
+                f"Audio-only safety correction completed; encoded true peak is "
+                f"{audio_safety_repair.get('final_true_peak_dbfs')} dBFS. Video stream was copied, not re-rendered."
+            ),
+            audio_safety_repair,
+        )
+    elif audio_safety_repair["status"] not in {"not_needed", "already_within_target"}:
+        progress_event(
+            "audio_true_peak_safety", "needs_review",
+            "Automatic audio-only safety correction could not be completed; the original true-peak QA gate remains active.",
+            audio_safety_repair,
+        )
+    render_critique["audio_safety_repair"] = audio_safety_repair
 
-    progress_event("render_critique", "completed", "Render Critic has measured black intervals, sample peak and encoded true peak.",
-                   {"black_segment_count": len(render_critique.get("black_segments", [])),
-                    "mean_volume_db": render_critique.get("mean_volume_db"),
-                    "max_volume_db": render_critique.get("max_volume_db"),
-                    "true_peak_dbfs": render_critique.get("true_peak_dbfs")})
+    progress_event(
+        "render_critique", "completed",
+        "Render Critic measured the encoded true peak after any audio-only safety correction and sampled visual risks.",
+        {"black_segment_count": len(render_critique.get("black_segments", [])),
+         "mean_volume_db": render_critique.get("mean_volume_db"),
+         "max_volume_db": render_critique.get("max_volume_db"),
+         "true_peak_dbfs": render_critique.get("true_peak_dbfs"),
+         "visual_quality": render_critique["visual_quality"]},
+    )
 
     def print_agent_event(event):
         # Stream each structured agent result to the terminal and durable JSONL trace.
@@ -4632,6 +4930,12 @@ def main(argv=None):
         "min_shot_seconds": MIN_SHOT_SECONDS,
         "reference_median_cut_interval_seconds": ref_interval,
         "comparison_clip_count_options": list(args.clip_count_options) if args.clip_count_options else None,
+    }
+    agent_report["creative_profile"] = {
+        "id": CREATIVE_PROFILE_ID,
+        **creative_profile_data,
+        "batch_edit_index": args.edit_index,
+        "distinct_source_intervals_required": args.source_usage_ledger is not None,
     }
     agent_report["source_usage"] = {
         "distinct_edit_batch": args.source_usage_ledger is not None,

@@ -34,7 +34,8 @@
     "skull_position_x": 0.5,
     "skull_position_y": 0.5,
     "skull_pop_seconds": 0.18,
-    "impact_sfx_enabled": true
+    "impact_sfx_enabled": true,
+    "face_detection_enabled": true
   },
   "audio_settings": {
     "beat_sync": true,

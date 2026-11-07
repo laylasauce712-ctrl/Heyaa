@@ -165,6 +165,11 @@ assert reference_result["evidence"]["boundary_method"] in (
 ), reference_result
 assert report["results"]["render_critic"]["status"] in ("ok", "needs_review"), report
 assert report["render_critique"]["measurement_errors"] == [], report["render_critique"]
+visual_quality = report["render_critique"].get("visual_quality")
+assert isinstance(visual_quality, dict), report["render_critique"]
+assert visual_quality.get("status") in ("ok", "needs_review", "unavailable"), visual_quality
+assert visual_quality.get("aesthetic_quality_assessed") is False, visual_quality
+assert visual_quality.get("face_or_identity_assessed") is False, visual_quality
 assert isinstance(report["render_critique"]["mean_volume_db"], (int, float)), report["render_critique"]
 assert isinstance(report["render_critique"]["max_volume_db"], (int, float)), report["render_critique"]
 assert report["render_critique"]["max_volume_db"] <= -0.5, report["render_critique"]

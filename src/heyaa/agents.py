@@ -107,6 +107,8 @@ def settings_agent(config: dict[str, Any]) -> AgentResult:
         findings.append("edit_settings.source_chapter_seconds must be between 60 and 120 seconds.")
     if not isinstance(edit.get("subject_lock_enabled", True), bool):
         findings.append("edit_settings.subject_lock_enabled must be an explicit boolean.")
+    if not isinstance(edit.get("face_detection_enabled", True), bool):
+        findings.append("edit_settings.face_detection_enabled must be an explicit boolean.")
     source_gap = edit.get("source_min_gap_seconds", 0.05)
     if (not _finite_number(source_gap) or not 0.0 <= float(source_gap) <= 1.0):
         findings.append("edit_settings.source_min_gap_seconds must be between 0 and 1 second.")
@@ -196,29 +198,41 @@ def beat_sync_agent(analysis: dict[str, Any]) -> AgentResult:
     enabled = analysis.get("enabled") is True
     count = analysis.get("candidate_count", 0)
     fallback = analysis.get("fallback")
+    drop_transition = analysis.get("drop_transition_evidence")
+    if not isinstance(drop_transition, dict):
+        drop_transition = None
+    drop_summary = (
+        f"A sustained low-band transition candidate was measured at {drop_transition.get('timestamp_seconds')}s "
+        f"(confidence={drop_transition.get('confidence')}); this is not semantic music understanding."
+        if drop_transition else
+        "No sustained low-band drop-transition candidate passed the confidence threshold."
+    )
     if not enabled:
         return AgentResult("beat_sync_agent", "skipped", None, 0.0,
                            ("Beat sync is disabled in params.json.",), (),
-                           {"enabled": False, "candidate_count": 0})
+                           {"enabled": False, "candidate_count": 0,
+                            "drop_transition_evidence": drop_transition})
     if not isinstance(count, int) or isinstance(count, bool) or count < 0:
         return AgentResult("beat_sync_agent", "blocked", None, 0.0,
                            ("Beat candidate count is invalid.",), (), {"candidate_count": count})
+    evidence = {
+        "enabled": True, "candidate_count": count, "fallback": fallback,
+        "method": analysis.get("method", "unknown"),
+        "tempo_bpm": analysis.get("tempo_bpm"),
+        "loop_expanded": bool(analysis.get("loop_expanded", False)),
+        "source_candidate_count": analysis.get("source_candidate_count", count),
+        "drop_transition_evidence": drop_transition,
+    }
     if count < 3 or fallback == "even_pacing":
+        evidence["fallback"] = "even_pacing"
         return AgentResult("beat_sync_agent", "insufficient_evidence", None, 0.0,
-                           ("No stable beat sequence was available; even pacing fallback was used.",),
+                           ("No stable beat sequence was available; even pacing fallback was used.", drop_summary),
                            ("Keep fallback timing and expose low beat confidence; do not claim beat-accurate cuts.",),
-                           {"enabled": True, "candidate_count": count, "fallback": "even_pacing",
-                            "method": analysis.get("method", "unknown"),
-                        "loop_expanded": bool(analysis.get("loop_expanded", False)),
-                        "source_candidate_count": analysis.get("source_candidate_count", count)})
+                           evidence)
     return AgentResult("beat_sync_agent", "ok", None, 0.45,
-                       ("Bass-onset candidates were detected by a lightweight heuristic.",),
-                       ("Review beat alignment visually; candidates are not guaranteed downbeats.",),
-                       {"enabled": True, "candidate_count": count, "fallback": None,
-                        "method": analysis.get("method", "unknown"),
-                        "tempo_bpm": analysis.get("tempo_bpm"),
-                        "loop_expanded": bool(analysis.get("loop_expanded", False)),
-                        "source_candidate_count": analysis.get("source_candidate_count", count)})
+                       ("Bass-onset candidates were detected by the lightweight timing heuristic.", drop_summary),
+                       ("Review cut alignment visually; onsets are not guaranteed downbeats or semantic drops.",),
+                       evidence)
 
 
 def planner(context: dict[str, Any]) -> AgentResult:
@@ -759,15 +773,32 @@ def render_critic(metrics: dict[str, Any]) -> AgentResult:
         warnings.append("Encoded audio true peak is above the -0.5 dBFS safety target; review the limiter ceiling.")
     if _finite_number(mean_db) and float(mean_db) <= -35.0:
         warnings.append("Average audio level is very low; check perceived loudness on a real device.")
+
+    visual_quality = metrics.get("visual_quality")
+    if isinstance(visual_quality, dict):
+        visual_status = visual_quality.get("status")
+        visual_warnings = visual_quality.get("warnings", [])
+        if isinstance(visual_warnings, list):
+            warnings.extend(str(item) for item in visual_warnings if isinstance(item, str))
+        if visual_status == "unavailable":
+            warnings.append("Sampled visual QA was unavailable; review the contact sheet manually.")
+        elif visual_status not in {"ok", "needs_review", "unavailable"}:
+            warnings.append("Sampled visual QA returned an unrecognized status; review the contact sheet.")
+    elif "visual_quality" in metrics:
+        warnings.append("Sampled visual QA payload was malformed; review the contact sheet manually.")
+        visual_quality = {"status": "malformed", "aesthetic_quality_assessed": False}
+
     status = "needs_review" if warnings else "ok"
     return AgentResult("render_critic", status, None, 0.85,
-                       tuple(warnings or ["No long black interval or obvious silence/clipping risk was found by these simple metrics."]),
-                       ("Listen to the complete export and inspect representative frames; this stage does not judge composition or style.",),
+                       tuple(warnings or ["No measured black-frame, audio, blur, darkness or unintended-still risk was flagged."]),
+                       ("Listen to the complete export and inspect representative frames; sampled metrics cannot judge aesthetics, semantic action or identity.",),
                        {"longest_black_interval_seconds": round(longest_black, 4),
                         "black_interval_count": len(checked_segments),
                         "mean_volume_db": mean_db, "max_volume_db": peak_db,
                         "true_peak_dbfs": true_peak_dbfs,
-                        "warnings": warnings, "semantic_visual_review": False})
+                        "visual_quality": visual_quality,
+                        "warnings": warnings, "semantic_visual_review": False,
+                        "aesthetic_quality_assessed": False})
 
 
 def director_agent(results: dict[str, AgentResult], *, reference_required: bool = False) -> AgentResult:

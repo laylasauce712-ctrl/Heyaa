@@ -173,8 +173,8 @@
         <div class="quality-heading"><div><label class="group-label">QUALITY & STYLE</label><small>Only implemented controls are shown here.</small></div></div>
         <div class="toggle-grid">
           <label class="toggle-card"><input id="ai-upscale" type="checkbox"><span class="switch"></span><span class="toggle-copy"><strong>AI Restore</strong><small id="ai-status">Real-ESRGAN</small></span></label>
-          <label class="toggle-card"><input id="subject-lock" type="checkbox"><span class="switch"></span><span class="toggle-copy"><strong>Subject Lock</strong><small>HOG appearance tracking</small></span></label>
-          <label class="toggle-card"><input id="beat-sync" type="checkbox"><span class="switch"></span><span class="toggle-copy"><strong>Beat Sync</strong><small>Beat-grid timing</small></span></label>
+          <label class="toggle-card"><input id="subject-lock" type="checkbox"><span class="switch"></span><span class="toggle-copy"><strong>Subject Lock</strong><small>Automatic subject framing</small></span></label>
+          <label class="toggle-card"><input id="beat-sync" type="checkbox"><span class="switch"></span><span class="toggle-copy"><strong>Beat Sync</strong><small>Beat-grid timing + drop check</small></span></label>
           <label class="toggle-card"><input id="ending-skull" type="checkbox"><span class="switch"></span><span class="toggle-copy"><strong>Skull Ending</strong><small>Final freeze overlay</small></span></label>
         </div>
       </div>
@@ -188,6 +188,7 @@
           <label class="toggle-line"><span><strong>Bass boost</strong><small>Boost low frequencies in the selected track</small></span><input id="bass-boost" type="checkbox"></label>
           <label class="toggle-line"><span><strong>Music loop</strong><small>Crossfade short tracks to edit duration</small></span><input id="music-loop" type="checkbox"></label>
           <label class="toggle-line"><span><strong>Impact SFX</strong><small>Procedural sub-bass hit at final freeze</small></span><input id="impact-sfx" type="checkbox"></label>
+          <label class="toggle-line"><span><strong>Face Detection</strong><small>Use face location for crop, then HOG fallback</small></span><input id="face-detection" type="checkbox"></label>
         </div>
         <p class="advanced-note">Style is currently Phonk / Montagem only. Export codec, vertical resolution and EDL are fixed by the supported renderer.</p>
       </details>

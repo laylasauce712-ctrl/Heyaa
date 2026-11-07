@@ -1,8 +1,8 @@
-"""Optional OpenCV HOG person-track proxy for choosing and framing a source context.
+"""Optional CPU OpenCV face-location tracker with HOG person fallback.
 
-This is not face recognition or semantic identity verification. It provides a
-low-confidence, clothing/position appearance track when OpenCV is installed;
-otherwise the renderer falls back to its scene-cut-density context heuristic.
+Detections guide source selection and 9:16 framing only. Face location is not
+face recognition, biometric identification or proof of persistent identity.
+Without OpenCV/cascade assets the renderer uses its existing context fallback.
 """
 from __future__ import annotations
 
@@ -116,7 +116,7 @@ def _run_norfair_shadow(
     frames: list[dict[str, Any]],
     custom_observations: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
-    """Associate existing HOG boxes in an isolated Norfair process."""
+    """Associate existing face/person boxes in an isolated Norfair process."""
     worker_python = _norfair_worker_python()
     if worker_python is None or not frames:
         return None
@@ -272,39 +272,92 @@ def _run_norfair_shadow(
     return report
 
 
+def _find_face_cascade(cv2) -> Path | None:
+    """Locate OpenCV's shipped frontal-face Haar cascade or an explicit override."""
+    candidates = []
+    configured = os.environ.get("HEYAA_FACE_CASCADE")
+    if configured:
+        candidates.append(Path(configured).expanduser())
+    data = getattr(cv2, "data", None)
+    haar_root = getattr(data, "haarcascades", None)
+    if isinstance(haar_root, str) and haar_root:
+        candidates.append(Path(haar_root) / "haarcascade_frontalface_default.xml")
+    module_path = Path(getattr(cv2, "__file__", "")).parent
+    candidates.append(module_path / "data" / "haarcascade_frontalface_default.xml")
+    # Ship one known cascade with Heyaa as a guaranteed fallback so Termux/WSL
+    # do not depend on distribution-specific OpenCV data-directory packaging.
+    candidates.append(Path(__file__).resolve().parent / "assets" / "haarcascade_frontalface_default.xml")
+    candidates.extend([
+        Path("/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml"),
+        Path("/usr/share/opencv/haarcascades/haarcascade_frontalface_default.xml"),
+        Path("/data/data/com.termux/files/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml"),
+        Path("/data/data/com.termux/files/usr/share/opencv/haarcascades/haarcascade_frontalface_default.xml"),
+    ])
+    for candidate in candidates:
+        try:
+            if candidate.is_file() and candidate.stat().st_size > 0:
+                return candidate
+        except OSError:
+            continue
+    return None
+
+
 def detect_person_track(video_path: str, start_seconds: float, end_seconds: float,
                         sample_interval_seconds: float = 0.75,
                         max_frame_side: int = 480,
-                        norfair_shadow_enabled: bool = True) -> dict[str, Any]:
-    """Run optional OpenCV's built-in HOG people detector on one bounded source window."""
+                        norfair_shadow_enabled: bool = True,
+                        face_detection_enabled: bool = True) -> dict[str, Any]:
+    """Track a face location first, then fall back to OpenCV's HOG person detector.
+
+    Face boxes are temporary framing observations only. They are not face
+    recognition, a biometric identity template, or proof of the same person.
+    """
     try:
         import cv2
     except ImportError:
         return {
-            "available": False, "detected": False, "method": "opencv-hog-unavailable",
-            "reason": "OpenCV is not installed; scene-cut-density fallback remains active.",
+            "available": False, "detected": False, "method": "opencv-unavailable",
+            "reason": "OpenCV is not installed; chapter/context selection remains the fallback.",
             "observations": [], "track_id": None, "track_quality_proxy": None,
-            "identity_semantics": False,
+            "face_detection_available": False, "identity_semantics": False,
         }
 
     if (not math.isfinite(float(start_seconds)) or not math.isfinite(float(end_seconds)) or
             start_seconds < 0 or end_seconds <= start_seconds or sample_interval_seconds <= 0):
         return {
-            "available": True, "detected": False, "method": "opencv-hog-invalid-window",
+            "available": True, "detected": False, "method": "opencv-invalid-window",
             "reason": "Invalid video time window.", "observations": [], "track_id": None,
-            "track_quality_proxy": None, "identity_semantics": False,
+            "track_quality_proxy": None, "face_detection_available": False,
+            "identity_semantics": False,
         }
+
+    face_cascade_path = _find_face_cascade(cv2) if face_detection_enabled else None
+    face_cascade = None
+    face_cascade_error = None
+    if face_cascade_path is not None:
+        try:
+            candidate = cv2.CascadeClassifier(str(face_cascade_path))
+            if not candidate.empty():
+                face_cascade = candidate
+            else:
+                face_cascade_error = "OpenCV face cascade could not be loaded."
+        except (AttributeError, cv2.error, OSError) as exc:
+            face_cascade_error = f"{type(exc).__name__}: {exc}"
+    elif face_detection_enabled:
+        face_cascade_error = "No OpenCV frontal-face Haar cascade was found."
 
     capture = cv2.VideoCapture(video_path)
     if not capture.isOpened():
         capture.release()
         return {
-            "available": True, "detected": False, "method": "opencv-hog-open-failed",
+            "available": True, "detected": False, "method": "opencv-open-failed",
             "reason": "OpenCV could not open the source file.", "observations": [],
-            "track_id": None, "track_quality_proxy": None, "identity_semantics": False,
+            "track_id": None, "track_quality_proxy": None,
+            "face_detection_available": bool(face_cascade), "identity_semantics": False,
         }
 
-    frames: list[dict[str, Any]] = []
+    person_frames: list[dict[str, Any]] = []
+    face_frames: list[dict[str, Any]] = []
     try:
         fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
         if not math.isfinite(fps) or fps <= 0:
@@ -333,41 +386,75 @@ def detect_person_track(video_path: str, start_seconds: float, end_seconds: floa
             else:
                 small = frame
             small_height, small_width = small.shape[:2]
-            rectangles, weights = hog.detectMultiScale(
-                small, winStride=(8, 8), padding=(8, 8), scale=1.05
-            )
-            detections = []
             hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
-            for index, rect in enumerate(rectangles):
-                x, y, box_width, box_height = [int(value) for value in rect]
-                if box_height < 60 or box_width < 18 or box_width / max(1, box_height) > 1.3:
-                    continue
-                x1, y1 = max(0, x), max(0, y)
-                x2, y2 = min(small_width, x + box_width), min(small_height, y + box_height)
-                patch = hsv[y1:y2, x1:x2]
-                histogram = cv2.calcHist([patch], [0, 1], None, [12, 8], [0, 180, 0, 256])
-                cv2.normalize(histogram, histogram, alpha=1.0, norm_type=cv2.NORM_L1)
-                weight = float(weights[index][0] if hasattr(weights[index], "__len__") else weights[index])
-                detections.append({
-                    "center_x": (x + box_width / 2.0) / max(1, small_width),
-                    "center_y": (y + box_height / 2.0) / max(1, small_height),
-                    "height_ratio": box_height / max(1, small_height),
-                    "width_ratio": box_width / max(1, small_width),
-                    "detector_score": weight,
-                    "color_histogram": histogram.reshape(-1).tolist(),
-                })
-            frames.append({"time_seconds": timestamp, "detections": detections})
+            face_detections = []
+            if face_cascade is not None:
+                gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+                faces = face_cascade.detectMultiScale(
+                    gray, scaleFactor=1.10, minNeighbors=4,
+                    flags=cv2.CASCADE_SCALE_IMAGE, minSize=(20, 20),
+                )
+                for rect in faces:
+                    x, y, box_width, box_height = [int(value) for value in rect]
+                    x1, y1 = max(0, x), max(0, y)
+                    x2, y2 = min(small_width, x + box_width), min(small_height, y + box_height)
+                    if x2 <= x1 or y2 <= y1:
+                        continue
+                    patch = hsv[y1:y2, x1:x2]
+                    histogram = cv2.calcHist([patch], [0, 1], None, [12, 8], [0, 180, 0, 256])
+                    cv2.normalize(histogram, histogram, alpha=1.0, norm_type=cv2.NORM_L1)
+                    area_ratio = (box_width * box_height) / max(1, small_width * small_height)
+                    face_detections.append({
+                        "center_x": (x + box_width / 2.0) / max(1, small_width),
+                        "center_y": (y + box_height / 2.0) / max(1, small_height),
+                        "height_ratio": box_height / max(1, small_height),
+                        "width_ratio": box_width / max(1, small_width),
+                        "detector_score": 0.85 + min(0.10, area_ratio),
+                        "color_histogram": histogram.reshape(-1).tolist(),
+                    })
+            face_frames.append({"time_seconds": timestamp, "detections": face_detections})
+
+            # Avoid the slower full-body HOG pass on frames where a face is found.
+            # HOG fills gaps when the subject turns away or the face is occluded.
+            detections = []
+            if not face_detections:
+                rectangles, weights = hog.detectMultiScale(
+                    small, winStride=(8, 8), padding=(8, 8), scale=1.05
+                )
+                for index, rect in enumerate(rectangles):
+                    x, y, box_width, box_height = [int(value) for value in rect]
+                    if box_height < 60 or box_width < 18 or box_width / max(1, box_height) > 1.3:
+                        continue
+                    x1, y1 = max(0, x), max(0, y)
+                    x2, y2 = min(small_width, x + box_width), min(small_height, y + box_height)
+                    patch = hsv[y1:y2, x1:x2]
+                    histogram = cv2.calcHist([patch], [0, 1], None, [12, 8], [0, 180, 0, 256])
+                    cv2.normalize(histogram, histogram, alpha=1.0, norm_type=cv2.NORM_L1)
+                    weight = float(weights[index][0] if hasattr(weights[index], "__len__") else weights[index])
+                    detections.append({
+                        "center_x": (x + box_width / 2.0) / max(1, small_width),
+                        "center_y": (y + box_height / 2.0) / max(1, small_height),
+                        "height_ratio": box_height / max(1, small_height),
+                        "width_ratio": box_width / max(1, small_width),
+                        "detector_score": weight,
+                        "color_histogram": histogram.reshape(-1).tolist(),
+                    })
+            person_frames.append({"time_seconds": timestamp, "detections": detections})
     except (AttributeError, TypeError, ValueError, cv2.error) as exc:
         return {
-            "available": True, "detected": False, "method": "opencv-hog-failed",
+            "available": True, "detected": False, "method": "opencv-face-hog-failed",
             "reason": str(exc), "observations": [], "track_id": None,
-            "track_quality_proxy": None, "identity_semantics": False,
+            "track_quality_proxy": None, "face_detection_available": bool(face_cascade),
+            "identity_semantics": False,
         }
     finally:
         capture.release()
 
-    tracks = _associate_detections(frames)
-    chosen = _pick_dominant_track(tracks)
+    face_chosen = _pick_dominant_track(_associate_detections(face_frames)) if face_cascade is not None else None
+    hog_chosen = _pick_dominant_track(_associate_detections(person_frames))
+    chosen = face_chosen or hog_chosen
+    is_face_track = face_chosen is not None
+    tracking_frames = face_frames if is_face_track else person_frames
     custom_observations = (
         [{
             key: observation[key]
@@ -378,39 +465,58 @@ def detect_person_track(video_path: str, start_seconds: float, end_seconds: floa
     norfair_shadow = None
     if norfair_shadow_enabled:
         try:
-            norfair_shadow = _run_norfair_shadow(frames, custom_observations)
+            norfair_shadow = _run_norfair_shadow(tracking_frames, custom_observations)
         except Exception as exc:
-            # The optional association observer must never break the established HOG path.
             norfair_shadow = {
                 "backend_id": "norfair.hog-association.2.3.0",
-                "status": "failed",
-                "items": [],
-                "warnings": [f"Unexpected Norfair shadow error: {type(exc).__name__}: {exc}"],
-                "metadata": {"sampled_frame_count": len(frames)},
+                "status": "failed", "items": [],
+                "warnings": [f"Unexpected optional association error: {type(exc).__name__}: {exc}"],
+                "metadata": {"sampled_frame_count": len(tracking_frames)},
             }
+    detection_count = sum(len(frame["detections"]) for frame in tracking_frames)
+    face_detection = {
+        "enabled": bool(face_detection_enabled),
+        "available": face_cascade is not None,
+        "cascade_path": str(face_cascade_path) if face_cascade_path else None,
+        "fallback_reason": face_cascade_error,
+        "tracking_used": is_face_track,
+        "meaning": "face location only; no face recognition or identity verification",
+    }
     if chosen is None:
         return {
-            "available": True, "detected": False, "method": "opencv-hog-no-stable-track",
-            "reason": "No person track had at least three detections across 1.5 seconds.",
-            "sample_count": len(frames), "detection_count": sum(len(frame["detections"]) for frame in frames),
+            "available": True, "detected": False, "method": "opencv-face-hog-no-stable-track",
+            "reason": (
+                "No stable face or person track had at least three detections across 1.5 seconds. "
+                "The renderer will use its normal chapter/center-crop fallback."
+            ),
+            "sample_count": len(person_frames), "detection_count": detection_count,
             "observations": [], "track_id": None, "track_quality_proxy": None,
+            "face_detection": face_detection, "face_detection_available": face_cascade is not None,
             "identity_semantics": False, "norfair_shadow": norfair_shadow,
         }
 
     observations = [{
         key: observation[key] for key in ("time_seconds", "center_x", "center_y", "height_ratio", "detector_score")
     } for observation in chosen["observations"]]
+    method = (
+        "opencv-haar-face-location-track" if is_face_track
+        else "opencv-hog-person-appearance-track"
+    )
+    reason = (
+        "A recurring face location was tracked for framing. This does not identify the person."
+        if is_face_track else
+        "A recurring person-shaped appearance track was detected; this is not identity recognition."
+    )
     return {
-        "available": True, "detected": True, "method": "opencv-hog-appearance-consistency-proxy",
-        "reason": "A recurring person-shaped appearance track was detected; this is not identity recognition.",
-        "sample_count": len(frames), "detection_count": sum(len(frame["detections"]) for frame in frames),
+        "available": True, "detected": True, "method": method, "reason": reason,
+        "sample_count": len(person_frames), "detection_count": detection_count,
         "track_id": chosen["track_id"], "track_start_seconds": observations[0]["time_seconds"],
         "track_end_seconds": observations[-1]["time_seconds"], "track_span_seconds": chosen["span_seconds"],
         "track_quality_proxy": chosen["track_quality_proxy"], "average_detector_score": chosen["average_detector_score"],
-        "observations": observations, "identity_semantics": False,
-        "norfair_shadow": norfair_shadow,
+        "observations": observations, "face_detection": face_detection,
+        "face_detection_available": face_cascade is not None,
+        "identity_semantics": False, "norfair_shadow": norfair_shadow,
     }
-
 
 def subject_observation_near(observations: list[dict[str, Any]], target_seconds: float,
                              max_distance_seconds: float = 1.5) -> dict[str, Any] | None:

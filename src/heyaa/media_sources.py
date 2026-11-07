@@ -379,6 +379,12 @@ def parse_media_source_args(argv=None):
         help="Create this many distinct edits from the same source (default: one)."
     )
     parser.add_argument(
+        "--creative-profile",
+        choices=("cinematic-impact", "aggressive-phonk", "smooth-motion", "hybrid-cinematic", "phonk-pulse"),
+        default=None,
+        help="Choose the per-clip motion/look preset for one edit; multi-edit batches assign different presets automatically."
+    )
+    parser.add_argument(
         "--variants", type=int, choices=(1, 2, 3, 4, 5), default=1,
         help="Legacy comparison mode: render 1–5 source-progression variants (default: one render)."
     )
@@ -402,6 +408,8 @@ def parse_media_source_args(argv=None):
         help=argparse.SUPPRESS
     )
     args = parser.parse_args(argv)
+    if args.edits > 1 and args.creative_profile is not None:
+        parser.error("--edits assigns a different creative profile to each export; use --creative-profile only with one edit.")
     if args.edits > 1 and args.variants > 1:
         parser.error("Use --edits for distinct source-disjoint edits; do not combine it with legacy --variants.")
     if args.edits > 1 and args.clip_count_options is not None:

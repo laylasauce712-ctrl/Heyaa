@@ -3,14 +3,14 @@ name: Heyaa tests
 on:
   pull_request:
   push:
-    branches: [main, improve/phonk-renderer-v1, feat/edl-contract-m1a]
+    branches: [main, improve/phonk-renderer-v1, feat/edl-contract-m1a, fix/reliable-reference-audio-export]
 
 jobs:
   unit-tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - name: Install FFmpeg for render smoke test
@@ -21,7 +21,7 @@ jobs:
         run: python -m pip install -r cloud/requirements-api.txt -r cloud/requirements-worker.txt
       - name: Validate renderer syntax and settings JSON
         run: |
-          python -m py_compile src/agent_director.py src/heyaa/agents.py src/heyaa/media_sources.py src/heyaa/local_app.py src/heyaa/release.py src/heyaa/gpu.py src/heyaa/backends/contracts.py src/heyaa/backends/registry.py src/heyaa/backends/pyscenedetect.py src/heyaa/backends/shadow_compare.py scripts/scene_backend_worker.py tests/unit/test_pyscenedetect_backend.py src/heyaa/backends/beat_this.py scripts/beat_backend_worker.py tests/unit/test_beat_this_backend.py src/heyaa/backends/norfair.py scripts/norfair_backend_worker.py tests/unit/test_norfair_backend.py tests/unit/test_local_studio.py cloud/api.py cloud/contracts.py cloud/worker.py tests/unit/test_cloud_contracts.py tests/unit/test_cloud_api.py tests/unit/test_cloud_worker.py tests/unit/test_gpu_probe.py
+          python -m py_compile src/agent_director.py src/heyaa/agents.py src/heyaa/music_analysis.py src/heyaa/visual_qa.py src/heyaa/subject_tracking.py src/heyaa/media_sources.py src/heyaa/local_app.py src/heyaa/release.py src/heyaa/gpu.py src/heyaa/backends/contracts.py src/heyaa/backends/registry.py src/heyaa/backends/pyscenedetect.py src/heyaa/backends/shadow_compare.py scripts/scene_backend_worker.py tests/unit/test_pyscenedetect_backend.py src/heyaa/backends/beat_this.py scripts/beat_backend_worker.py tests/unit/test_beat_this_backend.py src/heyaa/backends/norfair.py scripts/norfair_backend_worker.py tests/unit/test_norfair_backend.py tests/unit/test_local_studio.py cloud/api.py cloud/contracts.py cloud/worker.py tests/unit/test_cloud_contracts.py tests/unit/test_cloud_api.py tests/unit/test_cloud_worker.py tests/unit/test_gpu_probe.py
           python -m json.tool params.json > /dev/null
           node --check web/app.js
           node --check cloud/static/app.js
@@ -29,8 +29,10 @@ jobs:
           docker compose --env-file cloud/.env -f cloud/compose.yaml config --quiet
           rm -f cloud/.env
           bash -n scripts/start_heyaa_ui.sh
+          bash -n scripts/export_reference_audio_batch.sh
           bash -n scripts/install_realesrgan_linux.sh
           bash -n scripts/prepare_local_worktree.sh
+          bash -n scripts/export_reference_audio_batch.sh
           bash -n scripts/install_scene_backend_linux.sh
           bash -n scripts/install_beat_backend_linux.sh
           bash -n scripts/install_norfair_backend_linux.sh

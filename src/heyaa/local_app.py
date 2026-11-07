@@ -47,8 +47,8 @@ ALLOWED_EXTENSIONS = {
 }
 EDIT_KEYS = {
     "duration_seconds", "speed", "layout_mode", "mirror_enabled",
-    "reference_pacing", "subject_lock_enabled", "ending_skull_enabled",
-    "impact_sfx_enabled",
+    "reference_pacing", "subject_lock_enabled", "face_detection_enabled",
+    "ending_skull_enabled", "impact_sfx_enabled",
 }
 AUDIO_KEYS = {"beat_sync", "beat_flash", "bass_boost", "music_loop"}
 VIDEO_KEYS = {"ai_upscale_enabled"}
