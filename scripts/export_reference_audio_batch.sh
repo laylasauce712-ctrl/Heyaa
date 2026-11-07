@@ -183,16 +183,30 @@ echo "[export] Starting $EDIT_COUNT distinct edit(s) ..."
   --require-reference \
   --edits "$EDIT_COUNT"
 
-RUN_DIR="$(find "$ROOT/output/runs" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' \
+RUN_DIR="$(find "$ROOT/output/runs" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\\n' \
   | sort -nr | head -1 | cut -d' ' -f2-)"
-[[ -n "$RUN_DIR" && -d "$RUN_DIR/edits" ]] || {
+[[ -n "$RUN_DIR" && -d "$RUN_DIR" ]] || {
   echo "[export] ERROR: completed run directory was not found." >&2
   exit 1
 }
 
-mapfile -d '' EXPORTS < <(
-  find "$RUN_DIR/edits" -type f -name 'final_phonk_20s.mp4' -print0 | sort -z
-)
+# The renderer stores a single edit directly in the run directory. Only
+# multi-edit batches create the nested edits/edit_NN/ output layout.
+if [[ "$EDIT_COUNT" == "1" ]]; then
+  [[ -s "$RUN_DIR/final_phonk_20s.mp4" ]] || {
+    echo "[export] ERROR: the single-edit final MP4 was not found in $RUN_DIR." >&2
+    exit 1
+  }
+  EXPORTS=("$RUN_DIR/final_phonk_20s.mp4")
+else
+  [[ -d "$RUN_DIR/edits" ]] || {
+    echo "[export] ERROR: batch edit directory was not found in $RUN_DIR." >&2
+    exit 1
+  }
+  mapfile -d '' EXPORTS < <(
+    find "$RUN_DIR/edits" -type f -name 'final_phonk_20s.mp4' -print0 | sort -z
+  )
+fi
 echo "[export] Finished video files: ${#EXPORTS[@]} / $EDIT_COUNT"
 printf '  %s\n' "${EXPORTS[@]}"
 if [[ "${#EXPORTS[@]}" -ne "$EDIT_COUNT" ]]; then
