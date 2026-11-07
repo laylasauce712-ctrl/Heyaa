@@ -183,7 +183,7 @@ echo "[export] Starting $EDIT_COUNT distinct edit(s) ..."
   --require-reference \
   --edits "$EDIT_COUNT"
 
-RUN_DIR="$(find "$ROOT/output/runs" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\\n' \
+RUN_DIR="$(find "$ROOT/output/runs" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' \
   | sort -nr | head -1 | cut -d' ' -f2-)"
 [[ -n "$RUN_DIR" && -d "$RUN_DIR" ]] || {
   echo "[export] ERROR: completed run directory was not found." >&2
