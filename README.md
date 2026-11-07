@@ -4,6 +4,13 @@
 
 The project is kept in one repository and one renderer. The local Studio is a control surface for that renderer, not a second editing engine.
 
+## Release status and boundaries
+
+Heyaa's local renderer and Studio are the primary developer workflow. The Docker Compose cloud stack is a private-beta development foundation, not a hosted public service. It does not yet include end-user sign-in/OIDC, production multi-user identity, rate limits, per-user quotas, retention policies, or provisioned public hosting. Do not expose the cloud stack directly to the internet; see [cloud deployment limitations](cloud/README.md).
+
+This repository currently has no project license. Until the owner adds one, do not assume permission to copy, modify, redistribute, or publish derivative versions of the project. Third-party asset notices are documented separately.
+
+
 ## Start the local Studio
 
 Requirements:
